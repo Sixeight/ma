@@ -29,4 +29,8 @@ pub struct Edge {
 pub enum EdgeType {
     Arrow,
     OpenLink,
+    DottedArrow,
+    DottedLink,
+    ThickArrow,
+    ThickLink,
 }
