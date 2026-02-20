@@ -332,7 +332,6 @@ sequenceDiagram
 // --- nested blocks ---
 
 #[test]
-#[ignore = "nested blocks not yet implemented"]
 fn spec_nested_loop() {
     let input = "\
 sequenceDiagram
