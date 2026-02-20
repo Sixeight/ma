@@ -353,7 +353,6 @@ sequenceDiagram
 // --- par ---
 
 #[test]
-#[ignore = "par not yet implemented"]
 fn spec_par() {
     let input = "\
 sequenceDiagram
@@ -374,7 +373,6 @@ sequenceDiagram
 // --- critical ---
 
 #[test]
-#[ignore = "critical not yet implemented"]
 fn spec_critical() {
     let input = "\
 sequenceDiagram

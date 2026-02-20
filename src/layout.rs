@@ -75,8 +75,14 @@ pub fn compute(diagram: &Diagram) -> Result<Layout, String> {
         .unwrap_or(0);
 
     for row in &rows {
-        if let Row::Note(n) = row {
-            total_width = total_width.max(n.box_right + 1);
+        match row {
+            Row::Note(n) => {
+                total_width = total_width.max(n.box_right + 1);
+            }
+            Row::BlockStart(b) | Row::BlockEnd(b) | Row::BlockDivider(b) => {
+                total_width = total_width.max(b.frame_right + 1);
+            }
+            _ => {}
         }
     }
 
@@ -116,7 +122,7 @@ fn collect_participants(
             Statement::Loop(lb) | Statement::Opt(lb) | Statement::Break(lb) => {
                 collect_participants_inner(&lb.body, &mut order, &mut display_names);
             }
-            Statement::Alt(ab) => {
+            Statement::Alt(ab) | Statement::Par(ab) | Statement::Critical(ab) => {
                 collect_participants_inner(&ab.body, &mut order, &mut display_names);
                 for branch in &ab.else_branches {
                     collect_participants_inner(&branch.body, &mut order, &mut display_names);
@@ -360,26 +366,13 @@ fn flatten_statements(
                 push_simple_block("break", lb, participants, order, rows);
             }
             Statement::Alt(ab) => {
-                let (frame_left, frame_right) = compute_frame_bounds(participants);
-                rows.push(Row::BlockStart(BlockRow {
-                    label: format!("alt {}", ab.label),
-                    frame_left,
-                    frame_right,
-                }));
-                flatten_statements(&ab.body, order, participants, rows);
-                for branch in &ab.else_branches {
-                    rows.push(Row::BlockDivider(BlockRow {
-                        label: format!("else {}", branch.label),
-                        frame_left,
-                        frame_right,
-                    }));
-                    flatten_statements(&branch.body, order, participants, rows);
-                }
-                rows.push(Row::BlockEnd(BlockRow {
-                    label: String::new(),
-                    frame_left,
-                    frame_right,
-                }));
+                push_divided_block("alt", "else", ab, participants, order, rows);
+            }
+            Statement::Par(ab) => {
+                push_divided_block("par", "and", ab, participants, order, rows);
+            }
+            Statement::Critical(ab) => {
+                push_divided_block("critical", "option", ab, participants, order, rows);
             }
             _ => {}
         }
@@ -394,12 +387,51 @@ fn push_simple_block(
     rows: &mut Vec<Row>,
 ) {
     let (frame_left, frame_right) = compute_frame_bounds(participants);
+    let label = format!("{keyword} {}", block.label);
+    let frame_right = frame_right.max(frame_left + 2 + label.len() + 1);
     rows.push(Row::BlockStart(BlockRow {
-        label: format!("{keyword} {}", block.label),
+        label,
         frame_left,
         frame_right,
     }));
     flatten_statements(&block.body, order, participants, rows);
+    rows.push(Row::BlockEnd(BlockRow {
+        label: String::new(),
+        frame_left,
+        frame_right,
+    }));
+}
+
+fn push_divided_block(
+    keyword: &str,
+    divider: &str,
+    block: &AltBlock,
+    participants: &[ParticipantLayout],
+    order: &[String],
+    rows: &mut Vec<Row>,
+) {
+    let (frame_left, frame_right) = compute_frame_bounds(participants);
+    let start_label = format!("{keyword} {}", block.label);
+    let mut max_label_len = start_label.len();
+    for branch in &block.else_branches {
+        let div_label = format!("{divider} {}", branch.label);
+        max_label_len = max_label_len.max(div_label.len());
+    }
+    let frame_right = frame_right.max(frame_left + 2 + max_label_len + 1);
+    rows.push(Row::BlockStart(BlockRow {
+        label: start_label,
+        frame_left,
+        frame_right,
+    }));
+    flatten_statements(&block.body, order, participants, rows);
+    for branch in &block.else_branches {
+        rows.push(Row::BlockDivider(BlockRow {
+            label: format!("{divider} {}", branch.label),
+            frame_left,
+            frame_right,
+        }));
+        flatten_statements(&branch.body, order, participants, rows);
+    }
     rows.push(Row::BlockEnd(BlockRow {
         label: String::new(),
         frame_left,
@@ -473,7 +505,7 @@ fn compute_activations_inner(
                 let row_active: Vec<bool> = depths.iter().map(|&d| d > 0).collect();
                 activations.push(row_active);
             }
-            Statement::Alt(ab) => {
+            Statement::Alt(ab) | Statement::Par(ab) | Statement::Critical(ab) => {
                 let row_active: Vec<bool> = depths.iter().map(|&d| d > 0).collect();
                 activations.push(row_active);
                 compute_activations_inner(&ab.body, order, depths, activations);

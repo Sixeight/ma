@@ -36,6 +36,8 @@ fn statement(input: &mut &str) -> winnow::Result<Option<Statement>> {
         alt_stmt.map(|ab| Some(Statement::Alt(ab))),
         opt_stmt.map(|lb| Some(Statement::Opt(lb))),
         break_stmt.map(|lb| Some(Statement::Break(lb))),
+        par_stmt.map(|ab| Some(Statement::Par(ab))),
+        critical_stmt.map(|ab| Some(Statement::Critical(ab))),
         note_stmt.map(|n| Some(Statement::Note(n))),
         activate_stmt.map(|id| Some(Statement::Activate(id))),
         deactivate_stmt.map(|id| Some(Statement::Deactivate(id))),
@@ -118,6 +120,20 @@ fn loop_stmt(input: &mut &str) -> winnow::Result<LoopBlock> {
 
 fn alt_stmt(input: &mut &str) -> winnow::Result<AltBlock> {
     "alt".parse_next(input)?;
+    block_with_divider(input, "else")
+}
+
+fn par_stmt(input: &mut &str) -> winnow::Result<AltBlock> {
+    "par".parse_next(input)?;
+    block_with_divider(input, "and")
+}
+
+fn critical_stmt(input: &mut &str) -> winnow::Result<AltBlock> {
+    "critical".parse_next(input)?;
+    block_with_divider(input, "option")
+}
+
+fn block_with_divider(input: &mut &str, divider: &str) -> winnow::Result<AltBlock> {
     space1.parse_next(input)?;
     let label = till_line_ending.parse_next(input)?;
     opt(line_ending).parse_next(input)?;
@@ -132,8 +148,8 @@ fn alt_stmt(input: &mut &str) -> winnow::Result<AltBlock> {
             opt(line_ending).parse_next(input)?;
             break;
         }
-        if input.starts_with("else") {
-            "else".parse_next(input)?;
+        if input.starts_with(divider) {
+            input.next_slice(divider.len());
             let else_label = if input.starts_with(|c: char| c == ' ' || c == '\t') {
                 space1.parse_next(input)?;
                 let l = till_line_ending.parse_next(input)?;
@@ -147,7 +163,7 @@ fn alt_stmt(input: &mut &str) -> winnow::Result<AltBlock> {
             let mut else_body = Vec::new();
             loop {
                 space0.parse_next(input)?;
-                if input.starts_with("end") || input.starts_with("else") {
+                if input.starts_with("end") || input.starts_with(divider) {
                     break;
                 }
                 if input.is_empty() {
