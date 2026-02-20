@@ -47,7 +47,7 @@ pub fn compute(diagram: &GraphDiagram) -> Result<GraphLayout, String> {
 
     let node_layouts = match diagram.direction {
         Direction::TopDown => layout_td(&ranks_nodes),
-        Direction::LeftRight => layout_lr(&ranks_nodes),
+        Direction::LeftRight => layout_lr(&ranks_nodes, &ranks, &diagram.edges),
     };
 
     let edges: Vec<EdgeLayout> = diagram
@@ -175,7 +175,11 @@ fn layout_td(ranks_nodes: &[Vec<&NodeDecl>]) -> Vec<NodeLayout> {
     layouts
 }
 
-fn layout_lr(ranks_nodes: &[Vec<&NodeDecl>]) -> Vec<NodeLayout> {
+fn layout_lr(
+    ranks_nodes: &[Vec<&NodeDecl>],
+    ranks: &HashMap<String, usize>,
+    edges: &[Edge],
+) -> Vec<NodeLayout> {
     let mut layouts = Vec::new();
     let mut rank_x = 0;
 
@@ -203,7 +207,17 @@ fn layout_lr(ranks_nodes: &[Vec<&NodeDecl>]) -> Vec<NodeLayout> {
         }
 
         if rank + 1 < ranks_nodes.len() {
-            rank_x += rank_max_width + LR_GAP;
+            let label_gap = edges
+                .iter()
+                .filter(|e| {
+                    ranks.get(&e.from) == Some(&rank)
+                        && ranks.get(&e.to) == Some(&(rank + 1))
+                })
+                .filter_map(|e| e.label.as_ref().map(|l| l.len() + 2))
+                .max()
+                .unwrap_or(0);
+            let gap = LR_GAP.max(label_gap);
+            rank_x += rank_max_width + gap;
         }
     }
 

@@ -61,7 +61,7 @@ fn render_td(layout: &GraphLayout) -> String {
     for edge in &layout.edges {
         let from = node_map[edge.from_id.as_str()];
         let to = node_map[edge.to_id.as_str()];
-        draw_td_edge(&mut grid, from, to, edge.edge_type, layout);
+        draw_td_edge(&mut grid, from, to, edge, layout);
     }
 
     grid.to_string()
@@ -79,7 +79,7 @@ fn render_lr(layout: &GraphLayout) -> String {
     for edge in &layout.edges {
         let from = node_map[edge.from_id.as_str()];
         let to = node_map[edge.to_id.as_str()];
-        draw_lr_edge(&mut grid, from, to, edge.edge_type);
+        draw_lr_edge(&mut grid, from, to, edge);
     }
 
     grid.to_string()
@@ -107,9 +107,10 @@ fn draw_td_edge(
     grid: &mut Grid,
     from: &NodeLayout,
     to: &NodeLayout,
-    edge_type: EdgeType,
+    edge: &EdgeLayout,
     layout: &GraphLayout,
 ) {
+    let edge_type = edge.edge_type;
     let from_cx = from.center_x;
     let to_cx = to.center_x;
     let bottom_row = from.y + from.height - 1;
@@ -168,8 +169,13 @@ fn draw_td_edge(
             grid.set(to_above, to_cx, '│');
         }
     } else {
-        for row in from_below..to_above {
-            grid.set(row, from_cx, '│');
+        if let Some(ref label) = edge.label {
+            let label_col = from_cx.saturating_sub(label.len() / 2);
+            grid.write_str(from_below, label_col, label);
+        } else {
+            for row in from_below..to_above {
+                grid.set(row, from_cx, '│');
+            }
         }
         if edge_type == EdgeType::Arrow {
             grid.set(to_above, to_cx, '▼');
@@ -183,7 +189,7 @@ fn draw_lr_edge(
     grid: &mut Grid,
     from: &NodeLayout,
     to: &NodeLayout,
-    edge_type: EdgeType,
+    edge: &EdgeLayout,
 ) {
     let from_right = from.x + from.width;
     let to_left = to.x;
@@ -193,8 +199,16 @@ fn draw_lr_edge(
         grid.set(row, col, '─');
     }
 
-    if edge_type == EdgeType::Arrow {
+    if edge.edge_type == EdgeType::Arrow {
         grid.set(row, to_left - 1, '>');
+    }
+
+    if let Some(ref label) = edge.label {
+        let gap = to_left - from_right;
+        let label_col = from_right + (gap.saturating_sub(label.len())) / 2;
+        if row > 0 {
+            grid.write_str(row - 1, label_col, label);
+        }
     }
 }
 
@@ -277,6 +291,21 @@ mod tests {
     }
 
     #[test]
+    fn render_td_edge_label() {
+        let output = render_input("graph TD\n    A -->|yes| B\n");
+        let expected = "\
+┌───┐
+│ A │
+└─┬─┘
+ yes
+  ▼
+┌───┐
+│ B │
+└───┘";
+        assert_eq!(output, expected);
+    }
+
+    #[test]
     fn render_td_open_link() {
         let output = render_input("graph TD\n    A --- B\n");
         let expected = "\
@@ -288,6 +317,16 @@ mod tests {
 ┌───┐
 │ B │
 └───┘";
+        assert_eq!(output, expected);
+    }
+
+    #[test]
+    fn render_lr_edge_label() {
+        let output = render_input("graph LR\n    A -->|yes| B\n");
+        let expected = "\
+┌───┐ yes ┌───┐
+│ A │────>│ B │
+└───┘     └───┘";
         assert_eq!(output, expected);
     }
 
