@@ -107,6 +107,10 @@ fn bracketed_label(input: &mut &str) -> winnow::Result<String> {
 
 fn edge_type(input: &mut &str) -> winnow::Result<EdgeType> {
     alt((
+        "-.->".value(EdgeType::DottedArrow),
+        "-.-".value(EdgeType::DottedLink),
+        "==>".value(EdgeType::ThickArrow),
+        "===".value(EdgeType::ThickLink),
         "-->".value(EdgeType::Arrow),
         "---".value(EdgeType::OpenLink),
     ))
@@ -323,6 +327,64 @@ mod tests {
             diagram.edges[0].label,
             Some("hello world".to_string())
         );
+    }
+
+    #[test]
+    fn parse_edge_dotted_arrow() {
+        let mut input = "-.->rest";
+        assert_eq!(edge_type(&mut input).unwrap(), EdgeType::DottedArrow);
+        assert_eq!(input, "rest");
+    }
+
+    #[test]
+    fn parse_edge_dotted_link() {
+        let mut input = "-.-rest";
+        assert_eq!(edge_type(&mut input).unwrap(), EdgeType::DottedLink);
+        assert_eq!(input, "rest");
+    }
+
+    #[test]
+    fn parse_edge_thick_arrow() {
+        let mut input = "==>rest";
+        assert_eq!(edge_type(&mut input).unwrap(), EdgeType::ThickArrow);
+        assert_eq!(input, "rest");
+    }
+
+    #[test]
+    fn parse_edge_thick_link() {
+        let mut input = "===rest";
+        assert_eq!(edge_type(&mut input).unwrap(), EdgeType::ThickLink);
+        assert_eq!(input, "rest");
+    }
+
+    #[test]
+    fn parse_dotted_arrow_graph() {
+        let input = "graph TD\n    A -.-> B\n";
+        let diagram = parse_graph(input).unwrap();
+        assert_eq!(diagram.edges[0].edge_type, EdgeType::DottedArrow);
+    }
+
+    #[test]
+    fn parse_thick_arrow_graph() {
+        let input = "graph TD\n    A ==> B\n";
+        let diagram = parse_graph(input).unwrap();
+        assert_eq!(diagram.edges[0].edge_type, EdgeType::ThickArrow);
+    }
+
+    #[test]
+    fn parse_dotted_arrow_with_label() {
+        let input = "graph TD\n    A -.->|yes| B\n";
+        let diagram = parse_graph(input).unwrap();
+        assert_eq!(diagram.edges[0].edge_type, EdgeType::DottedArrow);
+        assert_eq!(diagram.edges[0].label, Some("yes".to_string()));
+    }
+
+    #[test]
+    fn parse_thick_arrow_with_label() {
+        let input = "graph TD\n    A ==>|yes| B\n";
+        let diagram = parse_graph(input).unwrap();
+        assert_eq!(diagram.edges[0].edge_type, EdgeType::ThickArrow);
+        assert_eq!(diagram.edges[0].label, Some("yes".to_string()));
     }
 
     #[test]

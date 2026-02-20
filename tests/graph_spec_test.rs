@@ -356,6 +356,128 @@ fn spec_alt_label_with_spaces() {
 }
 
 // =============================================================================
+// Edges — Dotted Arrow (-.->)
+// =============================================================================
+
+#[test]
+fn spec_edge_td_dotted_arrow() {
+    let input = "graph TD\n    A -.-> B\n";
+    let output = ma::render(input).unwrap();
+    assert!(output.contains('┬'), "parent bottom has ┬");
+    assert!(output.contains('┊'), "dotted vertical connector ┊");
+    assert!(output.contains('▼'), "arrow head ▼");
+}
+
+#[test]
+fn spec_edge_lr_dotted_arrow() {
+    let input = "graph LR\n    A -.-> B\n";
+    let output = ma::render(input).unwrap();
+    let lines: Vec<&str> = output.lines().collect();
+    let arrow_line = lines[1];
+    assert!(arrow_line.contains('╌'), "dotted horizontal connector ╌");
+    assert!(arrow_line.contains('>'), "arrow head at target");
+}
+
+#[test]
+fn spec_edge_td_dotted_link() {
+    let input = "graph TD\n    A -.- B\n";
+    let output = ma::render(input).unwrap();
+    assert!(output.contains('┊'), "dotted vertical connector ┊");
+    assert!(!output.contains('▼'), "no arrow for dotted link");
+}
+
+#[test]
+fn spec_edge_lr_dotted_link() {
+    let input = "graph LR\n    A -.- B\n";
+    let output = ma::render(input).unwrap();
+    let lines: Vec<&str> = output.lines().collect();
+    let conn_line = lines[1];
+    assert!(conn_line.contains('╌'), "dotted horizontal connector");
+    assert!(!conn_line.contains('>'), "no arrow head for dotted link");
+}
+
+// =============================================================================
+// Edges — Thick Arrow (==>)
+// =============================================================================
+
+#[test]
+fn spec_edge_td_thick_arrow() {
+    let input = "graph TD\n    A ==> B\n";
+    let output = ma::render(input).unwrap();
+    assert!(output.contains('┬'), "parent bottom has ┬");
+    assert!(output.contains('║'), "thick vertical connector ║");
+    assert!(output.contains('▼'), "arrow head ▼");
+}
+
+#[test]
+fn spec_edge_lr_thick_arrow() {
+    let input = "graph LR\n    A ==> B\n";
+    let output = ma::render(input).unwrap();
+    let lines: Vec<&str> = output.lines().collect();
+    let arrow_line = lines[1];
+    assert!(arrow_line.contains('═'), "thick horizontal connector ═");
+    assert!(arrow_line.contains('>'), "arrow head at target");
+}
+
+#[test]
+fn spec_edge_td_thick_link() {
+    let input = "graph TD\n    A === B\n";
+    let output = ma::render(input).unwrap();
+    assert!(output.contains('║'), "thick vertical connector ║");
+    assert!(!output.contains('▼'), "no arrow for thick link");
+}
+
+#[test]
+fn spec_edge_lr_thick_link() {
+    let input = "graph LR\n    A === B\n";
+    let output = ma::render(input).unwrap();
+    let lines: Vec<&str> = output.lines().collect();
+    let conn_line = lines[1];
+    assert!(conn_line.contains('═'), "thick horizontal connector");
+    assert!(!conn_line.contains('>'), "no arrow head for thick link");
+}
+
+// =============================================================================
+// Edge Labels with dotted/thick edges
+// =============================================================================
+
+#[test]
+fn spec_td_dotted_edge_label() {
+    let input = "graph TD\n    A -.->|yes| B\n";
+    let output = ma::render(input).unwrap();
+    assert!(output.contains("yes"), "label text rendered");
+    assert!(output.contains('▼'), "arrow head present");
+}
+
+#[test]
+fn spec_lr_dotted_edge_label() {
+    let input = "graph LR\n    A -.->|yes| B\n";
+    let output = ma::render(input).unwrap();
+    let lines: Vec<&str> = output.lines().collect();
+    assert!(lines[0].contains("yes"), "label rendered above edge");
+    assert!(lines[1].contains('>'), "arrow present");
+    assert!(lines[1].contains('╌'), "dotted connector used");
+}
+
+#[test]
+fn spec_td_thick_edge_label() {
+    let input = "graph TD\n    A ==>|go| B\n";
+    let output = ma::render(input).unwrap();
+    assert!(output.contains("go"), "label text rendered");
+    assert!(output.contains('▼'), "arrow head present");
+}
+
+#[test]
+fn spec_lr_thick_edge_label() {
+    let input = "graph LR\n    A ==>|go| B\n";
+    let output = ma::render(input).unwrap();
+    let lines: Vec<&str> = output.lines().collect();
+    assert!(lines[0].contains("go"), "label rendered above edge");
+    assert!(lines[1].contains('>'), "arrow present");
+    assert!(lines[1].contains('═'), "thick connector used");
+}
+
+// =============================================================================
 // Dispatch — graph input does not break sequence diagrams
 // =============================================================================
 
