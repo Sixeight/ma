@@ -395,7 +395,6 @@ sequenceDiagram
 // --- break ---
 
 #[test]
-#[ignore = "break not yet implemented"]
 fn spec_break() {
     let input = "\
 sequenceDiagram

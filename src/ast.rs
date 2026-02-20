@@ -13,6 +13,7 @@ pub enum Statement {
     Loop(LoopBlock),
     Alt(AltBlock),
     Opt(LoopBlock),
+    Break(LoopBlock),
 }
 
 #[derive(Debug, Clone, PartialEq)]
