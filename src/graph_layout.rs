@@ -135,7 +135,7 @@ fn layout_td(ranks_nodes: &[Vec<&NodeDecl>]) -> Vec<NodeLayout> {
     for rank_nodes in ranks_nodes {
         let total: usize = rank_nodes
             .iter()
-            .map(|n| box_width(&n.label))
+            .map(|n| box_width(&n.label, n.shape))
             .sum::<usize>()
             + if rank_nodes.len() > 1 {
                 (rank_nodes.len() - 1) * TD_NODE_GAP
@@ -158,7 +158,7 @@ fn layout_td(ranks_nodes: &[Vec<&NodeDecl>]) -> Vec<NodeLayout> {
         let mut x = base_x;
 
         for node in rank_nodes {
-            let w = box_width(&node.label);
+            let w = box_width(&node.label, node.shape);
             layouts.push(NodeLayout {
                 id: node.id.clone(),
                 label: node.label.clone(),
@@ -188,13 +188,13 @@ fn layout_lr(
     for (rank, rank_nodes) in ranks_nodes.iter().enumerate() {
         let rank_max_width = rank_nodes
             .iter()
-            .map(|n| box_width(&n.label))
+            .map(|n| box_width(&n.label, n.shape))
             .max()
             .unwrap_or(0);
         let mut y = 0;
 
         for node in rank_nodes {
-            let w = box_width(&node.label);
+            let w = box_width(&node.label, node.shape);
             layouts.push(NodeLayout {
                 id: node.id.clone(),
                 label: node.label.clone(),
@@ -227,8 +227,12 @@ fn layout_lr(
     layouts
 }
 
-fn box_width(label: &str) -> usize {
-    label.len() + 4
+fn box_width(label: &str, shape: NodeShape) -> usize {
+    let base = label.len() + 4;
+    match shape {
+        NodeShape::Circle => base + 4,
+        _ => base,
+    }
 }
 
 #[cfg(test)]

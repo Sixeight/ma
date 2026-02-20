@@ -88,7 +88,10 @@ fn render_lr(layout: &GraphLayout) -> String {
 fn draw_node(grid: &mut Grid, node: &NodeLayout) {
     match node.shape {
         NodeShape::Box => draw_box(grid, node.x, node.y, node.width, &node.label),
-        _ => draw_box(grid, node.x, node.y, node.width, &node.label),
+        NodeShape::Round | NodeShape::Circle => {
+            draw_round(grid, node.x, node.y, node.width, &node.label)
+        }
+        NodeShape::Diamond => draw_diamond(grid, node.x, node.y, node.width, &node.label),
     }
 }
 
@@ -108,6 +111,44 @@ fn draw_box(grid: &mut Grid, x: usize, y: usize, width: usize, label: &str) {
         grid.set(y + 2, col, '─');
     }
     grid.set(y + 2, x + width - 1, '┘');
+}
+
+fn draw_round(grid: &mut Grid, x: usize, y: usize, width: usize, label: &str) {
+    grid.set(y, x, '╭');
+    for col in (x + 1)..(x + width - 1) {
+        grid.set(y, col, '─');
+    }
+    grid.set(y, x + width - 1, '╮');
+
+    grid.set(y + 1, x, '│');
+    let inner = width - 2;
+    let pad_left = (inner - label.len()) / 2;
+    grid.write_str(y + 1, x + 1 + pad_left, label);
+    grid.set(y + 1, x + width - 1, '│');
+
+    grid.set(y + 2, x, '╰');
+    for col in (x + 1)..(x + width - 1) {
+        grid.set(y + 2, col, '─');
+    }
+    grid.set(y + 2, x + width - 1, '╯');
+}
+
+fn draw_diamond(grid: &mut Grid, x: usize, y: usize, width: usize, label: &str) {
+    grid.set(y, x, '╱');
+    for col in (x + 1)..(x + width - 1) {
+        grid.set(y, col, '─');
+    }
+    grid.set(y, x + width - 1, '╲');
+
+    grid.set(y + 1, x, '│');
+    grid.write_str(y + 1, x + 2, label);
+    grid.set(y + 1, x + width - 1, '│');
+
+    grid.set(y + 2, x, '╲');
+    for col in (x + 1)..(x + width - 1) {
+        grid.set(y + 2, col, '─');
+    }
+    grid.set(y + 2, x + width - 1, '╱');
 }
 
 fn draw_td_edge(
@@ -229,6 +270,36 @@ mod tests {
         let diagram = parse_graph(input).unwrap();
         let layout = crate::graph_layout::compute(&diagram).unwrap();
         render(&layout)
+    }
+
+    #[test]
+    fn render_round_node() {
+        let output = render_input("graph TD\n    A(Hello)\n");
+        let expected = "\
+╭───────╮
+│ Hello │
+╰───────╯";
+        assert_eq!(output, expected);
+    }
+
+    #[test]
+    fn render_diamond_node() {
+        let output = render_input("graph TD\n    A{Hello}\n");
+        let expected = "\
+╱───────╲
+│ Hello │
+╲───────╱";
+        assert_eq!(output, expected);
+    }
+
+    #[test]
+    fn render_circle_node() {
+        let output = render_input("graph TD\n    A((Hello))\n");
+        let expected = "\
+╭───────────╮
+│   Hello   │
+╰───────────╯";
+        assert_eq!(output, expected);
     }
 
     #[test]
