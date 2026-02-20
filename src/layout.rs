@@ -5,6 +5,7 @@ pub struct Layout {
     pub participants: Vec<ParticipantLayout>,
     pub rows: Vec<Row>,
     pub total_width: usize,
+    pub activations: Vec<Vec<bool>>,
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -48,6 +49,7 @@ pub fn compute(diagram: &Diagram) -> Result<Layout, String> {
     let gaps = compute_gaps(diagram, &participant_order, &display_names);
     let participants = compute_positions(&participant_order, &display_names, &gaps);
     let rows = compute_rows(diagram, &participant_order, &participants);
+    let activations = compute_activations(diagram, &participant_order, rows.len());
 
     let total_width = participants
         .last()
@@ -58,6 +60,7 @@ pub fn compute(diagram: &Diagram) -> Result<Layout, String> {
         participants,
         rows,
         total_width,
+        activations,
     })
 }
 
@@ -85,6 +88,7 @@ fn collect_participants(
                     }
                 }
             }
+            Statement::Activate(_) | Statement::Deactivate(_) => {}
         }
     }
 
@@ -201,6 +205,51 @@ fn compute_rows(
     rows
 }
 
+fn compute_activations(
+    diagram: &Diagram,
+    order: &[String],
+    row_count: usize,
+) -> Vec<Vec<bool>> {
+    let participant_count = order.len();
+    let mut depths: Vec<i32> = vec![0; participant_count];
+    let mut activations = Vec::with_capacity(row_count);
+
+    for stmt in &diagram.statements {
+        match stmt {
+            Statement::Activate(id) => {
+                if let Some(idx) = order.iter().position(|p| p == id) {
+                    depths[idx] += 1;
+                }
+            }
+            Statement::Deactivate(id) => {
+                if let Some(idx) = order.iter().position(|p| p == id) {
+                    depths[idx] = (depths[idx] - 1).max(0);
+                }
+            }
+            Statement::Message(m) => {
+                if m.activate_target {
+                    if let Some(idx) = order.iter().position(|p| p == &m.to) {
+                        depths[idx] += 1;
+                    }
+                }
+
+                let row_active: Vec<bool> = depths.iter().map(|&d| d > 0).collect();
+                activations.push(row_active);
+
+                if m.deactivate_source {
+                    if let Some(idx) = order.iter().position(|p| p == &m.from) {
+                        depths[idx] = (depths[idx] - 1).max(0);
+                    }
+                }
+            }
+            Statement::ParticipantDecl(_) => {}
+        }
+    }
+
+    debug_assert_eq!(activations.len(), row_count);
+    activations
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -307,5 +356,54 @@ sequenceDiagram
                 assert_eq!(m.direction, Direction::RightToLeft);
             }
         }
+    }
+
+    // --- activations ---
+
+    #[test]
+    fn layout_activation_with_shorthand() {
+        let input = "\
+sequenceDiagram
+    Alice->>+Bob: Hello
+    Bob-->>-Alice: Hi!
+";
+        let diagram = parse_diagram(input).unwrap();
+        let layout = compute(&diagram).unwrap();
+
+        // Row 0: Alice->>+Bob → Bob active after this message
+        // Row 1: Bob-->>-Alice → Bob deactivated after this message
+        assert!(!layout.activations[0][0], "Alice not active at row 0");
+        assert!(layout.activations[0][1], "Bob active at row 0");
+        assert!(!layout.activations[1][0], "Alice not active at row 1");
+        assert!(layout.activations[1][1], "Bob still active at row 1 (deactivated after)");
+    }
+
+    #[test]
+    fn layout_activation_explicit() {
+        let input = "\
+sequenceDiagram
+    activate Alice
+    Alice->>Bob: Working
+    deactivate Alice
+    Bob-->>Alice: Done
+";
+        let diagram = parse_diagram(input).unwrap();
+        let layout = compute(&diagram).unwrap();
+
+        // Only Message rows are in layout.rows, Activate/Deactivate are not rows
+        assert_eq!(layout.rows.len(), 2);
+        assert!(layout.activations[0][0], "Alice active at row 0");
+        assert!(!layout.activations[1][0], "Alice not active at row 1");
+    }
+
+    #[test]
+    fn layout_no_activations() {
+        let input = "sequenceDiagram\n    Alice->>Bob: Hello\n";
+        let diagram = parse_diagram(input).unwrap();
+        let layout = compute(&diagram).unwrap();
+
+        assert_eq!(layout.activations.len(), 1);
+        assert!(!layout.activations[0][0]);
+        assert!(!layout.activations[0][1]);
     }
 }

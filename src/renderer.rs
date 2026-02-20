@@ -11,6 +11,7 @@ const BOX_TD: char = '┬';
 const BOX_TU: char = '┴';
 const ARROW_R: char = '>';
 const ARROW_L: char = '<';
+const HEAVY_V: char = '┃';
 
 struct Grid {
     cells: Vec<Vec<char>>,
@@ -62,10 +63,15 @@ pub fn render(layout: &Layout) -> String {
     let body_start = box_height;
     for (i, row) in layout.rows.iter().enumerate() {
         let y = body_start + i * rows_per_message;
+        let row_activations = layout
+            .activations
+            .get(i)
+            .cloned()
+            .unwrap_or_else(|| vec![false; layout.participants.len()]);
         match row {
             Row::Message(msg) => {
-                draw_lifelines(&mut grid, layout, y, rows_per_message);
-                draw_message(&mut grid, msg, y);
+                draw_lifelines(&mut grid, layout, y, rows_per_message, &row_activations);
+                draw_message(&mut grid, layout, msg, y, &row_activations);
             }
         }
     }
@@ -102,15 +108,32 @@ fn draw_participant_boxes(grid: &mut Grid, layout: &Layout, y: usize, is_top: bo
     }
 }
 
-fn draw_lifelines(grid: &mut Grid, layout: &Layout, y: usize, count: usize) {
-    for p in &layout.participants {
+fn draw_lifelines(
+    grid: &mut Grid,
+    layout: &Layout,
+    y: usize,
+    count: usize,
+    activations: &[bool],
+) {
+    for (i, p) in layout.participants.iter().enumerate() {
+        let ch = if activations.get(i).copied().unwrap_or(false) {
+            HEAVY_V
+        } else {
+            BOX_V
+        };
         for dy in 0..count {
-            grid.set(y + dy, p.center_col, BOX_V);
+            grid.set(y + dy, p.center_col, ch);
         }
     }
 }
 
-fn draw_message(grid: &mut Grid, msg: &MessageRow, y: usize) {
+fn draw_message(
+    grid: &mut Grid,
+    layout: &Layout,
+    msg: &MessageRow,
+    y: usize,
+    activations: &[bool],
+) {
     let (left_col, right_col) = if msg.from_col < msg.to_col {
         (msg.from_col, msg.to_col)
     } else {
@@ -152,8 +175,28 @@ fn draw_message(grid: &mut Grid, msg: &MessageRow, y: usize) {
         }
     }
 
-    grid.set(arrow_y, left_col, BOX_V);
-    grid.set(arrow_y, right_col, BOX_V);
+    let left_idx = layout
+        .participants
+        .iter()
+        .position(|p| p.center_col == left_col);
+    let right_idx = layout
+        .participants
+        .iter()
+        .position(|p| p.center_col == right_col);
+
+    let left_ch = if left_idx.map_or(false, |i| activations.get(i).copied().unwrap_or(false)) {
+        HEAVY_V
+    } else {
+        BOX_V
+    };
+    let right_ch = if right_idx.map_or(false, |i| activations.get(i).copied().unwrap_or(false)) {
+        HEAVY_V
+    } else {
+        BOX_V
+    };
+
+    grid.set(arrow_y, left_col, left_ch);
+    grid.set(arrow_y, right_col, right_ch);
 }
 
 fn arrow_head_char(arrow: &Arrow) -> char {
@@ -239,5 +282,26 @@ mod tests {
         let output = render(&layout);
 
         assert!(output.contains(">│") || output.contains(">"), "should have right arrow");
+    }
+
+    #[test]
+    fn render_activation_uses_heavy_line() {
+        let input = "sequenceDiagram\n    Alice->>+Bob: Hello\n    Bob-->>-Alice: Hi!\n";
+        let diagram = crate::parser::parse_diagram(input).unwrap();
+        let layout = crate::layout::compute(&diagram).unwrap();
+        let output = render(&layout);
+
+        assert!(output.contains('┃'), "active lifeline should use heavy vertical");
+    }
+
+    #[test]
+    fn render_inactive_uses_normal_line() {
+        let input = "sequenceDiagram\n    Alice->>Bob: Hello\n";
+        let diagram = crate::parser::parse_diagram(input).unwrap();
+        let layout = crate::layout::compute(&diagram).unwrap();
+        let output = render(&layout);
+
+        let body = output.lines().skip(3).take(3).collect::<Vec<_>>().join("\n");
+        assert!(!body.contains('┃'), "inactive lifeline should not use heavy vertical");
     }
 }

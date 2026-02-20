@@ -72,3 +72,49 @@ sequenceDiagram
     assert!(output.contains("dotted cross"));
     assert!(output.contains("dotted open"));
 }
+
+#[test]
+fn snapshot_activation_shorthand() {
+    let input = "\
+sequenceDiagram
+    Alice->>+Bob: Hello
+    Bob-->>-Alice: Hi!
+";
+    let output = ma::render(input).unwrap();
+    let expected = "\
+┌───────┐  ┌─────┐
+│ Alice │  │ Bob │
+└───┬───┘  └──┬──┘
+    │ Hello   ┃
+    │────────>┃
+    │         ┃
+    │ Hi!     ┃
+    │< ─ ─ ─ ─┃
+    │         ┃
+┌───┴───┐  ┌──┴──┐
+│ Alice │  │ Bob │
+└───────┘  └─────┘";
+    assert_eq!(output, expected);
+}
+
+#[test]
+fn snapshot_activation_explicit() {
+    let input = "\
+sequenceDiagram
+    Alice->>Bob: Hello
+    activate Bob
+    Bob-->>Alice: Hi!
+    deactivate Bob
+";
+    let output = ma::render(input).unwrap();
+
+    assert!(output.contains('┃'), "active lifeline should use heavy vertical");
+
+    let lines: Vec<&str> = output.lines().collect();
+    // First message (Hello) - Bob not yet active
+    assert!(lines[3].contains("Hello"));
+    assert!(!lines[3].contains('┃'), "Bob not active during Hello");
+    // Second message (Hi!) - Bob active
+    assert!(lines[6].contains("Hi!"));
+    assert!(lines[6].contains('┃'), "Bob active during Hi!");
+}

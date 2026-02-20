@@ -7,6 +7,8 @@ pub struct Diagram {
 pub enum Statement {
     ParticipantDecl(ParticipantDecl),
     Message(Message),
+    Activate(String),
+    Deactivate(String),
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -21,6 +23,8 @@ pub struct Message {
     pub to: String,
     pub arrow: Arrow,
     pub text: String,
+    pub activate_target: bool,
+    pub deactivate_source: bool,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq)]

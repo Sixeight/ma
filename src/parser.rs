@@ -32,6 +32,8 @@ fn statement(input: &mut &str) -> winnow::Result<Option<Statement>> {
         comment_line.map(|_| None),
         blank_line.map(|_| None),
         participant_decl.map(|p| Some(Statement::ParticipantDecl(p))),
+        activate_stmt.map(|id| Some(Statement::Activate(id))),
+        deactivate_stmt.map(|id| Some(Statement::Deactivate(id))),
         message.map(|m| Some(Statement::Message(m))),
     ))
     .parse_next(input)?;
@@ -48,6 +50,22 @@ fn comment_line(input: &mut &str) -> winnow::Result<()> {
 
 fn blank_line(input: &mut &str) -> winnow::Result<()> {
     line_ending.void().parse_next(input)
+}
+
+fn activate_stmt<'s>(input: &mut &'s str) -> winnow::Result<String> {
+    "activate".parse_next(input)?;
+    space1.parse_next(input)?;
+    let id = identifier.parse_next(input)?;
+    opt(line_ending).parse_next(input)?;
+    Ok(id.to_string())
+}
+
+fn deactivate_stmt<'s>(input: &mut &'s str) -> winnow::Result<String> {
+    "deactivate".parse_next(input)?;
+    space1.parse_next(input)?;
+    let id = identifier.parse_next(input)?;
+    opt(line_ending).parse_next(input)?;
+    Ok(id.to_string())
 }
 
 fn participant_decl(input: &mut &str) -> winnow::Result<ParticipantDecl> {
@@ -68,6 +86,8 @@ fn message(input: &mut &str) -> winnow::Result<Message> {
     let from = identifier.parse_next(input)?;
     space0.parse_next(input)?;
     let arr = arrow.parse_next(input)?;
+
+    let modifier = opt(alt(("+".value('+'), "-".value('-')))).parse_next(input)?;
     space0.parse_next(input)?;
     let to = identifier.parse_next(input)?;
     space0.parse_next(input)?;
@@ -81,6 +101,8 @@ fn message(input: &mut &str) -> winnow::Result<Message> {
         to: to.to_string(),
         arrow: arr,
         text: text.trim().to_string(),
+        activate_target: modifier == Some('+'),
+        deactivate_source: modifier == Some('-'),
     })
 }
 
@@ -298,5 +320,50 @@ sequenceDiagram
 ";
         let diagram = parse_diagram(input).unwrap();
         assert_eq!(diagram.statements.len(), 2);
+    }
+
+    // --- activate/deactivate ---
+
+    #[test]
+    fn parse_activate_statement() {
+        let input = "\
+sequenceDiagram
+    Alice->>Bob: Hello
+    activate Bob
+    Bob-->>Alice: Hi!
+    deactivate Bob
+";
+        let diagram = parse_diagram(input).unwrap();
+        assert_eq!(diagram.statements.len(), 4);
+        assert_eq!(diagram.statements[1], Statement::Activate("Bob".to_string()));
+        assert_eq!(diagram.statements[3], Statement::Deactivate("Bob".to_string()));
+    }
+
+    #[test]
+    fn parse_message_with_activate_shorthand() {
+        let mut input = "Alice->>+Bob: Hello";
+        let msg = message(&mut input).unwrap();
+        assert_eq!(msg.from, "Alice");
+        assert_eq!(msg.to, "Bob");
+        assert!(msg.activate_target);
+        assert!(!msg.deactivate_source);
+    }
+
+    #[test]
+    fn parse_message_with_deactivate_shorthand() {
+        let mut input = "Bob-->>-Alice: Hi!";
+        let msg = message(&mut input).unwrap();
+        assert_eq!(msg.from, "Bob");
+        assert_eq!(msg.to, "Alice");
+        assert!(!msg.activate_target);
+        assert!(msg.deactivate_source);
+    }
+
+    #[test]
+    fn parse_message_without_modifiers() {
+        let mut input = "Alice->>Bob: Hello";
+        let msg = message(&mut input).unwrap();
+        assert!(!msg.activate_target);
+        assert!(!msg.deactivate_source);
     }
 }
