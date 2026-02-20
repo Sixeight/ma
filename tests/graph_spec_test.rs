@@ -260,6 +260,70 @@ fn spec_lr_open_link() {
 }
 
 // =============================================================================
+// Edge Labels
+// =============================================================================
+
+#[test]
+fn spec_td_edge_label_arrow() {
+    let input = "graph TD\n    A -->|yes| B\n";
+    let output = ma::render(input).unwrap();
+    let expected = "\
+┌───┐
+│ A │
+└─┬─┘
+ yes
+  ▼
+┌───┐
+│ B │
+└───┘";
+    assert_eq!(output, expected);
+}
+
+#[test]
+fn spec_td_edge_label_open_link() {
+    let input = "graph TD\n    A ---|label| B\n";
+    let output = ma::render(input).unwrap();
+    assert!(output.contains("label"), "label text rendered");
+    assert!(!output.contains('▼'), "no arrow for open link");
+}
+
+#[test]
+fn spec_lr_edge_label() {
+    let input = "graph LR\n    A -->|yes| B\n";
+    let output = ma::render(input).unwrap();
+    let expected = "\
+┌───┐ yes ┌───┐
+│ A │────>│ B │
+└───┘     └───┘";
+    assert_eq!(output, expected);
+}
+
+#[test]
+fn spec_lr_edge_label_long() {
+    let input = "graph LR\n    A -->|long label| B\n";
+    let output = ma::render(input).unwrap();
+    let lines: Vec<&str> = output.lines().collect();
+    assert!(lines[0].contains("long label"), "long label rendered");
+    assert!(lines[1].contains('>'), "arrow present");
+}
+
+#[test]
+fn spec_edge_no_label() {
+    let input = "graph TD\n    A --> B\n";
+    let output = ma::render(input).unwrap();
+    assert!(output.contains('│'), "connector line present when no label");
+}
+
+#[test]
+fn spec_fan_out_label_parsed_but_not_drawn() {
+    let input = "graph TD\n    A -->|yes| B\n    A -->|no| C\n";
+    let output = ma::render(input).unwrap();
+    assert!(output.contains("│ A │"), "parent rendered");
+    assert!(output.contains("│ B │"), "child B rendered");
+    assert!(output.contains("│ C │"), "child C rendered");
+}
+
+// =============================================================================
 // Dispatch — graph input does not break sequence diagrams
 // =============================================================================
 
