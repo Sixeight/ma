@@ -19,26 +19,65 @@ fn graph_diagram(input: &mut &str) -> winnow::Result<GraphDiagram> {
 
     let mut nodes: Vec<NodeDecl> = Vec::new();
     let mut edges: Vec<Edge> = Vec::new();
+    let mut subgraphs: Vec<Subgraph> = Vec::new();
 
     let lines: Vec<Option<GraphLine>> = repeat(0.., graph_line).parse_next(input)?;
     for line in lines.into_iter().flatten() {
-        match line {
-            GraphLine::Edge(edge, from_decl, to_decl) => {
-                add_node(&mut nodes, from_decl);
-                add_node(&mut nodes, to_decl);
-                edges.push(edge);
-            }
-            GraphLine::Node(decl) => {
-                add_node(&mut nodes, decl);
-            }
-        }
+        collect_line(line, &mut nodes, &mut edges, &mut subgraphs);
     }
 
     Ok(GraphDiagram {
         direction,
         nodes,
         edges,
+        subgraphs,
     })
+}
+
+fn collect_line(
+    line: GraphLine,
+    nodes: &mut Vec<NodeDecl>,
+    edges: &mut Vec<Edge>,
+    subgraphs: &mut Vec<Subgraph>,
+) {
+    match line {
+        GraphLine::Edge(edge, from_decl, to_decl) => {
+            add_node(nodes, from_decl);
+            add_node(nodes, to_decl);
+            edges.push(edge);
+        }
+        GraphLine::Node(decl) => {
+            add_node(nodes, decl);
+        }
+        GraphLine::SubgraphBlock(label, inner_lines) => {
+            let mut sg_node_ids: Vec<String> = Vec::new();
+            for inner in inner_lines {
+                match &inner {
+                    GraphLine::Edge(_, from_decl, to_decl) => {
+                        if !sg_node_ids.contains(&from_decl.id) {
+                            sg_node_ids.push(from_decl.id.clone());
+                        }
+                        if !sg_node_ids.contains(&to_decl.id) {
+                            sg_node_ids.push(to_decl.id.clone());
+                        }
+                    }
+                    GraphLine::Node(decl) => {
+                        if !sg_node_ids.contains(&decl.id) {
+                            sg_node_ids.push(decl.id.clone());
+                        }
+                    }
+                    GraphLine::SubgraphBlock(_, _) => {}
+                }
+                collect_line(inner, nodes, edges, subgraphs);
+            }
+            let id = label.replace(' ', "_").to_lowercase();
+            subgraphs.push(Subgraph {
+                id,
+                label,
+                node_ids: sg_node_ids,
+            });
+        }
+    }
 }
 
 fn add_node(nodes: &mut Vec<NodeDecl>, decl: NodeDecl) {
@@ -51,6 +90,7 @@ fn add_node(nodes: &mut Vec<NodeDecl>, decl: NodeDecl) {
 enum GraphLine {
     Edge(Edge, NodeDecl, NodeDecl),
     Node(NodeDecl),
+    SubgraphBlock(String, Vec<GraphLine>),
 }
 
 fn graph_line(input: &mut &str) -> winnow::Result<Option<GraphLine>> {
@@ -62,6 +102,7 @@ fn graph_line(input: &mut &str) -> winnow::Result<Option<GraphLine>> {
 
     let result = alt((
         blank_line.map(|_| None),
+        subgraph_block.map(Some),
         edge_line.map(Some),
         alt_edge_line.map(Some),
         node_line.map(Some),
@@ -69,6 +110,33 @@ fn graph_line(input: &mut &str) -> winnow::Result<Option<GraphLine>> {
     .parse_next(input)?;
 
     Ok(result)
+}
+
+fn subgraph_block(input: &mut &str) -> winnow::Result<GraphLine> {
+    "subgraph".parse_next(input)?;
+    space1.parse_next(input)?;
+    let label = take_while(1.., |c: char| c != '\n' && c != '\r')
+        .parse_next(input)?;
+    let label = label.trim_end().to_string();
+    opt(line_ending).parse_next(input)?;
+
+    let mut inner_lines: Vec<GraphLine> = Vec::new();
+    loop {
+        space0.parse_next(input)?;
+        if input.starts_with("end") {
+            "end".parse_next(input)?;
+            opt(line_ending).parse_next(input)?;
+            break;
+        }
+        if input.is_empty() {
+            break;
+        }
+        if let Some(line) = graph_line(input)? {
+            inner_lines.push(line);
+        }
+    }
+
+    Ok(GraphLine::SubgraphBlock(label, inner_lines))
 }
 
 fn blank_line(input: &mut &str) -> winnow::Result<()> {
@@ -463,5 +531,45 @@ mod tests {
         let a_nodes: Vec<_> = diagram.nodes.iter().filter(|n| n.id == "A").collect();
         assert_eq!(a_nodes.len(), 1);
         assert_eq!(a_nodes[0].label, "Start");
+    }
+
+    #[test]
+    fn parse_subgraph_basic() {
+        let input = "graph TD\n    subgraph Backend\n        A --> B\n    end\n";
+        let diagram = parse_graph(input).unwrap();
+        assert_eq!(diagram.subgraphs.len(), 1);
+        assert_eq!(diagram.subgraphs[0].label, "Backend");
+        assert_eq!(diagram.subgraphs[0].node_ids, vec!["A", "B"]);
+        assert_eq!(diagram.nodes.len(), 2);
+        assert_eq!(diagram.edges.len(), 1);
+    }
+
+    #[test]
+    fn parse_subgraph_with_labeled_nodes() {
+        let input = "graph TD\n    subgraph Backend\n        A[API] --> B[DB]\n    end\n";
+        let diagram = parse_graph(input).unwrap();
+        assert_eq!(diagram.subgraphs.len(), 1);
+        assert_eq!(diagram.subgraphs[0].label, "Backend");
+        assert_eq!(diagram.nodes[0].label, "API");
+        assert_eq!(diagram.nodes[1].label, "DB");
+    }
+
+    #[test]
+    fn parse_subgraph_with_standalone_node() {
+        let input = "graph TD\n    subgraph Group\n        A\n    end\n";
+        let diagram = parse_graph(input).unwrap();
+        assert_eq!(diagram.subgraphs.len(), 1);
+        assert_eq!(diagram.subgraphs[0].node_ids, vec!["A"]);
+        assert_eq!(diagram.nodes.len(), 1);
+    }
+
+    #[test]
+    fn parse_subgraph_mixed_with_outer_nodes() {
+        let input = "graph TD\n    C\n    subgraph Backend\n        A --> B\n    end\n    C --> A\n";
+        let diagram = parse_graph(input).unwrap();
+        assert_eq!(diagram.subgraphs.len(), 1);
+        assert_eq!(diagram.subgraphs[0].node_ids, vec!["A", "B"]);
+        assert_eq!(diagram.nodes.len(), 3);
+        assert_eq!(diagram.edges.len(), 2);
     }
 }

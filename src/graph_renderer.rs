@@ -54,6 +54,10 @@ fn render_td(layout: &GraphLayout) -> String {
     let node_map: HashMap<&str, &NodeLayout> =
         layout.nodes.iter().map(|n| (n.id.as_str(), n)).collect();
 
+    for sg in &layout.subgraphs {
+        draw_subgraph(&mut grid, sg);
+    }
+
     for node in &layout.nodes {
         draw_node(&mut grid, node);
     }
@@ -71,6 +75,10 @@ fn render_lr(layout: &GraphLayout) -> String {
     let mut grid = Grid::new(layout.width, layout.height);
     let node_map: HashMap<&str, &NodeLayout> =
         layout.nodes.iter().map(|n| (n.id.as_str(), n)).collect();
+
+    for sg in &layout.subgraphs {
+        draw_subgraph(&mut grid, sg);
+    }
 
     for node in &layout.nodes {
         draw_node(&mut grid, node);
@@ -93,6 +101,34 @@ fn draw_node(grid: &mut Grid, node: &NodeLayout) {
         }
         NodeShape::Diamond => draw_diamond(grid, node.x, node.y, node.width, &node.label),
     }
+}
+
+fn draw_subgraph(grid: &mut Grid, sg: &SubgraphLayout) {
+    let x = sg.x;
+    let y = sg.y;
+    let w = sg.width;
+    let h = sg.height;
+
+    grid.set(y, x, '┌');
+    grid.set(y, x + 1, '─');
+    grid.set(y, x + 2, ' ');
+    grid.write_str(y, x + 3, &sg.label);
+    grid.set(y, x + 3 + sg.label.len(), ' ');
+    for col in (x + 4 + sg.label.len())..(x + w - 1) {
+        grid.set(y, col, '─');
+    }
+    grid.set(y, x + w - 1, '┐');
+
+    for row in (y + 1)..(y + h - 1) {
+        grid.set(row, x, '│');
+        grid.set(row, x + w - 1, '│');
+    }
+
+    grid.set(y + h - 1, x, '└');
+    for col in (x + 1)..(x + w - 1) {
+        grid.set(y + h - 1, col, '─');
+    }
+    grid.set(y + h - 1, x + w - 1, '┘');
 }
 
 fn draw_box(grid: &mut Grid, x: usize, y: usize, width: usize, label: &str) {
@@ -164,6 +200,13 @@ fn has_arrow_head(edge_type: EdgeType) -> bool {
         edge_type,
         EdgeType::Arrow | EdgeType::DottedArrow | EdgeType::ThickArrow
     )
+}
+
+fn is_subgraph_border_row(layout: &GraphLayout, row: usize) -> bool {
+    layout
+        .subgraphs
+        .iter()
+        .any(|sg| row == sg.y || row == sg.y + sg.height - 1)
 }
 
 fn draw_td_edge(
@@ -238,13 +281,17 @@ fn draw_td_edge(
             grid.write_str(from_below, label_col, label);
         } else {
             for row in from_below..to_above {
-                grid.set(row, from_cx, vert);
+                if !is_subgraph_border_row(layout, row) {
+                    grid.set(row, from_cx, vert);
+                }
             }
         }
-        if has_arrow_head(edge_type) {
-            grid.set(to_above, to_cx, '▼');
-        } else {
-            grid.set(to_above, to_cx, vert);
+        if !is_subgraph_border_row(layout, to_above) {
+            if has_arrow_head(edge_type) {
+                grid.set(to_above, to_cx, '▼');
+            } else {
+                grid.set(to_above, to_cx, vert);
+            }
         }
     }
 }
@@ -541,5 +588,32 @@ mod tests {
 │ A │─────│ B │
 └───┘     └───┘";
         assert_eq!(output, expected);
+    }
+
+    #[test]
+    fn render_td_subgraph_single_node() {
+        let output = render_input("graph TD\n    subgraph Group\n        A\n    end\n");
+        assert!(output.contains("┌─ Group"), "top border with title");
+        assert!(output.contains("│ A │"), "node inside subgraph");
+        assert!(output.contains('└'), "bottom border");
+    }
+
+    #[test]
+    fn render_td_subgraph_with_edge() {
+        let output = render_input(
+            "graph TD\n    subgraph Backend\n        A[API] --> B[DB]\n    end\n",
+        );
+        assert!(output.contains("┌─ Backend"), "top border with title");
+        assert!(output.contains("│ API │"), "node A");
+        assert!(output.contains("│ DB │"), "node B");
+        assert!(output.contains('▼'), "arrow");
+
+        let lines: Vec<&str> = output.lines().collect();
+        let first_line = lines[0];
+        let last_line = lines[lines.len() - 1];
+        assert!(first_line.contains('┌'), "first line has top-left corner");
+        assert!(first_line.contains('┐'), "first line has top-right corner");
+        assert!(last_line.contains('└'), "last line has bottom-left corner");
+        assert!(last_line.contains('┘'), "last line has bottom-right corner");
     }
 }

@@ -6,9 +6,19 @@ use crate::graph_ast::*;
 pub struct GraphLayout {
     pub nodes: Vec<NodeLayout>,
     pub edges: Vec<EdgeLayout>,
+    pub subgraphs: Vec<SubgraphLayout>,
     pub width: usize,
     pub height: usize,
     pub direction: Direction,
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub struct SubgraphLayout {
+    pub label: String,
+    pub x: usize,
+    pub y: usize,
+    pub width: usize,
+    pub height: usize,
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -46,7 +56,7 @@ pub fn compute(diagram: &GraphDiagram) -> Result<GraphLayout, String> {
         ranks_nodes[rank].push(node);
     }
 
-    let node_layouts = match diagram.direction {
+    let mut node_layouts = match diagram.direction {
         Direction::TopDown => layout_td(&ranks_nodes),
         Direction::LeftRight => layout_lr(&ranks_nodes, &ranks, &diagram.edges),
     };
@@ -62,12 +72,19 @@ pub fn compute(diagram: &GraphDiagram) -> Result<GraphLayout, String> {
         })
         .collect();
 
-    let width = node_layouts.iter().map(|n| n.x + n.width).max().unwrap_or(0);
-    let height = node_layouts.iter().map(|n| n.y + n.height).max().unwrap_or(0);
+    let subgraphs = compute_subgraph_layouts(&diagram.subgraphs, &mut node_layouts);
+
+    let mut width = node_layouts.iter().map(|n| n.x + n.width).max().unwrap_or(0);
+    let mut height = node_layouts.iter().map(|n| n.y + n.height).max().unwrap_or(0);
+    for sg in &subgraphs {
+        width = width.max(sg.x + sg.width);
+        height = height.max(sg.y + sg.height);
+    }
 
     Ok(GraphLayout {
         nodes: node_layouts,
         edges,
+        subgraphs,
         width,
         height,
         direction: diagram.direction.clone(),
@@ -235,6 +252,68 @@ fn box_width(label: &str, shape: NodeShape) -> usize {
     }
 }
 
+const SUBGRAPH_PAD_LEFT: usize = 2;
+const SUBGRAPH_PAD_RIGHT: usize = 2;
+const SUBGRAPH_PAD_TOP: usize = 1;
+const SUBGRAPH_PAD_BOTTOM: usize = 1;
+const SUBGRAPH_TITLE_DECOR: usize = 6;
+
+fn compute_subgraph_layouts(
+    subgraphs: &[Subgraph],
+    node_layouts: &mut Vec<NodeLayout>,
+) -> Vec<SubgraphLayout> {
+    let mut sg_layouts = Vec::new();
+
+    for sg in subgraphs {
+        let contained: Vec<usize> = node_layouts
+            .iter()
+            .enumerate()
+            .filter(|(_, n)| sg.node_ids.contains(&n.id))
+            .map(|(i, _)| i)
+            .collect();
+
+        if contained.is_empty() {
+            continue;
+        }
+
+        let min_x = contained.iter().map(|&i| node_layouts[i].x).min().unwrap();
+        let min_y = contained.iter().map(|&i| node_layouts[i].y).min().unwrap();
+
+        for &i in &contained {
+            node_layouts[i].x += SUBGRAPH_PAD_LEFT;
+            node_layouts[i].y += SUBGRAPH_PAD_TOP;
+            node_layouts[i].center_x += SUBGRAPH_PAD_LEFT;
+            node_layouts[i].center_y += SUBGRAPH_PAD_TOP;
+        }
+
+        let max_right = contained
+            .iter()
+            .map(|&i| node_layouts[i].x + node_layouts[i].width)
+            .max()
+            .unwrap();
+        let max_bottom = contained
+            .iter()
+            .map(|&i| node_layouts[i].y + node_layouts[i].height)
+            .max()
+            .unwrap();
+
+        let content_width = max_right - min_x + SUBGRAPH_PAD_RIGHT;
+        let title_width = sg.label.len() + SUBGRAPH_TITLE_DECOR;
+        let width = content_width.max(title_width);
+        let height = max_bottom - min_y + SUBGRAPH_PAD_BOTTOM;
+
+        sg_layouts.push(SubgraphLayout {
+            label: sg.label.clone(),
+            x: min_x,
+            y: min_y,
+            width,
+            height,
+        });
+    }
+
+    sg_layouts
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -336,5 +415,25 @@ mod tests {
         assert_eq!(layout.edges.len(), 2);
         assert_eq!(layout.edges[0].edge_type, EdgeType::Arrow);
         assert_eq!(layout.edges[1].edge_type, EdgeType::OpenLink);
+    }
+
+    #[test]
+    fn layout_subgraph_basic() {
+        let diagram =
+            parse_graph("graph TD\n    subgraph Backend\n        A --> B\n    end\n").unwrap();
+        let layout = compute(&diagram).unwrap();
+
+        assert_eq!(layout.subgraphs.len(), 1);
+        let sg = &layout.subgraphs[0];
+        assert_eq!(sg.label, "Backend");
+
+        let a = layout.nodes.iter().find(|n| n.id == "A").unwrap();
+        let b = layout.nodes.iter().find(|n| n.id == "B").unwrap();
+
+        // Subgraph bounding box must contain all its nodes
+        assert!(sg.x <= a.x, "subgraph left <= node A x");
+        assert!(sg.y <= a.y, "subgraph top <= node A y");
+        assert!(sg.x + sg.width >= b.x + b.width, "subgraph right >= node B right");
+        assert!(sg.y + sg.height >= b.y + b.height, "subgraph bottom >= node B bottom");
     }
 }

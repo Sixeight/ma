@@ -534,6 +534,89 @@ fn spec_lr_thick_edge_label() {
 }
 
 // =============================================================================
+// Subgraphs
+// =============================================================================
+
+#[test]
+fn spec_subgraph_single_node() {
+    let input = "graph TD\n    subgraph Group\n        A\n    end\n";
+    let output = ma::render(input).unwrap();
+    let expected = "\
+┌─ Group ─┐
+│ ┌───┐   │
+│ │ A │   │
+│ └───┘   │
+└─────────┘";
+    assert_eq!(output, expected);
+}
+
+#[test]
+fn spec_subgraph_with_edge() {
+    let input = "graph TD\n    subgraph Backend\n        A[API] --> B[DB]\n    end\n";
+    let output = ma::render(input).unwrap();
+    let expected = "\
+┌─ Backend ─┐
+│ ┌─────┐   │
+│ │ API │   │
+│ └──┬──┘   │
+│    │      │
+│    ▼      │
+│ ┌────┐    │
+│ │ DB │    │
+│ └────┘    │
+└───────────┘";
+    assert_eq!(output, expected);
+}
+
+#[test]
+fn spec_subgraph_border_contains_nodes() {
+    let input = "graph TD\n    subgraph S\n        A --> B\n    end\n";
+    let output = ma::render(input).unwrap();
+
+    let lines: Vec<&str> = output.lines().collect();
+    let first = lines[0];
+    let last = lines[lines.len() - 1];
+
+    assert!(first.starts_with('┌'), "top-left corner on first line");
+    assert!(first.contains("─ S "), "title on top border");
+    assert!(first.ends_with('┐'), "top-right corner on first line");
+    assert!(last.starts_with('└'), "bottom-left corner on last line");
+    assert!(last.ends_with('┘'), "bottom-right corner on last line");
+}
+
+#[test]
+fn spec_subgraph_nodes_accessible() {
+    let input = "graph TD\n    subgraph Backend\n        A[API] --> B[DB]\n    end\n";
+    let output = ma::render(input).unwrap();
+    assert!(output.contains("│ API │"), "node A rendered inside subgraph");
+    assert!(output.contains("│ DB │"), "node B rendered inside subgraph");
+    assert!(output.contains('▼'), "edge arrow rendered");
+}
+
+#[test]
+fn spec_subgraph_cross_boundary_edge() {
+    let input = "\
+graph TD
+    C[Client]
+    subgraph Backend
+        A[API] --> B[DB]
+    end
+    C --> A
+";
+    let output = ma::render(input).unwrap();
+    assert!(output.contains("│ Client │"), "external node rendered");
+    assert!(output.contains("│ API │"), "subgraph node A rendered");
+    assert!(output.contains("│ DB │"), "subgraph node B rendered");
+    assert!(output.contains("┌─ Backend"), "subgraph title intact");
+
+    let title_line = output.lines().find(|l| l.contains("Backend")).unwrap();
+    assert!(
+        !title_line.contains('▼'),
+        "arrow should not overwrite subgraph title"
+    );
+}
+
+// =============================================================================
 // Dispatch — graph input does not break sequence diagrams
 // =============================================================================
 
