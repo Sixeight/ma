@@ -38,6 +38,7 @@ fn statement(input: &mut &str) -> winnow::Result<Option<Statement>> {
         break_stmt.map(|lb| Some(Statement::Break(lb))),
         par_stmt.map(|ab| Some(Statement::Par(ab))),
         critical_stmt.map(|ab| Some(Statement::Critical(ab))),
+        autonumber_stmt.map(|_| Some(Statement::AutoNumber)),
         note_stmt.map(|n| Some(Statement::Note(n))),
         activate_stmt.map(|id| Some(Statement::Activate(id))),
         deactivate_stmt.map(|id| Some(Statement::Deactivate(id))),
@@ -252,6 +253,12 @@ fn break_stmt(input: &mut &str) -> winnow::Result<LoopBlock> {
         label: label.trim().to_string(),
         body,
     })
+}
+
+fn autonumber_stmt(input: &mut &str) -> winnow::Result<()> {
+    "autonumber".parse_next(input)?;
+    opt(line_ending).parse_next(input)?;
+    Ok(())
 }
 
 fn note_stmt(input: &mut &str) -> winnow::Result<Note> {

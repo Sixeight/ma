@@ -314,7 +314,6 @@ sequenceDiagram
 // --- autonumber ---
 
 #[test]
-#[ignore = "autonumber not yet implemented"]
 fn spec_autonumber() {
     let input = "\
 sequenceDiagram

@@ -118,7 +118,7 @@ fn collect_participants(
                     }
                 }
             }
-            Statement::Note(_) | Statement::Activate(_) | Statement::Deactivate(_) => {}
+            Statement::Note(_) | Statement::Activate(_) | Statement::Deactivate(_) | Statement::AutoNumber => {}
             Statement::Loop(lb) | Statement::Opt(lb) | Statement::Break(lb) => {
                 collect_participants_inner(&lb.body, &mut order, &mut display_names);
             }
@@ -284,7 +284,9 @@ fn compute_rows(
     participants: &[ParticipantLayout],
 ) -> Vec<Row> {
     let mut rows = Vec::new();
-    flatten_statements(&diagram.statements, order, participants, &mut rows);
+    let autonumber = diagram.statements.iter().any(|s| matches!(s, Statement::AutoNumber));
+    let mut msg_counter = if autonumber { Some(1usize) } else { None };
+    flatten_statements(&diagram.statements, order, participants, &mut rows, &mut msg_counter);
     rows
 }
 
@@ -293,6 +295,7 @@ fn flatten_statements(
     order: &[String],
     participants: &[ParticipantLayout],
     rows: &mut Vec<Row>,
+    msg_counter: &mut Option<usize>,
 ) {
     for stmt in statements {
         match stmt {
@@ -308,10 +311,18 @@ fn flatten_statements(
                     Direction::RightToLeft
                 };
 
+                let text = if let Some(n) = msg_counter.as_mut() {
+                    let numbered = format!("{n}. {}", m.text);
+                    *n += 1;
+                    numbered
+                } else {
+                    m.text.clone()
+                };
+
                 rows.push(Row::Message(MessageRow {
                     from_col,
                     to_col,
-                    text: m.text.clone(),
+                    text,
                     arrow: m.arrow,
                     direction,
                 }));
@@ -357,22 +368,22 @@ fn flatten_statements(
                 }));
             }
             Statement::Loop(lb) => {
-                push_simple_block("loop", lb, participants, order, rows);
+                push_simple_block("loop", lb, participants, order, rows, msg_counter);
             }
             Statement::Opt(lb) => {
-                push_simple_block("opt", lb, participants, order, rows);
+                push_simple_block("opt", lb, participants, order, rows, msg_counter);
             }
             Statement::Break(lb) => {
-                push_simple_block("break", lb, participants, order, rows);
+                push_simple_block("break", lb, participants, order, rows, msg_counter);
             }
             Statement::Alt(ab) => {
-                push_divided_block("alt", "else", ab, participants, order, rows);
+                push_divided_block("alt", "else", ab, participants, order, rows, msg_counter);
             }
             Statement::Par(ab) => {
-                push_divided_block("par", "and", ab, participants, order, rows);
+                push_divided_block("par", "and", ab, participants, order, rows, msg_counter);
             }
             Statement::Critical(ab) => {
-                push_divided_block("critical", "option", ab, participants, order, rows);
+                push_divided_block("critical", "option", ab, participants, order, rows, msg_counter);
             }
             _ => {}
         }
@@ -385,6 +396,7 @@ fn push_simple_block(
     participants: &[ParticipantLayout],
     order: &[String],
     rows: &mut Vec<Row>,
+    msg_counter: &mut Option<usize>,
 ) {
     let (frame_left, frame_right) = compute_frame_bounds(participants);
     let label = format!("{keyword} {}", block.label);
@@ -394,7 +406,7 @@ fn push_simple_block(
         frame_left,
         frame_right,
     }));
-    flatten_statements(&block.body, order, participants, rows);
+    flatten_statements(&block.body, order, participants, rows, msg_counter);
     rows.push(Row::BlockEnd(BlockRow {
         label: String::new(),
         frame_left,
@@ -409,6 +421,7 @@ fn push_divided_block(
     participants: &[ParticipantLayout],
     order: &[String],
     rows: &mut Vec<Row>,
+    msg_counter: &mut Option<usize>,
 ) {
     let (frame_left, frame_right) = compute_frame_bounds(participants);
     let start_label = format!("{keyword} {}", block.label);
@@ -423,14 +436,14 @@ fn push_divided_block(
         frame_left,
         frame_right,
     }));
-    flatten_statements(&block.body, order, participants, rows);
+    flatten_statements(&block.body, order, participants, rows, msg_counter);
     for branch in &block.else_branches {
         rows.push(Row::BlockDivider(BlockRow {
             label: format!("{divider} {}", branch.label),
             frame_left,
             frame_right,
         }));
-        flatten_statements(&branch.body, order, participants, rows);
+        flatten_statements(&branch.body, order, participants, rows, msg_counter);
     }
     rows.push(Row::BlockEnd(BlockRow {
         label: String::new(),
@@ -517,7 +530,7 @@ fn compute_activations_inner(
                 let row_active: Vec<bool> = depths.iter().map(|&d| d > 0).collect();
                 activations.push(row_active);
             }
-            Statement::ParticipantDecl(_) => {}
+            Statement::ParticipantDecl(_) | Statement::AutoNumber => {}
         }
     }
 }

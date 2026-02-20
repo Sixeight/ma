@@ -16,6 +16,7 @@ pub enum Statement {
     Break(LoopBlock),
     Par(AltBlock),
     Critical(AltBlock),
+    AutoNumber,
 }
 
 #[derive(Debug, Clone, PartialEq)]
