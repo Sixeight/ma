@@ -11,10 +11,24 @@ pub enum Statement {
     Activate(String),
     Deactivate(String),
     Loop(LoopBlock),
+    Alt(AltBlock),
 }
 
 #[derive(Debug, Clone, PartialEq)]
 pub struct LoopBlock {
+    pub label: String,
+    pub body: Vec<Statement>,
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub struct AltBlock {
+    pub label: String,
+    pub body: Vec<Statement>,
+    pub else_branches: Vec<ElseBranch>,
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub struct ElseBranch {
     pub label: String,
     pub body: Vec<Statement>,
 }

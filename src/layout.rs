@@ -22,6 +22,7 @@ pub enum Row {
     Note(NoteRow),
     BlockStart(BlockRow),
     BlockEnd(BlockRow),
+    BlockDivider(BlockRow),
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -114,6 +115,12 @@ fn collect_participants(
             Statement::Note(_) | Statement::Activate(_) | Statement::Deactivate(_) => {}
             Statement::Loop(lb) => {
                 collect_participants_inner(&lb.body, &mut order, &mut display_names);
+            }
+            Statement::Alt(ab) => {
+                collect_participants_inner(&ab.body, &mut order, &mut display_names);
+                for branch in &ab.else_branches {
+                    collect_participants_inner(&branch.body, &mut order, &mut display_names);
+                }
             }
         }
     }
@@ -346,6 +353,28 @@ fn flatten_statements(
             Statement::Loop(lb) => {
                 push_simple_block("loop", lb, participants, order, rows);
             }
+            Statement::Alt(ab) => {
+                let (frame_left, frame_right) = compute_frame_bounds(participants);
+                rows.push(Row::BlockStart(BlockRow {
+                    label: format!("alt {}", ab.label),
+                    frame_left,
+                    frame_right,
+                }));
+                flatten_statements(&ab.body, order, participants, rows);
+                for branch in &ab.else_branches {
+                    rows.push(Row::BlockDivider(BlockRow {
+                        label: format!("else {}", branch.label),
+                        frame_left,
+                        frame_right,
+                    }));
+                    flatten_statements(&branch.body, order, participants, rows);
+                }
+                rows.push(Row::BlockEnd(BlockRow {
+                    label: String::new(),
+                    frame_left,
+                    frame_right,
+                }));
+            }
             _ => {}
         }
     }
@@ -435,6 +464,18 @@ fn compute_activations_inner(
                 let row_active: Vec<bool> = depths.iter().map(|&d| d > 0).collect();
                 activations.push(row_active.clone());
                 compute_activations_inner(&lb.body, order, depths, activations);
+                let row_active: Vec<bool> = depths.iter().map(|&d| d > 0).collect();
+                activations.push(row_active);
+            }
+            Statement::Alt(ab) => {
+                let row_active: Vec<bool> = depths.iter().map(|&d| d > 0).collect();
+                activations.push(row_active);
+                compute_activations_inner(&ab.body, order, depths, activations);
+                for branch in &ab.else_branches {
+                    let row_active: Vec<bool> = depths.iter().map(|&d| d > 0).collect();
+                    activations.push(row_active);
+                    compute_activations_inner(&branch.body, order, depths, activations);
+                }
                 let row_active: Vec<bool> = depths.iter().map(|&d| d > 0).collect();
                 activations.push(row_active);
             }

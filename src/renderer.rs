@@ -55,7 +55,7 @@ impl Grid {
 fn row_height(row: &Row) -> usize {
     match row {
         Row::Message(_) | Row::Note(_) => 3,
-        Row::BlockStart(_) | Row::BlockEnd(_) => 1,
+        Row::BlockStart(_) | Row::BlockEnd(_) | Row::BlockDivider(_) => 1,
     }
 }
 
@@ -95,6 +95,9 @@ pub fn render(layout: &Layout) -> String {
             Row::BlockEnd(block) => {
                 active_frames.retain(|f| f.frame_left != block.frame_left || f.frame_right != block.frame_right);
                 draw_block_end(&mut grid, layout, block, y);
+            }
+            Row::BlockDivider(block) => {
+                draw_block_divider(&mut grid, layout, block, y);
             }
         }
         y += h;
@@ -282,6 +285,30 @@ fn draw_block_end(grid: &mut Grid, layout: &Layout, block: &BlockRow, y: usize) 
     for p in &layout.participants {
         if p.center_col > block.frame_left && p.center_col < block.frame_right {
             grid.set(y, p.center_col, CROSS);
+        }
+    }
+}
+
+const BOX_DIVIDER_L: char = '├';
+const BOX_DIVIDER_R: char = '┤';
+
+fn draw_block_divider(grid: &mut Grid, layout: &Layout, block: &BlockRow, y: usize) {
+    grid.set(y, block.frame_left, BOX_DIVIDER_L);
+    for col in (block.frame_left + 1)..block.frame_right {
+        grid.set(y, col, BOX_H);
+    }
+    grid.set(y, block.frame_right, BOX_DIVIDER_R);
+
+    // Write label
+    grid.write_str(y, block.frame_left + 2, &block.label);
+
+    // Draw ┼ at lifeline intersections
+    for p in &layout.participants {
+        if p.center_col > block.frame_left && p.center_col < block.frame_right {
+            let label_end = block.frame_left + 2 + block.label.len();
+            if p.center_col >= label_end + 1 {
+                grid.set(y, p.center_col, CROSS);
+            }
         }
     }
 }

@@ -237,7 +237,6 @@ sequenceDiagram
 // --- alt / else ---
 
 #[test]
-#[ignore = "alt/else not yet implemented"]
 fn spec_alt_else() {
     let input = "\
 sequenceDiagram

@@ -33,6 +33,7 @@ fn statement(input: &mut &str) -> winnow::Result<Option<Statement>> {
         blank_line.map(|_| None),
         participant_decl.map(|p| Some(Statement::ParticipantDecl(p))),
         loop_stmt.map(|lb| Some(Statement::Loop(lb))),
+        alt_stmt.map(|ab| Some(Statement::Alt(ab))),
         note_stmt.map(|n| Some(Statement::Note(n))),
         activate_stmt.map(|id| Some(Statement::Activate(id))),
         deactivate_stmt.map(|id| Some(Statement::Deactivate(id))),
@@ -110,6 +111,70 @@ fn loop_stmt(input: &mut &str) -> winnow::Result<LoopBlock> {
     Ok(LoopBlock {
         label: label.trim().to_string(),
         body,
+    })
+}
+
+fn alt_stmt(input: &mut &str) -> winnow::Result<AltBlock> {
+    "alt".parse_next(input)?;
+    space1.parse_next(input)?;
+    let label = till_line_ending.parse_next(input)?;
+    opt(line_ending).parse_next(input)?;
+
+    let mut body = Vec::new();
+    let mut else_branches = Vec::new();
+
+    loop {
+        space0.parse_next(input)?;
+        if input.starts_with("end") {
+            "end".parse_next(input)?;
+            opt(line_ending).parse_next(input)?;
+            break;
+        }
+        if input.starts_with("else") {
+            "else".parse_next(input)?;
+            let else_label = if input.starts_with(|c: char| c == ' ' || c == '\t') {
+                space1.parse_next(input)?;
+                let l = till_line_ending.parse_next(input)?;
+                opt(line_ending).parse_next(input)?;
+                l.trim().to_string()
+            } else {
+                opt(line_ending).parse_next(input)?;
+                String::new()
+            };
+
+            let mut else_body = Vec::new();
+            loop {
+                space0.parse_next(input)?;
+                if input.starts_with("end") || input.starts_with("else") {
+                    break;
+                }
+                if input.is_empty() {
+                    return Err(winnow::error::ParserError::from_input(input));
+                }
+                let stmt = statement.parse_next(input)?;
+                if let Some(s) = stmt {
+                    else_body.push(s);
+                }
+            }
+            else_branches.push(ElseBranch {
+                label: else_label,
+                body: else_body,
+            });
+            continue;
+        }
+        if input.is_empty() {
+            return Err(winnow::error::ParserError::from_input(input));
+        }
+        let stmt = statement.parse_next(input)?;
+        if let Some(s) = stmt {
+            body.push(s);
+        }
+    }
+
+    Ok(AltBlock {
+        label: label.trim().to_string(),
+        body,
+        else_branches,
     })
 }
 
@@ -520,6 +585,30 @@ sequenceDiagram
             other => panic!("expected Loop, got {other:?}"),
         }
         assert!(matches!(&diagram.statements[2], Statement::Message(_)));
+    }
+
+    #[test]
+    fn parse_alt_else() {
+        let input = "\
+sequenceDiagram
+    alt Happy
+        A->>B: Yes
+    else Sad
+        A->>B: No
+    end
+";
+        let diagram = parse_diagram(input).unwrap();
+        assert_eq!(diagram.statements.len(), 1);
+        match &diagram.statements[0] {
+            Statement::Alt(ab) => {
+                assert_eq!(ab.label, "Happy");
+                assert_eq!(ab.body.len(), 1);
+                assert_eq!(ab.else_branches.len(), 1);
+                assert_eq!(ab.else_branches[0].label, "Sad");
+                assert_eq!(ab.else_branches[0].body.len(), 1);
+            }
+            other => panic!("expected Alt, got {other:?}"),
+        }
     }
 
     #[test]
