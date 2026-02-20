@@ -1,0 +1,11 @@
+[package]
+name = "ma"
+version = "0.1.0"
+edition = "2024"
+
+[dependencies]
+winnow = "0.7"
+clap = { version = "4", features = ["derive"] }
+
+[dev-dependencies]
+pretty_assertions = "1"
