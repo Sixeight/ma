@@ -8,7 +8,14 @@ pub mod parser;
 pub mod renderer;
 
 pub fn render(input: &str) -> Result<String, String> {
-    let diagram = parser::parse_diagram(input)?;
-    let layout = layout::compute(&diagram)?;
-    Ok(renderer::render(&layout))
+    let trimmed = input.trim_start();
+    if trimmed.starts_with("graph") || trimmed.starts_with("flowchart") {
+        let diagram = graph_parser::parse_graph(input)?;
+        let layout = graph_layout::compute(&diagram)?;
+        Ok(graph_renderer::render(&layout))
+    } else {
+        let diagram = parser::parse_diagram(input)?;
+        let layout = layout::compute(&diagram)?;
+        Ok(renderer::render(&layout))
+    }
 }
