@@ -87,6 +87,62 @@ fn spec_node_box_structure() {
 }
 
 // =============================================================================
+// Node Shapes
+// =============================================================================
+
+#[test]
+fn spec_node_round_shape() {
+    let input = "graph TD\n    A(Hello)\n";
+    let output = ma::render(input).unwrap();
+    let expected = "\
+╭───────╮
+│ Hello │
+╰───────╯";
+    assert_eq!(output, expected);
+}
+
+#[test]
+fn spec_node_diamond_shape() {
+    let input = "graph TD\n    A{Hello}\n";
+    let output = ma::render(input).unwrap();
+    let expected = "\
+╱───────╲
+│ Hello │
+╲───────╱";
+    assert_eq!(output, expected);
+}
+
+#[test]
+fn spec_node_circle_shape() {
+    let input = "graph TD\n    A((Hello))\n";
+    let output = ma::render(input).unwrap();
+    let expected = "\
+╭───────────╮
+│   Hello   │
+╰───────────╯";
+    assert_eq!(output, expected);
+}
+
+#[test]
+fn spec_node_round_with_edge() {
+    let input = "graph TD\n    A(Start) --> B[End]\n";
+    let output = ma::render(input).unwrap();
+    assert!(output.contains('╭'), "round node has ╭ corner");
+    assert!(output.contains('╯'), "round node has ╯ corner");
+    assert!(output.contains('┌'), "box node has ┌ corner");
+    assert!(output.contains('▼'), "arrow present");
+}
+
+#[test]
+fn spec_node_mixed_shapes_lr() {
+    let input = "graph LR\n    A(Round) --> B{Diamond}\n";
+    let output = ma::render(input).unwrap();
+    assert!(output.contains('╭'), "round node has ╭");
+    assert!(output.contains('╱'), "diamond node has ╱");
+    assert!(output.contains('>'), "arrow present");
+}
+
+// =============================================================================
 // Edges — Arrow (-->)
 // =============================================================================
 
