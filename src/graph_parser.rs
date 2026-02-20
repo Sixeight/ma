@@ -1,7 +1,7 @@
 use winnow::prelude::*;
 use winnow::ascii::{line_ending, space0, space1};
 use winnow::combinator::{alt, opt, repeat};
-use winnow::token::take_while;
+use winnow::token::{take_until, take_while};
 
 use crate::graph_ast::*;
 
@@ -63,6 +63,7 @@ fn graph_line(input: &mut &str) -> winnow::Result<Option<GraphLine>> {
     let result = alt((
         blank_line.map(|_| None),
         edge_line.map(Some),
+        alt_edge_line.map(Some),
         node_line.map(Some),
     ))
     .parse_next(input)?;
@@ -133,6 +134,29 @@ fn edge_line(input: &mut &str) -> winnow::Result<GraphLine> {
         to: to.id.clone(),
         edge_type: et,
         label,
+    };
+    Ok(GraphLine::Edge(edge, from, to))
+}
+
+fn alt_edge_line(input: &mut &str) -> winnow::Result<GraphLine> {
+    let from = node_ref.parse_next(input)?;
+    space0.parse_next(input)?;
+    "-- ".parse_next(input)?;
+    let (label_text, et) = alt((
+        (take_until(1.., " -->"), " -->".value(EdgeType::Arrow)),
+        (take_until(1.., " ---"), " ---".value(EdgeType::OpenLink)),
+    ))
+    .parse_next(input)?;
+    space0.parse_next(input)?;
+    let to = node_ref.parse_next(input)?;
+    opt(line_ending).parse_next(input)?;
+
+    let label = label_text.trim().to_string();
+    let edge = Edge {
+        from: from.id.clone(),
+        to: to.id.clone(),
+        edge_type: et,
+        label: Some(label),
     };
     Ok(GraphLine::Edge(edge, from, to))
 }
@@ -269,6 +293,36 @@ mod tests {
         let input = "graph TD\n    A --> B\n";
         let diagram = parse_graph(input).unwrap();
         assert_eq!(diagram.edges[0].label, None);
+    }
+
+    #[test]
+    fn parse_alt_label_arrow() {
+        let input = "graph TD\n    A -- text --> B\n";
+        let diagram = parse_graph(input).unwrap();
+        assert_eq!(diagram.edges.len(), 1);
+        assert_eq!(diagram.edges[0].edge_type, EdgeType::Arrow);
+        assert_eq!(diagram.edges[0].label, Some("text".to_string()));
+        assert_eq!(diagram.edges[0].from, "A");
+        assert_eq!(diagram.edges[0].to, "B");
+    }
+
+    #[test]
+    fn parse_alt_label_open_link() {
+        let input = "graph TD\n    A -- text --- B\n";
+        let diagram = parse_graph(input).unwrap();
+        assert_eq!(diagram.edges.len(), 1);
+        assert_eq!(diagram.edges[0].edge_type, EdgeType::OpenLink);
+        assert_eq!(diagram.edges[0].label, Some("text".to_string()));
+    }
+
+    #[test]
+    fn parse_alt_label_with_spaces() {
+        let input = "graph TD\n    A -- hello world --> B\n";
+        let diagram = parse_graph(input).unwrap();
+        assert_eq!(
+            diagram.edges[0].label,
+            Some("hello world".to_string())
+        );
     }
 
     #[test]
