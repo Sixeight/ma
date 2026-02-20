@@ -103,6 +103,21 @@ fn draw_box(grid: &mut Grid, x: usize, y: usize, width: usize, label: &str) {
     grid.set(y + 2, x + width - 1, '┘');
 }
 
+fn td_vertical_connector(edge_type: EdgeType) -> char {
+    match edge_type {
+        EdgeType::DottedArrow | EdgeType::DottedLink => '┊',
+        EdgeType::ThickArrow | EdgeType::ThickLink => '║',
+        _ => '│',
+    }
+}
+
+fn has_arrow_head(edge_type: EdgeType) -> bool {
+    matches!(
+        edge_type,
+        EdgeType::Arrow | EdgeType::DottedArrow | EdgeType::ThickArrow
+    )
+}
+
 fn draw_td_edge(
     grid: &mut Grid,
     from: &NodeLayout,
@@ -140,10 +155,10 @@ fn draw_td_edge(
         grid.set(from_below, max_cx, '┐');
         grid.set(from_below, from_cx, '┴');
 
-        if edge_type == EdgeType::Arrow {
+        if has_arrow_head(edge_type) {
             grid.set(to_above, to_cx, '▼');
         } else {
-            grid.set(to_above, to_cx, '│');
+            grid.set(to_above, to_cx, td_vertical_connector(edge_type));
         }
     } else if parent_count > 1 {
         let parent_centers: Vec<usize> = layout
@@ -163,24 +178,25 @@ fn draw_td_edge(
         grid.set(from_below, max_cx, '┘');
         grid.set(from_below, to_cx, '┬');
 
-        if edge_type == EdgeType::Arrow {
+        if has_arrow_head(edge_type) {
             grid.set(to_above, to_cx, '▼');
         } else {
-            grid.set(to_above, to_cx, '│');
+            grid.set(to_above, to_cx, td_vertical_connector(edge_type));
         }
     } else {
+        let vert = td_vertical_connector(edge_type);
         if let Some(ref label) = edge.label {
             let label_col = from_cx.saturating_sub(label.len() / 2);
             grid.write_str(from_below, label_col, label);
         } else {
             for row in from_below..to_above {
-                grid.set(row, from_cx, '│');
+                grid.set(row, from_cx, vert);
             }
         }
-        if edge_type == EdgeType::Arrow {
+        if has_arrow_head(edge_type) {
             grid.set(to_above, to_cx, '▼');
         } else {
-            grid.set(to_above, to_cx, '│');
+            grid.set(to_above, to_cx, vert);
         }
     }
 }
@@ -327,6 +343,66 @@ mod tests {
 ┌───┐ yes ┌───┐
 │ A │────>│ B │
 └───┘     └───┘";
+        assert_eq!(output, expected);
+    }
+
+    #[test]
+    fn render_td_dotted_arrow() {
+        let output = render_input("graph TD\n    A -.-> B\n");
+        let expected = "\
+┌───┐
+│ A │
+└─┬─┘
+  ┊
+  ▼
+┌───┐
+│ B │
+└───┘";
+        assert_eq!(output, expected);
+    }
+
+    #[test]
+    fn render_td_dotted_link() {
+        let output = render_input("graph TD\n    A -.- B\n");
+        let expected = "\
+┌───┐
+│ A │
+└─┬─┘
+  ┊
+  ┊
+┌───┐
+│ B │
+└───┘";
+        assert_eq!(output, expected);
+    }
+
+    #[test]
+    fn render_td_thick_arrow() {
+        let output = render_input("graph TD\n    A ==> B\n");
+        let expected = "\
+┌───┐
+│ A │
+└─┬─┘
+  ║
+  ▼
+┌───┐
+│ B │
+└───┘";
+        assert_eq!(output, expected);
+    }
+
+    #[test]
+    fn render_td_thick_link() {
+        let output = render_input("graph TD\n    A === B\n");
+        let expected = "\
+┌───┐
+│ A │
+└─┬─┘
+  ║
+  ║
+┌───┐
+│ B │
+└───┘";
         assert_eq!(output, expected);
     }
 
