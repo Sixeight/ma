@@ -324,6 +324,38 @@ fn spec_fan_out_label_parsed_but_not_drawn() {
 }
 
 // =============================================================================
+// Edge Labels — Alternative syntax (-- text -->)
+// =============================================================================
+
+#[test]
+fn spec_alt_label_arrow_same_as_pipe() {
+    let pipe = ma::render("graph TD\n    A -->|yes| B\n").unwrap();
+    let alt = ma::render("graph TD\n    A -- yes --> B\n").unwrap();
+    assert_eq!(pipe, alt, "-- text --> produces same output as -->|text|");
+}
+
+#[test]
+fn spec_alt_label_open_link_same_as_pipe() {
+    let pipe = ma::render("graph TD\n    A ---|label| B\n").unwrap();
+    let alt = ma::render("graph TD\n    A -- label --- B\n").unwrap();
+    assert_eq!(pipe, alt, "-- text --- produces same output as ---|text|");
+}
+
+#[test]
+fn spec_alt_label_lr_arrow() {
+    let pipe = ma::render("graph LR\n    A -->|yes| B\n").unwrap();
+    let alt = ma::render("graph LR\n    A -- yes --> B\n").unwrap();
+    assert_eq!(pipe, alt, "LR: -- text --> same as -->|text|");
+}
+
+#[test]
+fn spec_alt_label_with_spaces() {
+    let input = "graph LR\n    A -- hello world --> B\n";
+    let output = ma::render(input).unwrap();
+    assert!(output.contains("hello world"), "label with spaces rendered");
+}
+
+// =============================================================================
 // Dispatch — graph input does not break sequence diagrams
 // =============================================================================
 
