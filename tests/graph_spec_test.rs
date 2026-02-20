@@ -324,6 +324,66 @@ fn spec_fan_out_label_parsed_but_not_drawn() {
 }
 
 // =============================================================================
+// Subgraphs
+// =============================================================================
+
+#[test]
+fn spec_subgraph_single_node() {
+    let input = "graph TD\n    subgraph Group\n        A\n    end\n";
+    let output = ma::render(input).unwrap();
+    let expected = "\
+┌─ Group ─┐
+│ ┌───┐   │
+│ │ A │   │
+│ └───┘   │
+└─────────┘";
+    assert_eq!(output, expected);
+}
+
+#[test]
+fn spec_subgraph_with_edge() {
+    let input = "graph TD\n    subgraph Backend\n        A[API] --> B[DB]\n    end\n";
+    let output = ma::render(input).unwrap();
+    let expected = "\
+┌─ Backend ─┐
+│ ┌─────┐   │
+│ │ API │   │
+│ └──┬──┘   │
+│    │      │
+│    ▼      │
+│ ┌────┐    │
+│ │ DB │    │
+│ └────┘    │
+└───────────┘";
+    assert_eq!(output, expected);
+}
+
+#[test]
+fn spec_subgraph_border_contains_nodes() {
+    let input = "graph TD\n    subgraph S\n        A --> B\n    end\n";
+    let output = ma::render(input).unwrap();
+
+    let lines: Vec<&str> = output.lines().collect();
+    let first = lines[0];
+    let last = lines[lines.len() - 1];
+
+    assert!(first.starts_with('┌'), "top-left corner on first line");
+    assert!(first.contains("─ S "), "title on top border");
+    assert!(first.ends_with('┐'), "top-right corner on first line");
+    assert!(last.starts_with('└'), "bottom-left corner on last line");
+    assert!(last.ends_with('┘'), "bottom-right corner on last line");
+}
+
+#[test]
+fn spec_subgraph_nodes_accessible() {
+    let input = "graph TD\n    subgraph Backend\n        A[API] --> B[DB]\n    end\n";
+    let output = ma::render(input).unwrap();
+    assert!(output.contains("│ API │"), "node A rendered inside subgraph");
+    assert!(output.contains("│ DB │"), "node B rendered inside subgraph");
+    assert!(output.contains('▼'), "edge arrow rendered");
+}
+
+// =============================================================================
 // Dispatch — graph input does not break sequence diagrams
 // =============================================================================
 
