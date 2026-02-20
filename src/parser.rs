@@ -1,0 +1,302 @@
+use winnow::prelude::*;
+use winnow::ascii::{line_ending, space0, space1, till_line_ending};
+use winnow::combinator::{alt, opt, preceded, repeat};
+use winnow::token::take_while;
+
+use crate::ast::*;
+
+pub fn parse_diagram(input: &str) -> Result<Diagram, String> {
+    let mut input = input;
+    diagram(&mut input).map_err(|e| format!("{e}"))
+}
+
+fn diagram(input: &mut &str) -> winnow::Result<Diagram> {
+    space0.parse_next(input)?;
+    "sequenceDiagram".parse_next(input)?;
+    opt(line_ending).parse_next(input)?;
+
+    let statements: Vec<Option<Statement>> = repeat(0.., statement).parse_next(input)?;
+    let statements = statements.into_iter().flatten().collect();
+
+    Ok(Diagram { statements })
+}
+
+fn statement(input: &mut &str) -> winnow::Result<Option<Statement>> {
+    space0.parse_next(input)?;
+
+    if input.is_empty() {
+        return Err(winnow::error::ParserError::from_input(input));
+    }
+
+    let result = alt((
+        comment_line.map(|_| None),
+        blank_line.map(|_| None),
+        participant_decl.map(|p| Some(Statement::ParticipantDecl(p))),
+        message.map(|m| Some(Statement::Message(m))),
+    ))
+    .parse_next(input)?;
+
+    Ok(result)
+}
+
+fn comment_line(input: &mut &str) -> winnow::Result<()> {
+    "%%".parse_next(input)?;
+    till_line_ending.parse_next(input)?;
+    opt(line_ending).parse_next(input)?;
+    Ok(())
+}
+
+fn blank_line(input: &mut &str) -> winnow::Result<()> {
+    line_ending.void().parse_next(input)
+}
+
+fn participant_decl(input: &mut &str) -> winnow::Result<ParticipantDecl> {
+    "participant".parse_next(input)?;
+    space1.parse_next(input)?;
+    let id = identifier.parse_next(input)?;
+
+    let alias = opt(preceded((space1, "as", space1), till_line_ending)).parse_next(input)?;
+    opt(line_ending).parse_next(input)?;
+
+    Ok(ParticipantDecl {
+        id: id.to_string(),
+        alias: alias.map(|s: &str| s.trim().to_string()),
+    })
+}
+
+fn message(input: &mut &str) -> winnow::Result<Message> {
+    let from = identifier.parse_next(input)?;
+    space0.parse_next(input)?;
+    let arr = arrow.parse_next(input)?;
+    space0.parse_next(input)?;
+    let to = identifier.parse_next(input)?;
+    space0.parse_next(input)?;
+    ":".parse_next(input)?;
+    space0.parse_next(input)?;
+    let text = till_line_ending.parse_next(input)?;
+    opt(line_ending).parse_next(input)?;
+
+    Ok(Message {
+        from: from.to_string(),
+        to: to.to_string(),
+        arrow: arr,
+        text: text.trim().to_string(),
+    })
+}
+
+fn arrow(input: &mut &str) -> winnow::Result<Arrow> {
+    let line_style = alt((
+        "--".value(LineStyle::Dotted),
+        "-".value(LineStyle::Solid),
+    ))
+    .parse_next(input)?;
+
+    let head = alt((
+        ">>".value(ArrowHead::Arrowhead),
+        ">".value(ArrowHead::None),
+        "x".value(ArrowHead::Cross),
+        ")".value(ArrowHead::Open),
+    ))
+    .parse_next(input)?;
+
+    Ok(Arrow { line_style, head })
+}
+
+fn identifier<'s>(input: &mut &'s str) -> winnow::Result<&'s str> {
+    take_while(1.., |c: char| c.is_alphanumeric() || c == '_').parse_next(input)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use pretty_assertions::assert_eq;
+
+    // --- identifier ---
+
+    #[test]
+    fn parse_identifier_simple() {
+        let mut input = "Alice";
+        assert_eq!(identifier(&mut input).unwrap(), "Alice");
+        assert_eq!(input, "");
+    }
+
+    #[test]
+    fn parse_identifier_stops_at_arrow() {
+        let mut input = "Alice->>Bob";
+        assert_eq!(identifier(&mut input).unwrap(), "Alice");
+        assert_eq!(input, "->>Bob");
+    }
+
+    #[test]
+    fn parse_identifier_with_underscore() {
+        let mut input = "my_actor rest";
+        assert_eq!(identifier(&mut input).unwrap(), "my_actor");
+        assert_eq!(input, " rest");
+    }
+
+    // --- arrow ---
+
+    #[test]
+    fn parse_arrow_solid_none() {
+        let mut input = "->Bob";
+        let a = arrow(&mut input).unwrap();
+        assert_eq!(a.line_style, LineStyle::Solid);
+        assert_eq!(a.head, ArrowHead::None);
+    }
+
+    #[test]
+    fn parse_arrow_solid_arrowhead() {
+        let mut input = "->>Bob";
+        let a = arrow(&mut input).unwrap();
+        assert_eq!(a.line_style, LineStyle::Solid);
+        assert_eq!(a.head, ArrowHead::Arrowhead);
+    }
+
+    #[test]
+    fn parse_arrow_dotted_none() {
+        let mut input = "-->Bob";
+        let a = arrow(&mut input).unwrap();
+        assert_eq!(a.line_style, LineStyle::Dotted);
+        assert_eq!(a.head, ArrowHead::None);
+    }
+
+    #[test]
+    fn parse_arrow_dotted_arrowhead() {
+        let mut input = "-->>Bob";
+        let a = arrow(&mut input).unwrap();
+        assert_eq!(a.line_style, LineStyle::Dotted);
+        assert_eq!(a.head, ArrowHead::Arrowhead);
+    }
+
+    #[test]
+    fn parse_arrow_solid_cross() {
+        let mut input = "-xBob";
+        let a = arrow(&mut input).unwrap();
+        assert_eq!(a.line_style, LineStyle::Solid);
+        assert_eq!(a.head, ArrowHead::Cross);
+    }
+
+    #[test]
+    fn parse_arrow_dotted_cross() {
+        let mut input = "--xBob";
+        let a = arrow(&mut input).unwrap();
+        assert_eq!(a.line_style, LineStyle::Dotted);
+        assert_eq!(a.head, ArrowHead::Cross);
+    }
+
+    #[test]
+    fn parse_arrow_solid_open() {
+        let mut input = "-)Bob";
+        let a = arrow(&mut input).unwrap();
+        assert_eq!(a.line_style, LineStyle::Solid);
+        assert_eq!(a.head, ArrowHead::Open);
+    }
+
+    #[test]
+    fn parse_arrow_dotted_open() {
+        let mut input = "--)Bob";
+        let a = arrow(&mut input).unwrap();
+        assert_eq!(a.line_style, LineStyle::Dotted);
+        assert_eq!(a.head, ArrowHead::Open);
+    }
+
+    // --- message ---
+
+    #[test]
+    fn parse_message_basic() {
+        let mut input = "Alice->>Bob: Hello";
+        let msg = message(&mut input).unwrap();
+        assert_eq!(msg.from, "Alice");
+        assert_eq!(msg.to, "Bob");
+        assert_eq!(msg.arrow.line_style, LineStyle::Solid);
+        assert_eq!(msg.arrow.head, ArrowHead::Arrowhead);
+        assert_eq!(msg.text, "Hello");
+    }
+
+    #[test]
+    fn parse_message_dotted_response() {
+        let mut input = "Bob-->>Alice: Hi there!";
+        let msg = message(&mut input).unwrap();
+        assert_eq!(msg.from, "Bob");
+        assert_eq!(msg.to, "Alice");
+        assert_eq!(msg.arrow.line_style, LineStyle::Dotted);
+        assert_eq!(msg.arrow.head, ArrowHead::Arrowhead);
+        assert_eq!(msg.text, "Hi there!");
+    }
+
+    #[test]
+    fn parse_message_with_spaces_around_colon() {
+        let mut input = "Alice ->> Bob : Hello World";
+        let msg = message(&mut input).unwrap();
+        assert_eq!(msg.from, "Alice");
+        assert_eq!(msg.to, "Bob");
+        assert_eq!(msg.text, "Hello World");
+    }
+
+    // --- participant_decl ---
+
+    #[test]
+    fn parse_participant_without_alias() {
+        let mut input = "participant Alice";
+        let p = participant_decl(&mut input).unwrap();
+        assert_eq!(p.id, "Alice");
+        assert_eq!(p.alias, None);
+    }
+
+    #[test]
+    fn parse_participant_with_alias() {
+        let mut input = "participant A as Alice";
+        let p = participant_decl(&mut input).unwrap();
+        assert_eq!(p.id, "A");
+        assert_eq!(p.alias, Some("Alice".to_string()));
+    }
+
+    // --- diagram ---
+
+    #[test]
+    fn parse_minimal_diagram() {
+        let input = "sequenceDiagram\n    Alice->>Bob: Hello\n    Bob-->>Alice: Hi!\n";
+        let diagram = parse_diagram(input).unwrap();
+        assert_eq!(diagram.statements.len(), 2);
+        match &diagram.statements[0] {
+            Statement::Message(m) => {
+                assert_eq!(m.from, "Alice");
+                assert_eq!(m.to, "Bob");
+                assert_eq!(m.text, "Hello");
+            }
+            _ => panic!("expected Message"),
+        }
+    }
+
+    #[test]
+    fn parse_diagram_with_participants() {
+        let input = "\
+sequenceDiagram
+    participant A as Alice
+    participant B as Bob
+    A->>B: Hello
+";
+        let diagram = parse_diagram(input).unwrap();
+        assert_eq!(diagram.statements.len(), 3);
+        match &diagram.statements[0] {
+            Statement::ParticipantDecl(p) => {
+                assert_eq!(p.id, "A");
+                assert_eq!(p.alias, Some("Alice".to_string()));
+            }
+            _ => panic!("expected ParticipantDecl"),
+        }
+    }
+
+    #[test]
+    fn parse_diagram_with_comments_and_blank_lines() {
+        let input = "\
+sequenceDiagram
+    %% This is a comment
+    Alice->>Bob: Hello
+
+    Bob-->>Alice: Hi!
+";
+        let diagram = parse_diagram(input).unwrap();
+        assert_eq!(diagram.statements.len(), 2);
+    }
+}
