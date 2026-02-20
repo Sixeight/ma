@@ -76,7 +76,7 @@ fn deactivate_stmt<'s>(input: &mut &'s str) -> winnow::Result<String> {
 }
 
 fn participant_decl(input: &mut &str) -> winnow::Result<ParticipantDecl> {
-    "participant".parse_next(input)?;
+    alt(("participant", "actor")).parse_next(input)?;
     space1.parse_next(input)?;
     let id = identifier.parse_next(input)?;
 

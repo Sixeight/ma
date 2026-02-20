@@ -297,7 +297,6 @@ sequenceDiagram
 // --- actor ---
 
 #[test]
-#[ignore = "actor keyword not yet implemented"]
 fn spec_actor_as_participant() {
     let input = "\
 sequenceDiagram
