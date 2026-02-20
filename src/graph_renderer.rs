@@ -201,6 +201,14 @@ fn draw_td_edge(
     }
 }
 
+fn lr_horizontal_connector(edge_type: EdgeType) -> char {
+    match edge_type {
+        EdgeType::DottedArrow | EdgeType::DottedLink => '╌',
+        EdgeType::ThickArrow | EdgeType::ThickLink => '═',
+        _ => '─',
+    }
+}
+
 fn draw_lr_edge(
     grid: &mut Grid,
     from: &NodeLayout,
@@ -210,12 +218,13 @@ fn draw_lr_edge(
     let from_right = from.x + from.width;
     let to_left = to.x;
     let row = from.center_y;
+    let horiz = lr_horizontal_connector(edge.edge_type);
 
     for col in from_right..to_left {
-        grid.set(row, col, '─');
+        grid.set(row, col, horiz);
     }
 
-    if edge.edge_type == EdgeType::Arrow {
+    if has_arrow_head(edge.edge_type) {
         grid.set(row, to_left - 1, '>');
     }
 
@@ -403,6 +412,46 @@ mod tests {
 ┌───┐
 │ B │
 └───┘";
+        assert_eq!(output, expected);
+    }
+
+    #[test]
+    fn render_lr_dotted_arrow() {
+        let output = render_input("graph LR\n    A -.-> B\n");
+        let expected = "\
+┌───┐     ┌───┐
+│ A │╌╌╌╌>│ B │
+└───┘     └───┘";
+        assert_eq!(output, expected);
+    }
+
+    #[test]
+    fn render_lr_dotted_link() {
+        let output = render_input("graph LR\n    A -.- B\n");
+        let expected = "\
+┌───┐     ┌───┐
+│ A │╌╌╌╌╌│ B │
+└───┘     └───┘";
+        assert_eq!(output, expected);
+    }
+
+    #[test]
+    fn render_lr_thick_arrow() {
+        let output = render_input("graph LR\n    A ==> B\n");
+        let expected = "\
+┌───┐     ┌───┐
+│ A │════>│ B │
+└───┘     └───┘";
+        assert_eq!(output, expected);
+    }
+
+    #[test]
+    fn render_lr_thick_link() {
+        let output = render_input("graph LR\n    A === B\n");
+        let expected = "\
+┌───┐     ┌───┐
+│ A │═════│ B │
+└───┘     └───┘";
         assert_eq!(output, expected);
     }
 
