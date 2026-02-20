@@ -28,6 +28,7 @@ pub struct EdgeLayout {
     pub from_id: String,
     pub to_id: String,
     pub edge_type: EdgeType,
+    pub label: Option<String>,
 }
 
 pub fn compute(diagram: &GraphDiagram) -> Result<GraphLayout, String> {
@@ -56,6 +57,7 @@ pub fn compute(diagram: &GraphDiagram) -> Result<GraphLayout, String> {
             from_id: e.from.clone(),
             to_id: e.to.clone(),
             edge_type: e.edge_type,
+            label: e.label.clone(),
         })
         .collect();
 

@@ -112,10 +112,18 @@ fn edge_type(input: &mut &str) -> winnow::Result<EdgeType> {
     .parse_next(input)
 }
 
+fn edge_label(input: &mut &str) -> winnow::Result<String> {
+    "|".parse_next(input)?;
+    let text = take_while(1.., |c: char| c != '|').parse_next(input)?;
+    "|".parse_next(input)?;
+    Ok(text.to_string())
+}
+
 fn edge_line(input: &mut &str) -> winnow::Result<GraphLine> {
     let from = node_ref.parse_next(input)?;
     space0.parse_next(input)?;
     let et = edge_type.parse_next(input)?;
+    let label = opt(edge_label).parse_next(input)?;
     space0.parse_next(input)?;
     let to = node_ref.parse_next(input)?;
     opt(line_ending).parse_next(input)?;
@@ -124,6 +132,7 @@ fn edge_line(input: &mut &str) -> winnow::Result<GraphLine> {
         from: from.id.clone(),
         to: to.id.clone(),
         edge_type: et,
+        label,
     };
     Ok(GraphLine::Edge(edge, from, to))
 }
@@ -239,6 +248,27 @@ mod tests {
         let input = "graph TD\n    A --- B\n";
         let diagram = parse_graph(input).unwrap();
         assert_eq!(diagram.edges[0].edge_type, EdgeType::OpenLink);
+    }
+
+    #[test]
+    fn parse_edge_label_arrow() {
+        let input = "graph TD\n    A -->|yes| B\n";
+        let diagram = parse_graph(input).unwrap();
+        assert_eq!(diagram.edges[0].label, Some("yes".to_string()));
+    }
+
+    #[test]
+    fn parse_edge_label_open_link() {
+        let input = "graph TD\n    A ---|text| B\n";
+        let diagram = parse_graph(input).unwrap();
+        assert_eq!(diagram.edges[0].label, Some("text".to_string()));
+    }
+
+    #[test]
+    fn parse_edge_no_label() {
+        let input = "graph TD\n    A --> B\n";
+        let diagram = parse_graph(input).unwrap();
+        assert_eq!(diagram.edges[0].label, None);
     }
 
     #[test]

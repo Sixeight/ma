@@ -22,6 +22,7 @@ pub struct Edge {
     pub from: String,
     pub to: String,
     pub edge_type: EdgeType,
+    pub label: Option<String>,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq)]
