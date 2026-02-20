@@ -15,6 +15,7 @@ pub struct GraphLayout {
 pub struct NodeLayout {
     pub id: String,
     pub label: String,
+    pub shape: NodeShape,
     pub x: usize,
     pub y: usize,
     pub width: usize,
@@ -161,6 +162,7 @@ fn layout_td(ranks_nodes: &[Vec<&NodeDecl>]) -> Vec<NodeLayout> {
             layouts.push(NodeLayout {
                 id: node.id.clone(),
                 label: node.label.clone(),
+                shape: node.shape,
                 x,
                 y,
                 width: w,
@@ -196,6 +198,7 @@ fn layout_lr(
             layouts.push(NodeLayout {
                 id: node.id.clone(),
                 label: node.label.clone(),
+                shape: node.shape,
                 x: rank_x,
                 y,
                 width: w,

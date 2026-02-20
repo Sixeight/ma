@@ -89,12 +89,20 @@ fn identifier<'s>(input: &mut &'s str) -> winnow::Result<&'s str> {
 
 fn node_ref(input: &mut &str) -> winnow::Result<NodeDecl> {
     let id = identifier.parse_next(input)?;
-    let label = opt(bracketed_label).parse_next(input)?;
-    let label = label.unwrap_or_else(|| id.to_string());
+    let shape_label = opt(shape_label).parse_next(input)?;
+    let (shape, label) = shape_label.unwrap_or_else(|| (NodeShape::Box, id.to_string()));
     Ok(NodeDecl {
         id: id.to_string(),
         label,
+        shape,
     })
+}
+
+fn shape_label(input: &mut &str) -> winnow::Result<(NodeShape, String)> {
+    alt((
+        bracketed_label.map(|l| (NodeShape::Box, l)),
+    ))
+    .parse_next(input)
 }
 
 fn bracketed_label(input: &mut &str) -> winnow::Result<String> {

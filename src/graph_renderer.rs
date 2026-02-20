@@ -1,6 +1,6 @@
 use std::collections::HashMap;
 
-use crate::graph_ast::{Direction, EdgeType};
+use crate::graph_ast::{Direction, EdgeType, NodeShape};
 use crate::graph_layout::*;
 
 struct Grid {
@@ -55,7 +55,7 @@ fn render_td(layout: &GraphLayout) -> String {
         layout.nodes.iter().map(|n| (n.id.as_str(), n)).collect();
 
     for node in &layout.nodes {
-        draw_box(&mut grid, node.x, node.y, node.width, &node.label);
+        draw_node(&mut grid, node);
     }
 
     for edge in &layout.edges {
@@ -73,7 +73,7 @@ fn render_lr(layout: &GraphLayout) -> String {
         layout.nodes.iter().map(|n| (n.id.as_str(), n)).collect();
 
     for node in &layout.nodes {
-        draw_box(&mut grid, node.x, node.y, node.width, &node.label);
+        draw_node(&mut grid, node);
     }
 
     for edge in &layout.edges {
@@ -83,6 +83,13 @@ fn render_lr(layout: &GraphLayout) -> String {
     }
 
     grid.to_string()
+}
+
+fn draw_node(grid: &mut Grid, node: &NodeLayout) {
+    match node.shape {
+        NodeShape::Box => draw_box(grid, node.x, node.y, node.width, &node.label),
+        _ => draw_box(grid, node.x, node.y, node.width, &node.label),
+    }
 }
 
 fn draw_box(grid: &mut Grid, x: usize, y: usize, width: usize, label: &str) {
