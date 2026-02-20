@@ -276,7 +276,6 @@ sequenceDiagram
 // --- opt ---
 
 #[test]
-#[ignore = "opt not yet implemented"]
 fn spec_opt() {
     let input = "\
 sequenceDiagram

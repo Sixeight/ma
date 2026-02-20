@@ -34,6 +34,7 @@ fn statement(input: &mut &str) -> winnow::Result<Option<Statement>> {
         participant_decl.map(|p| Some(Statement::ParticipantDecl(p))),
         loop_stmt.map(|lb| Some(Statement::Loop(lb))),
         alt_stmt.map(|ab| Some(Statement::Alt(ab))),
+        opt_stmt.map(|lb| Some(Statement::Opt(lb))),
         note_stmt.map(|n| Some(Statement::Note(n))),
         activate_stmt.map(|id| Some(Statement::Activate(id))),
         deactivate_stmt.map(|id| Some(Statement::Deactivate(id))),
@@ -175,6 +176,35 @@ fn alt_stmt(input: &mut &str) -> winnow::Result<AltBlock> {
         label: label.trim().to_string(),
         body,
         else_branches,
+    })
+}
+
+fn opt_stmt(input: &mut &str) -> winnow::Result<LoopBlock> {
+    "opt".parse_next(input)?;
+    space1.parse_next(input)?;
+    let label = till_line_ending.parse_next(input)?;
+    opt(line_ending).parse_next(input)?;
+
+    let mut body = Vec::new();
+    loop {
+        space0.parse_next(input)?;
+        if input.starts_with("end") {
+            "end".parse_next(input)?;
+            opt(line_ending).parse_next(input)?;
+            break;
+        }
+        if input.is_empty() {
+            return Err(winnow::error::ParserError::from_input(input));
+        }
+        let stmt = statement.parse_next(input)?;
+        if let Some(s) = stmt {
+            body.push(s);
+        }
+    }
+
+    Ok(LoopBlock {
+        label: label.trim().to_string(),
+        body,
     })
 }
 

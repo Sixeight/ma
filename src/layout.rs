@@ -113,7 +113,7 @@ fn collect_participants(
                 }
             }
             Statement::Note(_) | Statement::Activate(_) | Statement::Deactivate(_) => {}
-            Statement::Loop(lb) => {
+            Statement::Loop(lb) | Statement::Opt(lb) => {
                 collect_participants_inner(&lb.body, &mut order, &mut display_names);
             }
             Statement::Alt(ab) => {
@@ -353,6 +353,9 @@ fn flatten_statements(
             Statement::Loop(lb) => {
                 push_simple_block("loop", lb, participants, order, rows);
             }
+            Statement::Opt(lb) => {
+                push_simple_block("opt", lb, participants, order, rows);
+            }
             Statement::Alt(ab) => {
                 let (frame_left, frame_right) = compute_frame_bounds(participants);
                 rows.push(Row::BlockStart(BlockRow {
@@ -460,7 +463,7 @@ fn compute_activations_inner(
                 let row_active: Vec<bool> = depths.iter().map(|&d| d > 0).collect();
                 activations.push(row_active);
             }
-            Statement::Loop(lb) => {
+            Statement::Loop(lb) | Statement::Opt(lb) => {
                 let row_active: Vec<bool> = depths.iter().map(|&d| d > 0).collect();
                 activations.push(row_active.clone());
                 compute_activations_inner(&lb.body, order, depths, activations);

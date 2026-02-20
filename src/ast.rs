@@ -12,6 +12,7 @@ pub enum Statement {
     Deactivate(String),
     Loop(LoopBlock),
     Alt(AltBlock),
+    Opt(LoopBlock),
 }
 
 #[derive(Debug, Clone, PartialEq)]
