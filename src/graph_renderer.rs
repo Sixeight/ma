@@ -142,6 +142,13 @@ fn draw_box(grid: &mut Grid, x: usize, y: usize, width: usize, label: &str) {
     grid.set(y + 2, x + width - 1, '┘');
 }
 
+fn is_subgraph_border_row(layout: &GraphLayout, row: usize) -> bool {
+    layout
+        .subgraphs
+        .iter()
+        .any(|sg| row == sg.y || row == sg.y + sg.height - 1)
+}
+
 fn draw_td_edge(
     grid: &mut Grid,
     from: &NodeLayout,
@@ -213,13 +220,17 @@ fn draw_td_edge(
             grid.write_str(from_below, label_col, label);
         } else {
             for row in from_below..to_above {
-                grid.set(row, from_cx, '│');
+                if !is_subgraph_border_row(layout, row) {
+                    grid.set(row, from_cx, '│');
+                }
             }
         }
-        if edge_type == EdgeType::Arrow {
-            grid.set(to_above, to_cx, '▼');
-        } else {
-            grid.set(to_above, to_cx, '│');
+        if !is_subgraph_border_row(layout, to_above) {
+            if edge_type == EdgeType::Arrow {
+                grid.set(to_above, to_cx, '▼');
+            } else {
+                grid.set(to_above, to_cx, '│');
+            }
         }
     }
 }

@@ -383,6 +383,29 @@ fn spec_subgraph_nodes_accessible() {
     assert!(output.contains('▼'), "edge arrow rendered");
 }
 
+#[test]
+fn spec_subgraph_cross_boundary_edge() {
+    let input = "\
+graph TD
+    C[Client]
+    subgraph Backend
+        A[API] --> B[DB]
+    end
+    C --> A
+";
+    let output = ma::render(input).unwrap();
+    assert!(output.contains("│ Client │"), "external node rendered");
+    assert!(output.contains("│ API │"), "subgraph node A rendered");
+    assert!(output.contains("│ DB │"), "subgraph node B rendered");
+    assert!(output.contains("┌─ Backend"), "subgraph title intact");
+
+    let title_line = output.lines().find(|l| l.contains("Backend")).unwrap();
+    assert!(
+        !title_line.contains('▼'),
+        "arrow should not overwrite subgraph title"
+    );
+}
+
 // =============================================================================
 // Dispatch — graph input does not break sequence diagrams
 // =============================================================================
