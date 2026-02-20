@@ -7,8 +7,23 @@ pub struct Diagram {
 pub enum Statement {
     ParticipantDecl(ParticipantDecl),
     Message(Message),
+    Note(Note),
     Activate(String),
     Deactivate(String),
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub struct Note {
+    pub placement: NotePlacement,
+    pub text: String,
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub enum NotePlacement {
+    RightOf(String),
+    LeftOf(String),
+    Over(String),
+    OverTwo(String, String),
 }
 
 #[derive(Debug, Clone, PartialEq)]

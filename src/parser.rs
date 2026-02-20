@@ -32,6 +32,7 @@ fn statement(input: &mut &str) -> winnow::Result<Option<Statement>> {
         comment_line.map(|_| None),
         blank_line.map(|_| None),
         participant_decl.map(|p| Some(Statement::ParticipantDecl(p))),
+        note_stmt.map(|n| Some(Statement::Note(n))),
         activate_stmt.map(|id| Some(Statement::Activate(id))),
         deactivate_stmt.map(|id| Some(Statement::Deactivate(id))),
         message.map(|m| Some(Statement::Message(m))),
@@ -79,6 +80,40 @@ fn participant_decl(input: &mut &str) -> winnow::Result<ParticipantDecl> {
     Ok(ParticipantDecl {
         id: id.to_string(),
         alias: alias.map(|s: &str| s.trim().to_string()),
+    })
+}
+
+fn note_stmt(input: &mut &str) -> winnow::Result<Note> {
+    "Note".parse_next(input)?;
+    space1.parse_next(input)?;
+
+    let placement = alt((
+        ("right of", space1, identifier).map(|(_, _, id): (&str, &str, &str)| {
+            NotePlacement::RightOf(id.to_string())
+        }),
+        ("left of", space1, identifier).map(|(_, _, id): (&str, &str, &str)| {
+            NotePlacement::LeftOf(id.to_string())
+        }),
+        ("over", space1, identifier, ",", space0, identifier).map(
+            |(_, _, a, _, _, b): (&str, &str, &str, &str, &str, &str)| {
+                NotePlacement::OverTwo(a.to_string(), b.to_string())
+            },
+        ),
+        ("over", space1, identifier).map(|(_, _, id): (&str, &str, &str)| {
+            NotePlacement::Over(id.to_string())
+        }),
+    ))
+    .parse_next(input)?;
+
+    space0.parse_next(input)?;
+    ":".parse_next(input)?;
+    space0.parse_next(input)?;
+    let text = till_line_ending.parse_next(input)?;
+    opt(line_ending).parse_next(input)?;
+
+    Ok(Note {
+        placement,
+        text: text.trim().to_string(),
     })
 }
 
@@ -365,5 +400,61 @@ sequenceDiagram
         let msg = message(&mut input).unwrap();
         assert!(!msg.activate_target);
         assert!(!msg.deactivate_source);
+    }
+
+    // --- note ---
+
+    #[test]
+    fn parse_note_right_of() {
+        let mut input = "Note right of Alice: This is a note";
+        let n = note_stmt(&mut input).unwrap();
+        assert_eq!(n.placement, NotePlacement::RightOf("Alice".to_string()));
+        assert_eq!(n.text, "This is a note");
+    }
+
+    #[test]
+    fn parse_note_left_of() {
+        let mut input = "Note left of Bob: Left note";
+        let n = note_stmt(&mut input).unwrap();
+        assert_eq!(n.placement, NotePlacement::LeftOf("Bob".to_string()));
+        assert_eq!(n.text, "Left note");
+    }
+
+    #[test]
+    fn parse_note_over_single() {
+        let mut input = "Note over Alice: Centered";
+        let n = note_stmt(&mut input).unwrap();
+        assert_eq!(n.placement, NotePlacement::Over("Alice".to_string()));
+        assert_eq!(n.text, "Centered");
+    }
+
+    #[test]
+    fn parse_note_over_two() {
+        let mut input = "Note over Alice,Bob: Spanning note";
+        let n = note_stmt(&mut input).unwrap();
+        assert_eq!(
+            n.placement,
+            NotePlacement::OverTwo("Alice".to_string(), "Bob".to_string())
+        );
+        assert_eq!(n.text, "Spanning note");
+    }
+
+    #[test]
+    fn parse_diagram_with_note() {
+        let input = "\
+sequenceDiagram
+    Alice->>Bob: Hello
+    Note right of Bob: Got it!
+    Bob-->>Alice: Hi!
+";
+        let diagram = parse_diagram(input).unwrap();
+        assert_eq!(diagram.statements.len(), 3);
+        match &diagram.statements[1] {
+            Statement::Note(n) => {
+                assert_eq!(n.placement, NotePlacement::RightOf("Bob".to_string()));
+                assert_eq!(n.text, "Got it!");
+            }
+            other => panic!("expected Note, got {other:?}"),
+        }
     }
 }

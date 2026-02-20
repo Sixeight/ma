@@ -88,7 +88,7 @@ fn collect_participants(
                     }
                 }
             }
-            Statement::Activate(_) | Statement::Deactivate(_) => {}
+            Statement::Note(_) | Statement::Activate(_) | Statement::Deactivate(_) => {}
         }
     }
 
@@ -242,7 +242,7 @@ fn compute_activations(
                     }
                 }
             }
-            Statement::ParticipantDecl(_) => {}
+            Statement::Note(_) | Statement::ParticipantDecl(_) => {}
         }
     }
 
