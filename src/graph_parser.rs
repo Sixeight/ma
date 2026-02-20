@@ -90,12 +90,44 @@ fn identifier<'s>(input: &mut &'s str) -> winnow::Result<&'s str> {
 
 fn node_ref(input: &mut &str) -> winnow::Result<NodeDecl> {
     let id = identifier.parse_next(input)?;
-    let label = opt(bracketed_label).parse_next(input)?;
-    let label = label.unwrap_or_else(|| id.to_string());
+    let shape_label = opt(shape_label).parse_next(input)?;
+    let (shape, label) = shape_label.unwrap_or_else(|| (NodeShape::Box, id.to_string()));
     Ok(NodeDecl {
         id: id.to_string(),
         label,
+        shape,
     })
+}
+
+fn shape_label(input: &mut &str) -> winnow::Result<(NodeShape, String)> {
+    alt((
+        circle_label.map(|l| (NodeShape::Circle, l)),
+        round_label.map(|l| (NodeShape::Round, l)),
+        diamond_label.map(|l| (NodeShape::Diamond, l)),
+        bracketed_label.map(|l| (NodeShape::Box, l)),
+    ))
+    .parse_next(input)
+}
+
+fn round_label(input: &mut &str) -> winnow::Result<String> {
+    "(".parse_next(input)?;
+    let text = take_while(1.., |c: char| c != ')').parse_next(input)?;
+    ")".parse_next(input)?;
+    Ok(text.to_string())
+}
+
+fn diamond_label(input: &mut &str) -> winnow::Result<String> {
+    "{".parse_next(input)?;
+    let text = take_while(1.., |c: char| c != '}').parse_next(input)?;
+    "}".parse_next(input)?;
+    Ok(text.to_string())
+}
+
+fn circle_label(input: &mut &str) -> winnow::Result<String> {
+    "((".parse_next(input)?;
+    let text = take_while(1.., |c: char| c != ')').parse_next(input)?;
+    "))".parse_next(input)?;
+    Ok(text.to_string())
 }
 
 fn bracketed_label(input: &mut &str) -> winnow::Result<String> {
@@ -385,6 +417,42 @@ mod tests {
         let diagram = parse_graph(input).unwrap();
         assert_eq!(diagram.edges[0].edge_type, EdgeType::ThickArrow);
         assert_eq!(diagram.edges[0].label, Some("yes".to_string()));
+    }
+
+    #[test]
+    fn parse_node_ref_round() {
+        let mut input = "A(Round)";
+        let n = node_ref(&mut input).unwrap();
+        assert_eq!(n.id, "A");
+        assert_eq!(n.label, "Round");
+        assert_eq!(n.shape, NodeShape::Round);
+    }
+
+    #[test]
+    fn parse_node_ref_diamond() {
+        let mut input = "A{Diamond}";
+        let n = node_ref(&mut input).unwrap();
+        assert_eq!(n.id, "A");
+        assert_eq!(n.label, "Diamond");
+        assert_eq!(n.shape, NodeShape::Diamond);
+    }
+
+    #[test]
+    fn parse_node_ref_circle() {
+        let mut input = "A((Circle))";
+        let n = node_ref(&mut input).unwrap();
+        assert_eq!(n.id, "A");
+        assert_eq!(n.label, "Circle");
+        assert_eq!(n.shape, NodeShape::Circle);
+    }
+
+    #[test]
+    fn parse_node_ref_box_shape() {
+        let mut input = "A[Box]";
+        let n = node_ref(&mut input).unwrap();
+        assert_eq!(n.id, "A");
+        assert_eq!(n.label, "Box");
+        assert_eq!(n.shape, NodeShape::Box);
     }
 
     #[test]

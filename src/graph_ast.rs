@@ -11,10 +11,19 @@ pub struct GraphDiagram {
     pub edges: Vec<Edge>,
 }
 
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub enum NodeShape {
+    Box,
+    Round,
+    Diamond,
+    Circle,
+}
+
 #[derive(Debug, Clone, PartialEq)]
 pub struct NodeDecl {
     pub id: String,
     pub label: String,
+    pub shape: NodeShape,
 }
 
 #[derive(Debug, Clone, PartialEq)]
