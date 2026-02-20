@@ -38,6 +38,7 @@ fn graph_diagram(input: &mut &str) -> winnow::Result<GraphDiagram> {
         direction,
         nodes,
         edges,
+        subgraphs: Vec::new(),
     })
 }
 
