@@ -118,3 +118,62 @@ sequenceDiagram
     assert!(lines[6].contains("Hi!"));
     assert!(lines[6].contains('┃'), "Bob active during Hi!");
 }
+
+#[test]
+fn snapshot_note_right_of() {
+    let input = "\
+sequenceDiagram
+    Alice->>Bob: Hello
+    Note right of Bob: Got it!
+    Bob-->>Alice: Hi!
+";
+    let output = ma::render(input).unwrap();
+    let expected = "\
+┌───────┐  ┌─────┐
+│ Alice │  │ Bob │
+└───┬───┘  └──┬──┘
+    │ Hello   │
+    │────────>│
+    │         │
+    │         │ ┌─────────┐
+    │         │ │ Got it! │
+    │         │ └─────────┘
+    │ Hi!     │
+    │< ─ ─ ─ ─│
+    │         │
+┌───┴───┐  ┌──┴──┐
+│ Alice │  │ Bob │
+└───────┘  └─────┘";
+    assert_eq!(output, expected);
+}
+
+#[test]
+fn snapshot_note_over() {
+    let input = "\
+sequenceDiagram
+    Alice->>Bob: Hello
+    Note over Alice: Thinking
+";
+    let output = ma::render(input).unwrap();
+
+    assert!(output.contains("Thinking"));
+    assert!(output.contains("┌"));
+    let lines: Vec<&str> = output.lines().collect();
+    let note_line = lines.iter().find(|l| l.contains("Thinking")).unwrap();
+    assert!(note_line.contains("│ Thinking │"), "note text in box: {note_line}");
+}
+
+#[test]
+fn snapshot_note_over_two() {
+    let input = "\
+sequenceDiagram
+    Alice->>Bob: Hello
+    Note over Alice,Bob: Shared note
+";
+    let output = ma::render(input).unwrap();
+
+    assert!(output.contains("Shared note"));
+    let lines: Vec<&str> = output.lines().collect();
+    let note_line = lines.iter().find(|l| l.contains("Shared note")).unwrap();
+    assert!(note_line.contains("│ Shared note"), "note text in box: {note_line}");
+}

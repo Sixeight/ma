@@ -73,6 +73,10 @@ pub fn render(layout: &Layout) -> String {
                 draw_lifelines(&mut grid, layout, y, rows_per_message, &row_activations);
                 draw_message(&mut grid, layout, msg, y, &row_activations);
             }
+            Row::Note(note) => {
+                draw_lifelines(&mut grid, layout, y, rows_per_message, &row_activations);
+                draw_note(&mut grid, note, y);
+            }
         }
     }
 
@@ -197,6 +201,30 @@ fn draw_message(
 
     grid.set(arrow_y, left_col, left_ch);
     grid.set(arrow_y, right_col, right_ch);
+}
+
+fn draw_note(grid: &mut Grid, note: &NoteRow, y: usize) {
+    let left = note.box_left;
+    let right = note.box_right;
+
+    grid.set(y, left, BOX_TL);
+    for col in (left + 1)..right {
+        grid.set(y, col, BOX_H);
+    }
+    grid.set(y, right, BOX_TR);
+
+    grid.set(y + 1, left, BOX_V);
+    for col in (left + 1)..right {
+        grid.set(y + 1, col, ' ');
+    }
+    grid.write_str(y + 1, left + 2, &note.text);
+    grid.set(y + 1, right, BOX_V);
+
+    grid.set(y + 2, left, BOX_BL);
+    for col in (left + 1)..right {
+        grid.set(y + 2, col, BOX_H);
+    }
+    grid.set(y + 2, right, BOX_BR);
 }
 
 fn arrow_head_char(arrow: &Arrow) -> char {

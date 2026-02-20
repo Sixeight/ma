@@ -19,6 +19,14 @@ pub struct ParticipantLayout {
 #[derive(Debug, Clone, PartialEq)]
 pub enum Row {
     Message(MessageRow),
+    Note(NoteRow),
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub struct NoteRow {
+    pub box_left: usize,
+    pub box_right: usize,
+    pub text: String,
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -51,10 +59,16 @@ pub fn compute(diagram: &Diagram) -> Result<Layout, String> {
     let rows = compute_rows(diagram, &participant_order, &participants);
     let activations = compute_activations(diagram, &participant_order, rows.len());
 
-    let total_width = participants
+    let mut total_width = participants
         .last()
         .map(|p| p.box_right + 1)
         .unwrap_or(0);
+
+    for row in &rows {
+        if let Row::Note(n) = row {
+            total_width = total_width.max(n.box_right + 1);
+        }
+    }
 
     Ok(Layout {
         participants,
@@ -125,6 +139,56 @@ fn compute_gaps(
         }
     }
 
+    for stmt in &diagram.statements {
+        if let Statement::Note(n) = stmt {
+            let note_box_width = n.text.len() + 4;
+            match &n.placement {
+                NotePlacement::RightOf(id) => {
+                    if let Some(idx) = order.iter().position(|p| p == id) {
+                        if idx + 1 < order.len() {
+                            let required = note_box_width + 4;
+                            gaps[idx] = gaps[idx].max(required);
+                        }
+                    }
+                }
+                NotePlacement::LeftOf(id) => {
+                    if let Some(idx) = order.iter().position(|p| p == id) {
+                        if idx > 0 {
+                            let required = note_box_width + 4;
+                            gaps[idx - 1] = gaps[idx - 1].max(required);
+                        }
+                    }
+                }
+                NotePlacement::Over(id) => {
+                    if let Some(idx) = order.iter().position(|p| p == id) {
+                        let half = note_box_width / 2 + 1;
+                        if idx > 0 {
+                            gaps[idx - 1] = gaps[idx - 1].max(half);
+                        }
+                        if idx + 1 < order.len() {
+                            gaps[idx] = gaps[idx].max(half);
+                        }
+                    }
+                }
+                NotePlacement::OverTwo(a, b) => {
+                    let a_idx = order.iter().position(|p| p == a);
+                    let b_idx = order.iter().position(|p| p == b);
+                    if let (Some(ai), Some(bi)) = (a_idx, b_idx) {
+                        let (left, right) = if ai < bi { (ai, bi) } else { (bi, ai) };
+                        let span_count = right - left;
+                        if span_count > 0 {
+                            let required = note_box_width + 2;
+                            let per_gap = (required + span_count - 1) / span_count;
+                            for gap in &mut gaps[left..right] {
+                                *gap = (*gap).max(per_gap);
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+
     for (i, gap_idx) in (0..order.len().saturating_sub(1)).enumerate() {
         let left_name = display_names.get(&order[i]).unwrap();
         let right_name = display_names.get(&order[i + 1]).unwrap();
@@ -180,25 +244,68 @@ fn compute_rows(
     let mut rows = Vec::new();
 
     for stmt in &diagram.statements {
-        if let Statement::Message(m) = stmt {
-            let from_idx = order.iter().position(|id| *id == m.from).unwrap();
-            let to_idx = order.iter().position(|id| *id == m.to).unwrap();
-            let from_col = participants[from_idx].center_col;
-            let to_col = participants[to_idx].center_col;
+        match stmt {
+            Statement::Message(m) => {
+                let from_idx = order.iter().position(|id| *id == m.from).unwrap();
+                let to_idx = order.iter().position(|id| *id == m.to).unwrap();
+                let from_col = participants[from_idx].center_col;
+                let to_col = participants[to_idx].center_col;
 
-            let direction = if from_idx <= to_idx {
-                Direction::LeftToRight
-            } else {
-                Direction::RightToLeft
-            };
+                let direction = if from_idx <= to_idx {
+                    Direction::LeftToRight
+                } else {
+                    Direction::RightToLeft
+                };
 
-            rows.push(Row::Message(MessageRow {
-                from_col,
-                to_col,
-                text: m.text.clone(),
-                arrow: m.arrow,
-                direction,
-            }));
+                rows.push(Row::Message(MessageRow {
+                    from_col,
+                    to_col,
+                    text: m.text.clone(),
+                    arrow: m.arrow,
+                    direction,
+                }));
+            }
+            Statement::Note(n) => {
+                let note_box_width = n.text.len() + 4;
+                let (box_left, box_right) = match &n.placement {
+                    NotePlacement::RightOf(id) => {
+                        let idx = order.iter().position(|p| p == id).unwrap();
+                        let left = participants[idx].center_col + 2;
+                        (left, left + note_box_width - 1)
+                    }
+                    NotePlacement::LeftOf(id) => {
+                        let idx = order.iter().position(|p| p == id).unwrap();
+                        let right = participants[idx].center_col.saturating_sub(2);
+                        (right.saturating_sub(note_box_width - 1), right)
+                    }
+                    NotePlacement::Over(id) => {
+                        let idx = order.iter().position(|p| p == id).unwrap();
+                        let center = participants[idx].center_col;
+                        let half = note_box_width / 2;
+                        let left = center.saturating_sub(half);
+                        (left, left + note_box_width - 1)
+                    }
+                    NotePlacement::OverTwo(a, b) => {
+                        let a_idx = order.iter().position(|p| p == a).unwrap();
+                        let b_idx = order.iter().position(|p| p == b).unwrap();
+                        let (left_idx, right_idx) = if a_idx < b_idx {
+                            (a_idx, b_idx)
+                        } else {
+                            (b_idx, a_idx)
+                        };
+                        let left = participants[left_idx].center_col.saturating_sub(1);
+                        let right = participants[right_idx].center_col + 1;
+                        let min_right = left + note_box_width - 1;
+                        (left, right.max(min_right))
+                    }
+                };
+                rows.push(Row::Note(NoteRow {
+                    box_left,
+                    box_right,
+                    text: n.text.clone(),
+                }));
+            }
+            _ => {}
         }
     }
 
@@ -242,7 +349,11 @@ fn compute_activations(
                     }
                 }
             }
-            Statement::Note(_) | Statement::ParticipantDecl(_) => {}
+            Statement::Note(_) => {
+                let row_active: Vec<bool> = depths.iter().map(|&d| d > 0).collect();
+                activations.push(row_active);
+            }
+            Statement::ParticipantDecl(_) => {}
         }
     }
 
@@ -307,6 +418,7 @@ sequenceDiagram
                 assert_eq!(m.direction, Direction::LeftToRight);
                 assert_eq!(m.text, "Hi");
             }
+            other => panic!("expected Message, got {other:?}"),
         }
     }
 
@@ -321,6 +433,7 @@ sequenceDiagram
                 assert_eq!(m.direction, Direction::RightToLeft);
                 assert_eq!(m.text, "Hello");
             }
+            other => panic!("expected Message, got {other:?}"),
         }
     }
 
@@ -355,6 +468,7 @@ sequenceDiagram
             Row::Message(m) => {
                 assert_eq!(m.direction, Direction::RightToLeft);
             }
+            other => panic!("expected Message, got {other:?}"),
         }
     }
 
@@ -405,5 +519,99 @@ sequenceDiagram
         assert_eq!(layout.activations.len(), 1);
         assert!(!layout.activations[0][0]);
         assert!(!layout.activations[0][1]);
+    }
+
+    // --- notes ---
+
+    #[test]
+    fn layout_note_right_of_generates_row() {
+        let input = "\
+sequenceDiagram
+    Alice->>Bob: Hello
+    Note right of Bob: Got it!
+    Bob-->>Alice: Hi!
+";
+        let diagram = parse_diagram(input).unwrap();
+        let layout = compute(&diagram).unwrap();
+
+        assert_eq!(layout.rows.len(), 3);
+        match &layout.rows[1] {
+            Row::Note(n) => {
+                assert_eq!(n.text, "Got it!");
+                assert!(
+                    n.box_left > layout.participants[1].center_col,
+                    "note box should be right of Bob's center"
+                );
+            }
+            other => panic!("expected Note row, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn layout_note_left_of_generates_row() {
+        let input = "\
+sequenceDiagram
+    Alice->>Bob: Hello
+    Note left of Bob: Left note
+";
+        let diagram = parse_diagram(input).unwrap();
+        let layout = compute(&diagram).unwrap();
+
+        assert_eq!(layout.rows.len(), 2);
+        match &layout.rows[1] {
+            Row::Note(n) => {
+                assert_eq!(n.text, "Left note");
+                assert!(
+                    n.box_right < layout.participants[1].center_col,
+                    "note box should be left of Bob's center"
+                );
+            }
+            other => panic!("expected Note row, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn layout_note_over_single() {
+        let input = "\
+sequenceDiagram
+    Alice->>Bob: Hello
+    Note over Alice: Thinking
+";
+        let diagram = parse_diagram(input).unwrap();
+        let layout = compute(&diagram).unwrap();
+
+        assert_eq!(layout.rows.len(), 2);
+        match &layout.rows[1] {
+            Row::Note(n) => {
+                assert_eq!(n.text, "Thinking");
+                let alice_center = layout.participants[0].center_col;
+                assert!(n.box_left < alice_center);
+                assert!(n.box_right > alice_center);
+            }
+            other => panic!("expected Note row, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn layout_note_over_two() {
+        let input = "\
+sequenceDiagram
+    Alice->>Bob: Hello
+    Note over Alice,Bob: Shared note
+";
+        let diagram = parse_diagram(input).unwrap();
+        let layout = compute(&diagram).unwrap();
+
+        assert_eq!(layout.rows.len(), 2);
+        match &layout.rows[1] {
+            Row::Note(n) => {
+                assert_eq!(n.text, "Shared note");
+                let alice_center = layout.participants[0].center_col;
+                let bob_center = layout.participants[1].center_col;
+                assert!(n.box_left <= alice_center);
+                assert!(n.box_right >= bob_center);
+            }
+            other => panic!("expected Note row, got {other:?}"),
+        }
     }
 }
