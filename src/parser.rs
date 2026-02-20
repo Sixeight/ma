@@ -32,6 +32,7 @@ fn statement(input: &mut &str) -> winnow::Result<Option<Statement>> {
         comment_line.map(|_| None),
         blank_line.map(|_| None),
         participant_decl.map(|p| Some(Statement::ParticipantDecl(p))),
+        loop_stmt.map(|lb| Some(Statement::Loop(lb))),
         note_stmt.map(|n| Some(Statement::Note(n))),
         activate_stmt.map(|id| Some(Statement::Activate(id))),
         deactivate_stmt.map(|id| Some(Statement::Deactivate(id))),
@@ -80,6 +81,35 @@ fn participant_decl(input: &mut &str) -> winnow::Result<ParticipantDecl> {
     Ok(ParticipantDecl {
         id: id.to_string(),
         alias: alias.map(|s: &str| s.trim().to_string()),
+    })
+}
+
+fn loop_stmt(input: &mut &str) -> winnow::Result<LoopBlock> {
+    "loop".parse_next(input)?;
+    space1.parse_next(input)?;
+    let label = till_line_ending.parse_next(input)?;
+    opt(line_ending).parse_next(input)?;
+
+    let mut body = Vec::new();
+    loop {
+        space0.parse_next(input)?;
+        if input.starts_with("end") {
+            "end".parse_next(input)?;
+            opt(line_ending).parse_next(input)?;
+            break;
+        }
+        if input.is_empty() {
+            return Err(winnow::error::ParserError::from_input(input));
+        }
+        let stmt = statement.parse_next(input)?;
+        if let Some(s) = stmt {
+            body.push(s);
+        }
+    }
+
+    Ok(LoopBlock {
+        label: label.trim().to_string(),
+        body,
     })
 }
 
@@ -437,6 +467,59 @@ sequenceDiagram
             NotePlacement::OverTwo("Alice".to_string(), "Bob".to_string())
         );
         assert_eq!(n.text, "Spanning note");
+    }
+
+    // --- loop ---
+
+    #[test]
+    fn parse_loop_basic() {
+        let input = "\
+sequenceDiagram
+    loop Check
+        A->>B: Ping
+    end
+";
+        let diagram = parse_diagram(input).unwrap();
+        assert_eq!(diagram.statements.len(), 1);
+        match &diagram.statements[0] {
+            Statement::Loop(lb) => {
+                assert_eq!(lb.label, "Check");
+                assert_eq!(lb.body.len(), 1);
+                match &lb.body[0] {
+                    Statement::Message(m) => {
+                        assert_eq!(m.from, "A");
+                        assert_eq!(m.to, "B");
+                        assert_eq!(m.text, "Ping");
+                    }
+                    other => panic!("expected Message, got {other:?}"),
+                }
+            }
+            other => panic!("expected Loop, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn parse_loop_multiple_messages() {
+        let input = "\
+sequenceDiagram
+    A->>B: Hello
+    loop Check
+        A->>B: Ping
+        B-->>A: Pong
+    end
+    B-->>A: Bye
+";
+        let diagram = parse_diagram(input).unwrap();
+        assert_eq!(diagram.statements.len(), 3);
+        assert!(matches!(&diagram.statements[0], Statement::Message(_)));
+        match &diagram.statements[1] {
+            Statement::Loop(lb) => {
+                assert_eq!(lb.label, "Check");
+                assert_eq!(lb.body.len(), 2);
+            }
+            other => panic!("expected Loop, got {other:?}"),
+        }
+        assert!(matches!(&diagram.statements[2], Statement::Message(_)));
     }
 
     #[test]

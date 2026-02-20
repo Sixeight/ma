@@ -52,35 +52,55 @@ impl Grid {
     }
 }
 
+fn row_height(row: &Row) -> usize {
+    match row {
+        Row::Message(_) | Row::Note(_) => 3,
+        Row::BlockStart(_) | Row::BlockEnd(_) => 1,
+    }
+}
+
 pub fn render(layout: &Layout) -> String {
-    let rows_per_message = 3;
     let box_height = 3;
-    let height = box_height + layout.rows.len() * rows_per_message + box_height;
+    let body_height: usize = layout.rows.iter().map(|r| row_height(r)).sum();
+    let height = box_height + body_height + box_height;
     let mut grid = Grid::new(layout.total_width, height);
 
     draw_participant_boxes(&mut grid, layout, 0, true);
 
     let body_start = box_height;
+    let mut y = body_start;
+    let mut active_frames: Vec<&BlockRow> = Vec::new();
     for (i, row) in layout.rows.iter().enumerate() {
-        let y = body_start + i * rows_per_message;
         let row_activations = layout
             .activations
             .get(i)
             .cloned()
             .unwrap_or_else(|| vec![false; layout.participants.len()]);
+        let h = row_height(row);
         match row {
             Row::Message(msg) => {
-                draw_lifelines(&mut grid, layout, y, rows_per_message, &row_activations);
+                draw_lifelines(&mut grid, layout, y, h, &row_activations);
                 draw_message(&mut grid, layout, msg, y, &row_activations);
+                draw_frame_sides(&mut grid, layout, &active_frames, y, h);
             }
             Row::Note(note) => {
-                draw_lifelines(&mut grid, layout, y, rows_per_message, &row_activations);
+                draw_lifelines(&mut grid, layout, y, h, &row_activations);
                 draw_note(&mut grid, note, y);
+                draw_frame_sides(&mut grid, layout, &active_frames, y, h);
+            }
+            Row::BlockStart(block) => {
+                draw_block_start(&mut grid, layout, block, y);
+                active_frames.push(block);
+            }
+            Row::BlockEnd(block) => {
+                active_frames.retain(|f| f.frame_left != block.frame_left || f.frame_right != block.frame_right);
+                draw_block_end(&mut grid, layout, block, y);
             }
         }
+        y += h;
     }
 
-    let bottom_y = body_start + layout.rows.len() * rows_per_message;
+    let bottom_y = body_start + body_height;
     draw_participant_boxes(&mut grid, layout, bottom_y, false);
 
     grid.to_string()
@@ -225,6 +245,60 @@ fn draw_note(grid: &mut Grid, note: &NoteRow, y: usize) {
         grid.set(y + 2, col, BOX_H);
     }
     grid.set(y + 2, right, BOX_BR);
+}
+
+const CROSS: char = '┼';
+
+fn draw_block_start(grid: &mut Grid, layout: &Layout, block: &BlockRow, y: usize) {
+    grid.set(y, block.frame_left, BOX_TL);
+    for col in (block.frame_left + 1)..block.frame_right {
+        grid.set(y, col, BOX_H);
+    }
+    grid.set(y, block.frame_right, BOX_TR);
+
+    // Write label
+    grid.write_str(y, block.frame_left + 2, &block.label);
+
+    // Draw ┼ at lifeline intersections
+    for p in &layout.participants {
+        if p.center_col > block.frame_left && p.center_col < block.frame_right {
+            // Only draw ┼ if it's not covered by the label text
+            let label_end = block.frame_left + 2 + block.label.len();
+            if p.center_col >= label_end + 1 {
+                grid.set(y, p.center_col, CROSS);
+            }
+        }
+    }
+}
+
+fn draw_block_end(grid: &mut Grid, layout: &Layout, block: &BlockRow, y: usize) {
+    grid.set(y, block.frame_left, BOX_BL);
+    for col in (block.frame_left + 1)..block.frame_right {
+        grid.set(y, col, BOX_H);
+    }
+    grid.set(y, block.frame_right, BOX_BR);
+
+    // Draw ┼ at lifeline intersections
+    for p in &layout.participants {
+        if p.center_col > block.frame_left && p.center_col < block.frame_right {
+            grid.set(y, p.center_col, CROSS);
+        }
+    }
+}
+
+fn draw_frame_sides(
+    grid: &mut Grid,
+    _layout: &Layout,
+    active_frames: &[&BlockRow],
+    y: usize,
+    height: usize,
+) {
+    for frame in active_frames {
+        for dy in 0..height {
+            grid.set(y + dy, frame.frame_left, BOX_V);
+            grid.set(y + dy, frame.frame_right, BOX_V);
+        }
+    }
 }
 
 fn arrow_head_char(arrow: &Arrow) -> char {

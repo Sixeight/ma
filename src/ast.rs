@@ -10,6 +10,13 @@ pub enum Statement {
     Note(Note),
     Activate(String),
     Deactivate(String),
+    Loop(LoopBlock),
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub struct LoopBlock {
+    pub label: String,
+    pub body: Vec<Statement>,
 }
 
 #[derive(Debug, Clone, PartialEq)]

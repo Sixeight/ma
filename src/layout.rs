@@ -20,6 +20,15 @@ pub struct ParticipantLayout {
 pub enum Row {
     Message(MessageRow),
     Note(NoteRow),
+    BlockStart(BlockRow),
+    BlockEnd(BlockRow),
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub struct BlockRow {
+    pub label: String,
+    pub frame_left: usize,
+    pub frame_right: usize,
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -103,10 +112,30 @@ fn collect_participants(
                 }
             }
             Statement::Note(_) | Statement::Activate(_) | Statement::Deactivate(_) => {}
+            Statement::Loop(lb) => {
+                collect_participants_inner(&lb.body, &mut order, &mut display_names);
+            }
         }
     }
 
     (order, display_names)
+}
+
+fn collect_participants_inner(
+    statements: &[Statement],
+    order: &mut Vec<String>,
+    display_names: &mut std::collections::HashMap<String, String>,
+) {
+    for stmt in statements {
+        if let Statement::Message(m) = stmt {
+            for id in [&m.from, &m.to] {
+                if !order.contains(id) {
+                    order.push(id.clone());
+                    display_names.insert(id.clone(), id.clone());
+                }
+            }
+        }
+    }
 }
 
 fn compute_gaps(
@@ -242,8 +271,17 @@ fn compute_rows(
     participants: &[ParticipantLayout],
 ) -> Vec<Row> {
     let mut rows = Vec::new();
+    flatten_statements(&diagram.statements, order, participants, &mut rows);
+    rows
+}
 
-    for stmt in &diagram.statements {
+fn flatten_statements(
+    statements: &[Statement],
+    order: &[String],
+    participants: &[ParticipantLayout],
+    rows: &mut Vec<Row>,
+) {
+    for stmt in statements {
         match stmt {
             Statement::Message(m) => {
                 let from_idx = order.iter().position(|id| *id == m.from).unwrap();
@@ -305,11 +343,39 @@ fn compute_rows(
                     text: n.text.clone(),
                 }));
             }
+            Statement::Loop(lb) => {
+                push_simple_block("loop", lb, participants, order, rows);
+            }
             _ => {}
         }
     }
+}
 
-    rows
+fn push_simple_block(
+    keyword: &str,
+    block: &LoopBlock,
+    participants: &[ParticipantLayout],
+    order: &[String],
+    rows: &mut Vec<Row>,
+) {
+    let (frame_left, frame_right) = compute_frame_bounds(participants);
+    rows.push(Row::BlockStart(BlockRow {
+        label: format!("{keyword} {}", block.label),
+        frame_left,
+        frame_right,
+    }));
+    flatten_statements(&block.body, order, participants, rows);
+    rows.push(Row::BlockEnd(BlockRow {
+        label: String::new(),
+        frame_left,
+        frame_right,
+    }));
+}
+
+fn compute_frame_bounds(participants: &[ParticipantLayout]) -> (usize, usize) {
+    let frame_left = participants.first().map(|p| p.center_col.saturating_sub(2)).unwrap_or(0);
+    let frame_right = participants.last().map(|p| p.center_col + 2).unwrap_or(0);
+    (frame_left, frame_right)
 }
 
 fn compute_activations(
@@ -321,7 +387,19 @@ fn compute_activations(
     let mut depths: Vec<i32> = vec![0; participant_count];
     let mut activations = Vec::with_capacity(row_count);
 
-    for stmt in &diagram.statements {
+    compute_activations_inner(&diagram.statements, order, &mut depths, &mut activations);
+
+    debug_assert_eq!(activations.len(), row_count);
+    activations
+}
+
+fn compute_activations_inner(
+    statements: &[Statement],
+    order: &[String],
+    depths: &mut Vec<i32>,
+    activations: &mut Vec<Vec<bool>>,
+) {
+    for stmt in statements {
         match stmt {
             Statement::Activate(id) => {
                 if let Some(idx) = order.iter().position(|p| p == id) {
@@ -353,12 +431,16 @@ fn compute_activations(
                 let row_active: Vec<bool> = depths.iter().map(|&d| d > 0).collect();
                 activations.push(row_active);
             }
+            Statement::Loop(lb) => {
+                let row_active: Vec<bool> = depths.iter().map(|&d| d > 0).collect();
+                activations.push(row_active.clone());
+                compute_activations_inner(&lb.body, order, depths, activations);
+                let row_active: Vec<bool> = depths.iter().map(|&d| d > 0).collect();
+                activations.push(row_active);
+            }
             Statement::ParticipantDecl(_) => {}
         }
     }
-
-    debug_assert_eq!(activations.len(), row_count);
-    activations
 }
 
 #[cfg(test)]
@@ -522,6 +604,57 @@ sequenceDiagram
     }
 
     // --- notes ---
+
+    // --- blocks ---
+
+    #[test]
+    fn layout_loop_generates_block_rows() {
+        let input = "\
+sequenceDiagram
+    loop Check
+        A->>B: Ping
+    end
+";
+        let diagram = parse_diagram(input).unwrap();
+        let layout = compute(&diagram).unwrap();
+
+        assert_eq!(layout.rows.len(), 3, "BlockStart + Message + BlockEnd");
+        match &layout.rows[0] {
+            Row::BlockStart(b) => {
+                assert_eq!(b.label, "loop Check");
+            }
+            other => panic!("expected BlockStart, got {other:?}"),
+        }
+        match &layout.rows[1] {
+            Row::Message(m) => {
+                assert_eq!(m.text, "Ping");
+            }
+            other => panic!("expected Message, got {other:?}"),
+        }
+        match &layout.rows[2] {
+            Row::BlockEnd(b) => {
+                assert!(b.frame_left < layout.participants[0].center_col);
+                assert!(b.frame_right > layout.participants[1].center_col);
+            }
+            other => panic!("expected BlockEnd, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn layout_loop_with_surrounding_messages() {
+        let input = "\
+sequenceDiagram
+    A->>B: Hello
+    loop Check
+        A->>B: Ping
+    end
+    B-->>A: Bye
+";
+        let diagram = parse_diagram(input).unwrap();
+        let layout = compute(&diagram).unwrap();
+
+        assert_eq!(layout.rows.len(), 5, "Hello + BlockStart + Ping + BlockEnd + Bye");
+    }
 
     #[test]
     fn layout_note_right_of_generates_row() {

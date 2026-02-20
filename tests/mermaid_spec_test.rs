@@ -175,7 +175,6 @@ sequenceDiagram
 // --- loop ---
 
 #[test]
-#[ignore = "loop not yet implemented"]
 fn spec_loop() {
     let input = "\
 sequenceDiagram
@@ -196,12 +195,11 @@ sequenceDiagram
     assert!(frame_top.contains('┌'), "frame top-left corner");
     assert!(frame_top.contains('┐'), "frame top-right corner");
 
-    let frame_bottom = lines.iter().find(|l| l.contains('└') && l.contains('┘')).unwrap();
+    let frame_bottom = lines[3..].iter().find(|l| l.contains('└') && l.contains('┘')).unwrap();
     assert!(frame_bottom.contains('┼'), "frame bottom has lifeline intersection");
 }
 
 #[test]
-#[ignore = "loop not yet implemented"]
 fn spec_loop_with_surrounding_messages() {
     let input = "\
 sequenceDiagram
@@ -267,7 +265,8 @@ sequenceDiagram
     assert!(else_line.contains('├'), "else divider left");
     assert!(else_line.contains('┤'), "else divider right");
 
-    let frame_bottom = lines
+    let body = &lines[3..lines.len() - 3];
+    let frame_bottom = body
         .iter()
         .rev()
         .find(|l| l.contains('└') && l.contains('┘'))
