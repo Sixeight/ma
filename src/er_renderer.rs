@@ -89,11 +89,42 @@ fn draw_box(grid: &mut Grid, node: &ErNodeLayout) {
     grid.write_str(y + 1, x + 2, &node.name);
     grid.set(y + 1, x + w - 1, '│');
 
-    grid.set(y + 2, x, '└');
-    for col in (x + 1)..(x + w - 1) {
-        grid.set(y + 2, col, '─');
+    if node.attributes.is_empty() {
+        grid.set(y + 2, x, '└');
+        for col in (x + 1)..(x + w - 1) {
+            grid.set(y + 2, col, '─');
+        }
+        grid.set(y + 2, x + w - 1, '┘');
+    } else {
+        // Separator line
+        let sep_y = y + 2;
+        grid.set(sep_y, x, '├');
+        for col in (x + 1)..(x + w - 1) {
+            grid.set(sep_y, col, '─');
+        }
+        grid.set(sep_y, x + w - 1, '┤');
+
+        // Attribute rows
+        for (i, attr) in node.attributes.iter().enumerate() {
+            let row = sep_y + 1 + i;
+            grid.set(row, x, '│');
+            let text = if let Some(ref key) = attr.key {
+                format!("{} {} {}", attr.attr_type, attr.name, key)
+            } else {
+                format!("{} {}", attr.attr_type, attr.name)
+            };
+            grid.write_str(row, x + 2, &text);
+            grid.set(row, x + w - 1, '│');
+        }
+
+        // Bottom border
+        let bottom_y = sep_y + 1 + node.attributes.len();
+        grid.set(bottom_y, x, '└');
+        for col in (x + 1)..(x + w - 1) {
+            grid.set(bottom_y, col, '─');
+        }
+        grid.set(bottom_y, x + w - 1, '┘');
     }
-    grid.set(y + 2, x + w - 1, '┘');
 }
 
 fn draw_er_edge(
@@ -152,10 +183,14 @@ mod tests {
     use crate::er_layout;
     use pretty_assertions::assert_eq;
 
+    fn entity(name: &str) -> Entity {
+        Entity { name: name.to_string(), attributes: Vec::new() }
+    }
+
     #[test]
     fn render_single_relationship() {
         let diagram = ErDiagram {
-            entities: vec!["A".into(), "B".into()],
+            entities: vec![entity("A"), entity("B")],
             relationships: vec![Relationship {
                 from: "A".into(),
                 to: "B".into(),
@@ -176,7 +211,7 @@ mod tests {
     #[test]
     fn render_chain() {
         let diagram = ErDiagram {
-            entities: vec!["CUSTOMER".into(), "ORDER".into(), "LINE-ITEM".into()],
+            entities: vec![entity("CUSTOMER"), entity("ORDER"), entity("LINE-ITEM")],
             relationships: vec![
                 Relationship {
                     from: "CUSTOMER".into(),

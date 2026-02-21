@@ -7,8 +7,21 @@ pub enum Cardinality {
 }
 
 #[derive(Debug, Clone, PartialEq)]
+pub struct EntityAttribute {
+    pub attr_type: String,
+    pub name: String,
+    pub key: Option<String>,
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub struct Entity {
+    pub name: String,
+    pub attributes: Vec<EntityAttribute>,
+}
+
+#[derive(Debug, Clone, PartialEq)]
 pub struct ErDiagram {
-    pub entities: Vec<String>,
+    pub entities: Vec<Entity>,
     pub relationships: Vec<Relationship>,
 }
 

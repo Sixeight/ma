@@ -14,6 +14,7 @@ pub struct ErLayout {
 #[derive(Debug, Clone, PartialEq)]
 pub struct ErNodeLayout {
     pub name: String,
+    pub attributes: Vec<EntityAttribute>,
     pub x: usize,
     pub y: usize,
     pub width: usize,
@@ -61,9 +62,9 @@ fn compute_with_gap(diagram: &ErDiagram, min_gap: usize) -> Result<ErLayout, Str
     let ranks = assign_ranks(diagram);
     let max_rank = *ranks.values().max().unwrap_or(&0);
 
-    let mut ranks_entities: Vec<Vec<&str>> = vec![Vec::new(); max_rank + 1];
+    let mut ranks_entities: Vec<Vec<&Entity>> = vec![Vec::new(); max_rank + 1];
     for entity in &diagram.entities {
-        let rank = ranks[entity.as_str()];
+        let rank = ranks[entity.name.as_str()];
         ranks_entities[rank].push(entity);
     }
 
@@ -73,20 +74,43 @@ fn compute_with_gap(diagram: &ErDiagram, min_gap: usize) -> Result<ErLayout, Str
     for (rank, rank_entities) in ranks_entities.iter().enumerate() {
         let mut y = 0;
         for entity in rank_entities {
-            let w = display_width(entity) + 4;
+            let attr_width = entity.attributes.iter().map(|a| {
+                let mut w = display_width(&a.attr_type) + 1 + display_width(&a.name);
+                if let Some(ref k) = a.key {
+                    w += 1 + display_width(k);
+                }
+                w
+            }).max().unwrap_or(0);
+            let content_width = display_width(&entity.name).max(attr_width);
+            let w = content_width + 4;
+            let h = if entity.attributes.is_empty() {
+                BOX_HEIGHT
+            } else {
+                BOX_HEIGHT + 1 + entity.attributes.len()
+            };
             nodes.push(ErNodeLayout {
-                name: entity.to_string(),
+                name: entity.name.to_string(),
+                attributes: entity.attributes.clone(),
                 x,
                 y,
                 width: w,
-                height: BOX_HEIGHT,
-                center_y: y + 1,
+                height: h,
+                center_y: y + h / 2,
             });
-            y += BOX_HEIGHT + 1;
+            y += h + 1;
         }
 
         if rank < max_rank {
-            let rank_max_width = rank_entities.iter().map(|e| display_width(e) + 4).max().unwrap_or(0);
+            let rank_max_width = rank_entities.iter().map(|e| {
+                let attr_width = e.attributes.iter().map(|a| {
+                    let mut w = display_width(&a.attr_type) + 1 + display_width(&a.name);
+                    if let Some(ref k) = a.key {
+                        w += 1 + display_width(k);
+                    }
+                    w
+                }).max().unwrap_or(0);
+                display_width(&e.name).max(attr_width) + 4
+            }).max().unwrap_or(0);
             let label_gap = diagram
                 .relationships
                 .iter()
@@ -128,7 +152,7 @@ fn compute_with_gap(diagram: &ErDiagram, min_gap: usize) -> Result<ErLayout, Str
 fn assign_ranks(diagram: &ErDiagram) -> HashMap<&str, usize> {
     let mut in_edges: HashMap<&str, Vec<&str>> = HashMap::new();
     for entity in &diagram.entities {
-        in_edges.entry(entity).or_default();
+        in_edges.entry(&entity.name).or_default();
     }
     for rel in &diagram.relationships {
         in_edges.entry(&rel.to).or_default().push(&rel.from);
@@ -136,8 +160,8 @@ fn assign_ranks(diagram: &ErDiagram) -> HashMap<&str, usize> {
 
     let mut ranks: HashMap<&str, usize> = HashMap::new();
     for entity in &diagram.entities {
-        if !ranks.contains_key(entity.as_str()) {
-            compute_rank(entity, &in_edges, &mut ranks);
+        if !ranks.contains_key(entity.name.as_str()) {
+            compute_rank(&entity.name, &in_edges, &mut ranks);
         }
     }
     ranks
@@ -173,10 +197,14 @@ mod tests {
     use super::*;
     use crate::er_ast::*;
 
+    fn entity(name: &str) -> Entity {
+        Entity { name: name.to_string(), attributes: Vec::new() }
+    }
+
     #[test]
     fn rank_single_relationship() {
         let diagram = ErDiagram {
-            entities: vec!["A".into(), "B".into()],
+            entities: vec![entity("A"), entity("B")],
             relationships: vec![Relationship {
                 from: "A".into(),
                 to: "B".into(),
@@ -195,7 +223,7 @@ mod tests {
     #[test]
     fn rank_chain() {
         let diagram = ErDiagram {
-            entities: vec!["A".into(), "B".into(), "C".into()],
+            entities: vec![entity("A"), entity("B"), entity("C")],
             relationships: vec![
                 Relationship { from: "A".into(), to: "B".into(), left_card: Cardinality::ExactlyOne, right_card: Cardinality::ExactlyOne, label: "r1".into() },
                 Relationship { from: "B".into(), to: "C".into(), left_card: Cardinality::ExactlyOne, right_card: Cardinality::ExactlyOne, label: "r2".into() },
@@ -212,7 +240,7 @@ mod tests {
     #[test]
     fn layout_label_gap() {
         let diagram = ErDiagram {
-            entities: vec!["A".into(), "B".into()],
+            entities: vec![entity("A"), entity("B")],
             relationships: vec![Relationship {
                 from: "A".into(),
                 to: "B".into(),
