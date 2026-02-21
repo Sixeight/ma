@@ -1,4 +1,5 @@
 pub mod ast;
+pub mod display_width;
 pub mod er_ast;
 pub mod er_layout;
 pub mod er_parser;
