@@ -24,6 +24,8 @@ pub struct ErNodeLayout {
 pub struct ErEdgeLayout {
     pub from: String,
     pub to: String,
+    pub left_card: Cardinality,
+    pub right_card: Cardinality,
     pub label: String,
 }
 
@@ -88,6 +90,8 @@ pub fn compute(diagram: &ErDiagram) -> Result<ErLayout, String> {
         .map(|r| ErEdgeLayout {
             from: r.from.clone(),
             to: r.to.clone(),
+            left_card: r.left_card,
+            right_card: r.right_card,
             label: r.label.clone(),
         })
         .collect();
@@ -155,6 +159,8 @@ mod tests {
             relationships: vec![Relationship {
                 from: "A".into(),
                 to: "B".into(),
+                left_card: Cardinality::ExactlyOne,
+                right_card: Cardinality::ExactlyOne,
                 label: "r1".into(),
             }],
         };
@@ -170,8 +176,8 @@ mod tests {
         let diagram = ErDiagram {
             entities: vec!["A".into(), "B".into(), "C".into()],
             relationships: vec![
-                Relationship { from: "A".into(), to: "B".into(), label: "r1".into() },
-                Relationship { from: "B".into(), to: "C".into(), label: "r2".into() },
+                Relationship { from: "A".into(), to: "B".into(), left_card: Cardinality::ExactlyOne, right_card: Cardinality::ExactlyOne, label: "r1".into() },
+                Relationship { from: "B".into(), to: "C".into(), left_card: Cardinality::ExactlyOne, right_card: Cardinality::ExactlyOne, label: "r2".into() },
             ],
         };
         let layout = compute(&diagram).unwrap();
@@ -189,6 +195,8 @@ mod tests {
             relationships: vec![Relationship {
                 from: "A".into(),
                 to: "B".into(),
+                left_card: Cardinality::ExactlyOne,
+                right_card: Cardinality::ExactlyOne,
                 label: "long label here".into(),
             }],
         };

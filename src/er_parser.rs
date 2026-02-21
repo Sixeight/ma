@@ -59,7 +59,7 @@ fn relationship_line(input: &mut &str) -> winnow::Result<Relationship> {
     space0.parse_next(input)?;
     let from = er_identifier.parse_next(input)?;
     space1.parse_next(input)?;
-    cardinality.parse_next(input)?;
+    let (left_card, right_card) = cardinality.parse_next(input)?;
     space1.parse_next(input)?;
     let to = er_identifier.parse_next(input)?;
     space0.parse_next(input)?;
@@ -72,15 +72,43 @@ fn relationship_line(input: &mut &str) -> winnow::Result<Relationship> {
     Ok(Relationship {
         from: from.to_string(),
         to: to.to_string(),
+        left_card,
+        right_card,
         label: label.trim_end().to_string(),
     })
 }
 
-fn cardinality(input: &mut &str) -> winnow::Result<()> {
-    take_while(1.., |c: char| c == '|' || c == 'o' || c == '{' || c == '}').parse_next(input)?;
+fn cardinality(input: &mut &str) -> winnow::Result<(Cardinality, Cardinality)> {
+    let left_str: &str =
+        take_while(1.., |c: char| c == '|' || c == 'o' || c == '{' || c == '}')
+            .parse_next(input)?;
     "--".parse_next(input)?;
-    take_while(1.., |c: char| c == '|' || c == 'o' || c == '{' || c == '}').parse_next(input)?;
-    Ok(())
+    let right_str: &str =
+        take_while(1.., |c: char| c == '|' || c == 'o' || c == '{' || c == '}')
+            .parse_next(input)?;
+    let left = parse_left_cardinality(left_str);
+    let right = parse_right_cardinality(right_str);
+    Ok((left, right))
+}
+
+fn parse_left_cardinality(s: &str) -> Cardinality {
+    match s {
+        "||" => Cardinality::ExactlyOne,
+        "o|" => Cardinality::ZeroOrOne,
+        "}|" => Cardinality::OneOrMany,
+        "}o" => Cardinality::ZeroOrMany,
+        _ => Cardinality::ExactlyOne,
+    }
+}
+
+fn parse_right_cardinality(s: &str) -> Cardinality {
+    match s {
+        "||" => Cardinality::ExactlyOne,
+        "|o" => Cardinality::ZeroOrOne,
+        "|{" => Cardinality::OneOrMany,
+        "o{" => Cardinality::ZeroOrMany,
+        _ => Cardinality::ExactlyOne,
+    }
 }
 
 #[cfg(test)]
@@ -104,22 +132,46 @@ mod tests {
     #[test]
     fn parse_cardinality_one_to_many() {
         let mut input = "||--o{ rest";
-        cardinality(&mut input).unwrap();
+        let (left, right) = cardinality(&mut input).unwrap();
         assert_eq!(input, " rest");
+        assert_eq!(left, Cardinality::ExactlyOne);
+        assert_eq!(right, Cardinality::ZeroOrMany);
     }
 
     #[test]
     fn parse_cardinality_one_to_one() {
         let mut input = "||--|| rest";
-        cardinality(&mut input).unwrap();
+        let (left, right) = cardinality(&mut input).unwrap();
         assert_eq!(input, " rest");
+        assert_eq!(left, Cardinality::ExactlyOne);
+        assert_eq!(right, Cardinality::ExactlyOne);
     }
 
     #[test]
     fn parse_cardinality_many_to_many() {
         let mut input = "}o--o{ rest";
-        cardinality(&mut input).unwrap();
+        let (left, right) = cardinality(&mut input).unwrap();
         assert_eq!(input, " rest");
+        assert_eq!(left, Cardinality::ZeroOrMany);
+        assert_eq!(right, Cardinality::ZeroOrMany);
+    }
+
+    #[test]
+    fn parse_cardinality_zero_or_one() {
+        let mut input = "o|--|o rest";
+        let (left, right) = cardinality(&mut input).unwrap();
+        assert_eq!(input, " rest");
+        assert_eq!(left, Cardinality::ZeroOrOne);
+        assert_eq!(right, Cardinality::ZeroOrOne);
+    }
+
+    #[test]
+    fn parse_cardinality_one_or_many() {
+        let mut input = "}|--|{ rest";
+        let (left, right) = cardinality(&mut input).unwrap();
+        assert_eq!(input, " rest");
+        assert_eq!(left, Cardinality::OneOrMany);
+        assert_eq!(right, Cardinality::OneOrMany);
     }
 
     #[test]

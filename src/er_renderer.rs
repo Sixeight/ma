@@ -115,6 +115,8 @@ mod tests {
             relationships: vec![Relationship {
                 from: "A".into(),
                 to: "B".into(),
+                left_card: Cardinality::ExactlyOne,
+                right_card: Cardinality::ExactlyOne,
                 label: "r1".into(),
             }],
         };
@@ -135,11 +137,15 @@ mod tests {
                 Relationship {
                     from: "CUSTOMER".into(),
                     to: "ORDER".into(),
+                    left_card: Cardinality::ExactlyOne,
+                    right_card: Cardinality::ZeroOrMany,
                     label: "places".into(),
                 },
                 Relationship {
                     from: "ORDER".into(),
                     to: "LINE-ITEM".into(),
+                    left_card: Cardinality::ExactlyOne,
+                    right_card: Cardinality::OneOrMany,
                     label: "contains".into(),
                 },
             ],
