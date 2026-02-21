@@ -13,6 +13,7 @@ const BOX_TU: char = '┴';
 const ARROW_R: char = '>';
 const ARROW_L: char = '<';
 const HEAVY_V: char = '┃';
+const SELF_LOOP_ARM: usize = 4;
 
 struct Grid {
     cells: Vec<Vec<char>>,
@@ -171,6 +172,11 @@ fn draw_message(
     y: usize,
     activations: &[bool],
 ) {
+    if msg.from_col == msg.to_col {
+        draw_self_message(grid, layout, msg, y, activations);
+        return;
+    }
+
     let (left_col, right_col) = if msg.from_col < msg.to_col {
         (msg.from_col, msg.to_col)
     } else {
@@ -234,6 +240,47 @@ fn draw_message(
 
     grid.set(arrow_y, left_col, left_ch);
     grid.set(arrow_y, right_col, right_ch);
+}
+
+fn draw_self_message(
+    grid: &mut Grid,
+    layout: &Layout,
+    msg: &MessageRow,
+    y: usize,
+    activations: &[bool],
+) {
+    let center = msg.from_col;
+    let arm_end = center + SELF_LOOP_ARM;
+
+    // y: text
+    grid.write_str(y, center + 2, &msg.text);
+
+    // y+1: outgoing arm ──┐
+    for col in (center + 1)..arm_end {
+        grid.set(y + 1, col, BOX_H);
+    }
+    grid.set(y + 1, arm_end, BOX_TR);
+
+    // y+2: return arm <─┘
+    grid.set(y + 2, center + 1, reverse_arrow_head_char(&msg.arrow));
+    for col in (center + 2)..arm_end {
+        grid.set(y + 2, col, BOX_H);
+    }
+    grid.set(y + 2, arm_end, BOX_BR);
+
+    // Restore lifeline at center for all 3 rows
+    let idx = layout
+        .participants
+        .iter()
+        .position(|p| p.center_col == center);
+    let ch = if idx.is_some_and(|i| activations.get(i).copied().unwrap_or(false)) {
+        HEAVY_V
+    } else {
+        BOX_V
+    };
+    for dy in 0..3 {
+        grid.set(y + dy, center, ch);
+    }
 }
 
 fn draw_note(grid: &mut Grid, note: &NoteRow, y: usize) {
@@ -462,5 +509,16 @@ mod tests {
 
         let body = output.lines().skip(3).take(3).collect::<Vec<_>>().join("\n");
         assert!(!body.contains('┃'), "inactive lifeline should not use heavy vertical");
+    }
+
+    #[test]
+    fn render_self_message_as_loop() {
+        let input = "sequenceDiagram\n    A->>B: Hello\n    B->>B: self\n";
+        let diagram = crate::parser::parse_diagram(input).unwrap();
+        let layout = crate::layout::compute(&diagram).unwrap();
+        let output = render(&layout);
+        assert!(output.contains("self"), "should contain self-message text");
+        assert!(output.contains("──┐"), "self-message should have loop out");
+        assert!(output.contains("┘"), "self-message should have return corner");
     }
 }

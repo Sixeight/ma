@@ -57,6 +57,7 @@ pub enum Direction {
 
 const MIN_GAP: usize = 10;
 const ARROW_DECORATION_WIDTH: usize = 2;
+const SELF_LOOP_ARM: usize = 4;
 
 pub fn compute(diagram: &Diagram) -> Result<Layout, String> {
     let (participant_order, display_names) = collect_participants(diagram);
@@ -77,6 +78,12 @@ pub fn compute(diagram: &Diagram) -> Result<Layout, String> {
 
     for row in &rows {
         match row {
+            Row::Message(m) if m.from_col == m.to_col => {
+                let right = m.from_col + 2 + display_width(&m.text) + 1;
+                total_width = total_width.max(right);
+                let arm_right = m.from_col + SELF_LOOP_ARM + 1;
+                total_width = total_width.max(arm_right);
+            }
             Row::Note(n) => {
                 total_width = total_width.max(n.box_right + 1);
             }
@@ -185,9 +192,16 @@ fn compute_gaps_inner(statements: &[Statement], order: &[String], gaps: &mut [us
                 let to_idx = order.iter().position(|id| *id == m.to);
 
                 if let (Some(fi), Some(ti)) = (from_idx, to_idx) {
-                    let (left, right) = if fi < ti { (fi, ti) } else { (ti, fi) };
-                    let span_count = right - left;
-                    if span_count > 0 {
+                    if fi == ti {
+                        // Self-message: need space to the right for text + loop arm
+                        let required =
+                            (display_width(&m.text) + 3).max(SELF_LOOP_ARM + 2);
+                        if fi < gaps.len() {
+                            gaps[fi] = gaps[fi].max(required);
+                        }
+                    } else {
+                        let (left, right) = if fi < ti { (fi, ti) } else { (ti, fi) };
+                        let span_count = right - left;
                         let required = display_width(&m.text) + ARROW_DECORATION_WIDTH + 2;
                         let per_gap = required.div_ceil(span_count);
                         for gap in &mut gaps[left..right] {
@@ -852,6 +866,35 @@ sequenceDiagram
             }
             other => panic!("expected Note row, got {other:?}"),
         }
+    }
+
+    #[test]
+    fn layout_self_message_extends_total_width() {
+        let input = "sequenceDiagram\n    A->>A: self message text\n";
+        let diagram = parse_diagram(input).unwrap();
+        let layout = compute(&diagram).unwrap();
+        let a = &layout.participants[0];
+        let required = a.center_col + 2 + display_width("self message text") + 1;
+        assert!(
+            layout.total_width >= required,
+            "total_width {} should be >= {} for self-message",
+            layout.total_width, required,
+        );
+    }
+
+    #[test]
+    fn layout_self_message_gap_with_neighbor() {
+        let input = "sequenceDiagram\n    A->>B: Hi\n    A->>A: self message here\n";
+        let diagram = parse_diagram(input).unwrap();
+        let layout = compute(&diagram).unwrap();
+        let a = &layout.participants[0];
+        let b = &layout.participants[1];
+        let text_end = a.center_col + 2 + display_width("self message here");
+        assert!(
+            b.center_col > text_end,
+            "B center {} should be beyond self-message text end {}",
+            b.center_col, text_end,
+        );
     }
 
     #[test]
