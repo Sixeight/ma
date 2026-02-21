@@ -1,5 +1,6 @@
 use std::collections::HashMap;
 
+use crate::display_width::display_width;
 use crate::graph_ast::*;
 
 #[derive(Debug, Clone, PartialEq)]
@@ -233,7 +234,7 @@ fn layout_lr(
                     ranks.get(&e.from) == Some(&rank)
                         && ranks.get(&e.to) == Some(&(rank + 1))
                 })
-                .filter_map(|e| e.label.as_ref().map(|l| l.len() + 2))
+                .filter_map(|e| e.label.as_ref().map(|l| display_width(l) + 2))
                 .max()
                 .unwrap_or(0);
             let gap = LR_GAP.max(label_gap);
@@ -245,7 +246,7 @@ fn layout_lr(
 }
 
 fn box_width(label: &str, shape: NodeShape) -> usize {
-    let base = label.len() + 4;
+    let base = display_width(label) + 4;
     match shape {
         NodeShape::Circle => base + 4,
         _ => base,
@@ -260,7 +261,7 @@ const SUBGRAPH_TITLE_DECOR: usize = 6;
 
 fn compute_subgraph_layouts(
     subgraphs: &[Subgraph],
-    node_layouts: &mut Vec<NodeLayout>,
+    node_layouts: &mut [NodeLayout],
 ) -> Vec<SubgraphLayout> {
     let mut sg_layouts = Vec::new();
 
@@ -298,7 +299,7 @@ fn compute_subgraph_layouts(
             .unwrap();
 
         let content_width = max_right - min_x + SUBGRAPH_PAD_RIGHT;
-        let title_width = sg.label.len() + SUBGRAPH_TITLE_DECOR;
+        let title_width = display_width(&sg.label) + SUBGRAPH_TITLE_DECOR;
         let width = content_width.max(title_width);
         let height = max_bottom - min_y + SUBGRAPH_PAD_BOTTOM;
 

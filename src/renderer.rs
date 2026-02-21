@@ -1,4 +1,5 @@
 use crate::ast::*;
+use crate::display_width::display_width;
 use crate::layout::*;
 
 const BOX_TL: char = '┌';
@@ -30,21 +31,30 @@ impl Grid {
 
     fn set(&mut self, row: usize, col: usize, ch: char) {
         if row < self.height && col < self.width {
+            if self.cells[row][col] == '\0' && col > 0 && self.cells[row][col - 1] != '\0' {
+                self.cells[row][col - 1] = ' ';
+            }
             self.cells[row][col] = ch;
         }
     }
 
     fn write_str(&mut self, row: usize, col: usize, s: &str) {
-        for (i, ch) in s.chars().enumerate() {
-            self.set(row, col + i, ch);
+        let mut offset = 0;
+        for ch in s.chars() {
+            self.set(row, col + offset, ch);
+            let w = unicode_width::UnicodeWidthChar::width(ch).unwrap_or(1);
+            for j in 1..w {
+                self.set(row, col + offset + j, '\0');
+            }
+            offset += w;
         }
     }
 
-    fn to_string(&self) -> String {
+    fn render(&self) -> String {
         self.cells
             .iter()
             .map(|row| {
-                let line: String = row.iter().collect();
+                let line: String = row.iter().filter(|&&ch| ch != '\0').collect();
                 line.trim_end().to_string()
             })
             .collect::<Vec<_>>()
@@ -61,7 +71,7 @@ fn row_height(row: &Row) -> usize {
 
 pub fn render(layout: &Layout) -> String {
     let box_height = 3;
-    let body_height: usize = layout.rows.iter().map(|r| row_height(r)).sum();
+    let body_height: usize = layout.rows.iter().map(row_height).sum();
     let height = box_height + body_height + box_height;
     let mut grid = Grid::new(layout.total_width, height);
 
@@ -106,7 +116,7 @@ pub fn render(layout: &Layout) -> String {
     let bottom_y = body_start + body_height;
     draw_participant_boxes(&mut grid, layout, bottom_y, false);
 
-    grid.to_string()
+    grid.render()
 }
 
 fn draw_participant_boxes(grid: &mut Grid, layout: &Layout, y: usize, is_top: bool) {
@@ -211,12 +221,12 @@ fn draw_message(
         .iter()
         .position(|p| p.center_col == right_col);
 
-    let left_ch = if left_idx.map_or(false, |i| activations.get(i).copied().unwrap_or(false)) {
+    let left_ch = if left_idx.is_some_and(|i| activations.get(i).copied().unwrap_or(false)) {
         HEAVY_V
     } else {
         BOX_V
     };
-    let right_ch = if right_idx.map_or(false, |i| activations.get(i).copied().unwrap_or(false)) {
+    let right_ch = if right_idx.is_some_and(|i| activations.get(i).copied().unwrap_or(false)) {
         HEAVY_V
     } else {
         BOX_V
@@ -266,8 +276,8 @@ fn draw_block_start(grid: &mut Grid, layout: &Layout, block: &BlockRow, y: usize
     for p in &layout.participants {
         if p.center_col > block.frame_left && p.center_col < block.frame_right {
             // Only draw ┼ if it's not covered by the label text
-            let label_end = block.frame_left + 2 + block.label.len();
-            if p.center_col >= label_end + 1 {
+            let label_end = block.frame_left + 2 + display_width(&block.label);
+            if p.center_col > label_end {
                 grid.set(y, p.center_col, CROSS);
             }
         }
@@ -305,8 +315,8 @@ fn draw_block_divider(grid: &mut Grid, layout: &Layout, block: &BlockRow, y: usi
     // Draw ┼ at lifeline intersections
     for p in &layout.participants {
         if p.center_col > block.frame_left && p.center_col < block.frame_right {
-            let label_end = block.frame_left + 2 + block.label.len();
-            if p.center_col >= label_end + 1 {
+            let label_end = block.frame_left + 2 + display_width(&block.label);
+            if p.center_col > label_end {
                 grid.set(y, p.center_col, CROSS);
             }
         }
@@ -353,7 +363,7 @@ mod tests {
     fn grid_basic_operations() {
         let mut grid = Grid::new(10, 3);
         grid.write_str(1, 2, "hello");
-        let output = grid.to_string();
+        let output = grid.render();
         assert!(output.contains("hello"));
     }
 
@@ -361,15 +371,35 @@ mod tests {
     fn grid_set_character() {
         let mut grid = Grid::new(5, 2);
         grid.set(0, 2, 'X');
-        let output = grid.to_string();
+        let output = grid.render();
         assert!(output.contains("X"));
+    }
+
+    #[test]
+    fn grid_write_wide_chars_correct_offset() {
+        let mut grid = Grid::new(10, 1);
+        grid.write_str(0, 0, "テス");
+        grid.set(0, 4, 'C');
+        let output = grid.render();
+        assert_eq!(output, "テスC");
+    }
+
+    #[test]
+    fn grid_set_overwrites_wide_char_continuation() {
+        let mut grid = Grid::new(10, 1);
+        grid.write_str(0, 0, "テスト");
+        // Overwrite continuation marker of ス (at col 3) with │
+        grid.set(0, 3, '│');
+        let output = grid.render();
+        // ス's base at col 2 should be cleared to space
+        assert_eq!(output, "テ │ト");
     }
 
     #[test]
     fn grid_trims_trailing_spaces() {
         let mut grid = Grid::new(10, 2);
         grid.write_str(0, 0, "hi");
-        let output = grid.to_string();
+        let output = grid.render();
         let first_line = output.lines().next().unwrap();
         assert_eq!(first_line, "hi");
     }

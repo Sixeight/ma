@@ -1,5 +1,6 @@
 use std::collections::HashMap;
 
+use crate::display_width::display_width;
 use crate::graph_ast::{Direction, EdgeType, NodeShape};
 use crate::graph_layout::*;
 
@@ -20,21 +21,30 @@ impl Grid {
 
     fn set(&mut self, row: usize, col: usize, ch: char) {
         if row < self.height && col < self.width {
+            if self.cells[row][col] == '\0' && col > 0 && self.cells[row][col - 1] != '\0' {
+                self.cells[row][col - 1] = ' ';
+            }
             self.cells[row][col] = ch;
         }
     }
 
     fn write_str(&mut self, row: usize, col: usize, s: &str) {
-        for (i, ch) in s.chars().enumerate() {
-            self.set(row, col + i, ch);
+        let mut offset = 0;
+        for ch in s.chars() {
+            self.set(row, col + offset, ch);
+            let w = unicode_width::UnicodeWidthChar::width(ch).unwrap_or(1);
+            for j in 1..w {
+                self.set(row, col + offset + j, '\0');
+            }
+            offset += w;
         }
     }
 
-    fn to_string(&self) -> String {
+    fn render(&self) -> String {
         self.cells
             .iter()
             .map(|row| {
-                let line: String = row.iter().collect();
+                let line: String = row.iter().filter(|&&ch| ch != '\0').collect();
                 line.trim_end().to_string()
             })
             .collect::<Vec<_>>()
@@ -68,7 +78,7 @@ fn render_td(layout: &GraphLayout) -> String {
         draw_td_edge(&mut grid, from, to, edge, layout);
     }
 
-    grid.to_string()
+    grid.render()
 }
 
 fn render_lr(layout: &GraphLayout) -> String {
@@ -90,7 +100,7 @@ fn render_lr(layout: &GraphLayout) -> String {
         draw_lr_edge(&mut grid, from, to, edge);
     }
 
-    grid.to_string()
+    grid.render()
 }
 
 fn draw_node(grid: &mut Grid, node: &NodeLayout) {
@@ -113,8 +123,8 @@ fn draw_subgraph(grid: &mut Grid, sg: &SubgraphLayout) {
     grid.set(y, x + 1, '─');
     grid.set(y, x + 2, ' ');
     grid.write_str(y, x + 3, &sg.label);
-    grid.set(y, x + 3 + sg.label.len(), ' ');
-    for col in (x + 4 + sg.label.len())..(x + w - 1) {
+    grid.set(y, x + 3 + display_width(&sg.label), ' ');
+    for col in (x + 4 + display_width(&sg.label))..(x + w - 1) {
         grid.set(y, col, '─');
     }
     grid.set(y, x + w - 1, '┐');
@@ -158,7 +168,7 @@ fn draw_round(grid: &mut Grid, x: usize, y: usize, width: usize, label: &str) {
 
     grid.set(y + 1, x, '│');
     let inner = width - 2;
-    let pad_left = (inner - label.len()) / 2;
+    let pad_left = (inner - display_width(label)) / 2;
     grid.write_str(y + 1, x + 1 + pad_left, label);
     grid.set(y + 1, x + width - 1, '│');
 
@@ -277,7 +287,7 @@ fn draw_td_edge(
     } else {
         let vert = td_vertical_connector(edge_type);
         if let Some(ref label) = edge.label {
-            let label_col = from_cx.saturating_sub(label.len() / 2);
+            let label_col = from_cx.saturating_sub(display_width(label) / 2);
             grid.write_str(from_below, label_col, label);
         } else {
             for row in from_below..to_above {
@@ -325,7 +335,7 @@ fn draw_lr_edge(
 
     if let Some(ref label) = edge.label {
         let gap = to_left - from_right;
-        let label_col = from_right + (gap.saturating_sub(label.len())) / 2;
+        let label_col = from_right + (gap.saturating_sub(display_width(label))) / 2;
         if row > 0 {
             grid.write_str(row - 1, label_col, label);
         }

@@ -1,4 +1,5 @@
 use crate::ast::*;
+use crate::display_width::display_width;
 
 #[derive(Debug, Clone, PartialEq)]
 pub struct Layout {
@@ -162,85 +163,98 @@ fn compute_gaps(
 
     let mut gaps = vec![MIN_GAP; order.len() - 1];
 
-    for stmt in &diagram.statements {
-        if let Statement::Message(m) = stmt {
-            let from_idx = order.iter().position(|id| *id == m.from);
-            let to_idx = order.iter().position(|id| *id == m.to);
-
-            if let (Some(fi), Some(ti)) = (from_idx, to_idx) {
-                let (left, right) = if fi < ti { (fi, ti) } else { (ti, fi) };
-                let span_count = right - left;
-                if span_count > 0 {
-                    let required = m.text.len() + ARROW_DECORATION_WIDTH + 2;
-                    let per_gap = (required + span_count - 1) / span_count;
-                    for gap in &mut gaps[left..right] {
-                        *gap = (*gap).max(per_gap);
-                    }
-                }
-            }
-        }
-    }
-
-    for stmt in &diagram.statements {
-        if let Statement::Note(n) = stmt {
-            let note_box_width = n.text.len() + 4;
-            match &n.placement {
-                NotePlacement::RightOf(id) => {
-                    if let Some(idx) = order.iter().position(|p| p == id) {
-                        if idx + 1 < order.len() {
-                            let required = note_box_width + 4;
-                            gaps[idx] = gaps[idx].max(required);
-                        }
-                    }
-                }
-                NotePlacement::LeftOf(id) => {
-                    if let Some(idx) = order.iter().position(|p| p == id) {
-                        if idx > 0 {
-                            let required = note_box_width + 4;
-                            gaps[idx - 1] = gaps[idx - 1].max(required);
-                        }
-                    }
-                }
-                NotePlacement::Over(id) => {
-                    if let Some(idx) = order.iter().position(|p| p == id) {
-                        let half = note_box_width / 2 + 1;
-                        if idx > 0 {
-                            gaps[idx - 1] = gaps[idx - 1].max(half);
-                        }
-                        if idx + 1 < order.len() {
-                            gaps[idx] = gaps[idx].max(half);
-                        }
-                    }
-                }
-                NotePlacement::OverTwo(a, b) => {
-                    let a_idx = order.iter().position(|p| p == a);
-                    let b_idx = order.iter().position(|p| p == b);
-                    if let (Some(ai), Some(bi)) = (a_idx, b_idx) {
-                        let (left, right) = if ai < bi { (ai, bi) } else { (bi, ai) };
-                        let span_count = right - left;
-                        if span_count > 0 {
-                            let required = note_box_width + 2;
-                            let per_gap = (required + span_count - 1) / span_count;
-                            for gap in &mut gaps[left..right] {
-                                *gap = (*gap).max(per_gap);
-                            }
-                        }
-                    }
-                }
-            }
-        }
-    }
+    compute_gaps_inner(&diagram.statements, order, &mut gaps);
 
     for (i, gap_idx) in (0..order.len().saturating_sub(1)).enumerate() {
         let left_name = display_names.get(&order[i]).unwrap();
         let right_name = display_names.get(&order[i + 1]).unwrap();
-        let left_half = left_name.len() / 2 + 2;
-        let right_half = right_name.len() / 2 + 2;
+        let left_half = display_width(left_name) / 2 + 2;
+        let right_half = display_width(right_name) / 2 + 2;
         let min_for_boxes = left_half + right_half + 2;
         gaps[gap_idx] = gaps[gap_idx].max(min_for_boxes);
     }
 
     gaps
+}
+
+fn compute_gaps_inner(statements: &[Statement], order: &[String], gaps: &mut [usize]) {
+    for stmt in statements {
+        match stmt {
+            Statement::Message(m) => {
+                let from_idx = order.iter().position(|id| *id == m.from);
+                let to_idx = order.iter().position(|id| *id == m.to);
+
+                if let (Some(fi), Some(ti)) = (from_idx, to_idx) {
+                    let (left, right) = if fi < ti { (fi, ti) } else { (ti, fi) };
+                    let span_count = right - left;
+                    if span_count > 0 {
+                        let required = display_width(&m.text) + ARROW_DECORATION_WIDTH + 2;
+                        let per_gap = required.div_ceil(span_count);
+                        for gap in &mut gaps[left..right] {
+                            *gap = (*gap).max(per_gap);
+                        }
+                    }
+                }
+            }
+            Statement::Note(n) => {
+                let note_box_width = display_width(&n.text) + 4;
+                match &n.placement {
+                    NotePlacement::RightOf(id) => {
+                        if let Some(idx) = order.iter().position(|p| p == id)
+                            && idx + 1 < order.len()
+                        {
+                            let required = note_box_width + 4;
+                            gaps[idx] = gaps[idx].max(required);
+                        }
+                    }
+                    NotePlacement::LeftOf(id) => {
+                        if let Some(idx) = order.iter().position(|p| p == id)
+                            && idx > 0
+                        {
+                            let required = note_box_width + 4;
+                            gaps[idx - 1] = gaps[idx - 1].max(required);
+                        }
+                    }
+                    NotePlacement::Over(id) => {
+                        if let Some(idx) = order.iter().position(|p| p == id) {
+                            let half = note_box_width / 2 + 1;
+                            if idx > 0 {
+                                gaps[idx - 1] = gaps[idx - 1].max(half);
+                            }
+                            if idx + 1 < order.len() {
+                                gaps[idx] = gaps[idx].max(half);
+                            }
+                        }
+                    }
+                    NotePlacement::OverTwo(a, b) => {
+                        let a_idx = order.iter().position(|p| p == a);
+                        let b_idx = order.iter().position(|p| p == b);
+                        if let (Some(ai), Some(bi)) = (a_idx, b_idx) {
+                            let (left, right) = if ai < bi { (ai, bi) } else { (bi, ai) };
+                            let span_count = right - left;
+                            if span_count > 0 {
+                                let required = note_box_width + 2;
+                                let per_gap = required.div_ceil(span_count);
+                                for gap in &mut gaps[left..right] {
+                                    *gap = (*gap).max(per_gap);
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+            Statement::Loop(lb) | Statement::Opt(lb) | Statement::Break(lb) => {
+                compute_gaps_inner(&lb.body, order, gaps);
+            }
+            Statement::Alt(ab) | Statement::Par(ab) | Statement::Critical(ab) => {
+                compute_gaps_inner(&ab.body, order, gaps);
+                for branch in &ab.else_branches {
+                    compute_gaps_inner(&branch.body, order, gaps);
+                }
+            }
+            _ => {}
+        }
+    }
 }
 
 fn compute_positions(
@@ -251,7 +265,7 @@ fn compute_positions(
     let mut participants = Vec::new();
 
     let first_name = display_names.get(&order[0]).unwrap();
-    let first_box_width = first_name.len() + 4;
+    let first_box_width = display_width(first_name) + 4;
     let first_center = first_box_width / 2;
 
     participants.push(ParticipantLayout {
@@ -265,7 +279,7 @@ fn compute_positions(
         let prev_center = participants[i].center_col;
         let center = prev_center + gap;
         let name = display_names.get(&order[i + 1]).unwrap();
-        let box_width = name.len() + 4;
+        let box_width = display_width(name) + 4;
 
         participants.push(ParticipantLayout {
             name: name.clone(),
@@ -328,7 +342,7 @@ fn flatten_statements(
                 }));
             }
             Statement::Note(n) => {
-                let note_box_width = n.text.len() + 4;
+                let note_box_width = display_width(&n.text) + 4;
                 let (box_left, box_right) = match &n.placement {
                     NotePlacement::RightOf(id) => {
                         let idx = order.iter().position(|p| p == id).unwrap();
@@ -400,7 +414,7 @@ fn push_simple_block(
 ) {
     let (frame_left, frame_right) = compute_frame_bounds(participants);
     let label = format!("{keyword} {}", block.label);
-    let frame_right = frame_right.max(frame_left + 2 + label.len() + 1);
+    let frame_right = frame_right.max(frame_left + 2 + display_width(&label) + 1);
     rows.push(Row::BlockStart(BlockRow {
         label,
         frame_left,
@@ -425,12 +439,12 @@ fn push_divided_block(
 ) {
     let (frame_left, frame_right) = compute_frame_bounds(participants);
     let start_label = format!("{keyword} {}", block.label);
-    let mut max_label_len = start_label.len();
+    let mut max_label_width = display_width(&start_label);
     for branch in &block.else_branches {
         let div_label = format!("{divider} {}", branch.label);
-        max_label_len = max_label_len.max(div_label.len());
+        max_label_width = max_label_width.max(display_width(&div_label));
     }
-    let frame_right = frame_right.max(frame_left + 2 + max_label_len + 1);
+    let frame_right = frame_right.max(frame_left + 2 + max_label_width + 1);
     rows.push(Row::BlockStart(BlockRow {
         label: start_label,
         frame_left,
@@ -492,19 +506,19 @@ fn compute_activations_inner(
                 }
             }
             Statement::Message(m) => {
-                if m.activate_target {
-                    if let Some(idx) = order.iter().position(|p| p == &m.to) {
-                        depths[idx] += 1;
-                    }
+                if m.activate_target
+                    && let Some(idx) = order.iter().position(|p| p == &m.to)
+                {
+                    depths[idx] += 1;
                 }
 
                 let row_active: Vec<bool> = depths.iter().map(|&d| d > 0).collect();
                 activations.push(row_active);
 
-                if m.deactivate_source {
-                    if let Some(idx) = order.iter().position(|p| p == &m.from) {
-                        depths[idx] = (depths[idx] - 1).max(0);
-                    }
+                if m.deactivate_source
+                    && let Some(idx) = order.iter().position(|p| p == &m.from)
+                {
+                    depths[idx] = (depths[idx] - 1).max(0);
                 }
             }
             Statement::Note(_) => {
@@ -838,5 +852,26 @@ sequenceDiagram
             }
             other => panic!("expected Note row, got {other:?}"),
         }
+    }
+
+    #[test]
+    fn layout_gap_accommodates_message_inside_loop() {
+        let input = "\
+sequenceDiagram
+    A->>B: short
+    loop Check
+        A->>B: This is a much longer message inside a loop
+    end
+";
+        let diagram = parse_diagram(input).unwrap();
+        let layout = compute(&diagram).unwrap();
+
+        let gap = layout.participants[1].center_col - layout.participants[0].center_col;
+        let long_msg = "This is a much longer message inside a loop";
+        assert!(
+            gap >= display_width(long_msg) + ARROW_DECORATION_WIDTH,
+            "gap {gap} should accommodate the long message inside loop (need {})",
+            display_width(long_msg) + ARROW_DECORATION_WIDTH,
+        );
     }
 }

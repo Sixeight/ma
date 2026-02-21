@@ -1,5 +1,6 @@
 use std::collections::HashMap;
 
+use crate::display_width::display_width;
 use crate::er_ast::Cardinality;
 use crate::er_layout::*;
 
@@ -20,21 +21,30 @@ impl Grid {
 
     fn set(&mut self, row: usize, col: usize, ch: char) {
         if row < self.height && col < self.width {
+            if self.cells[row][col] == '\0' && col > 0 && self.cells[row][col - 1] != '\0' {
+                self.cells[row][col - 1] = ' ';
+            }
             self.cells[row][col] = ch;
         }
     }
 
     fn write_str(&mut self, row: usize, col: usize, s: &str) {
-        for (i, ch) in s.chars().enumerate() {
-            self.set(row, col + i, ch);
+        let mut offset = 0;
+        for ch in s.chars() {
+            self.set(row, col + offset, ch);
+            let w = unicode_width::UnicodeWidthChar::width(ch).unwrap_or(1);
+            for j in 1..w {
+                self.set(row, col + offset + j, '\0');
+            }
+            offset += w;
         }
     }
 
-    fn to_string(&self) -> String {
+    fn render(&self) -> String {
         self.cells
             .iter()
             .map(|row| {
-                let line: String = row.iter().collect();
+                let line: String = row.iter().filter(|&&ch| ch != '\0').collect();
                 line.trim_end().to_string()
             })
             .collect::<Vec<_>>()
@@ -61,7 +71,7 @@ pub fn render(layout: &ErLayout) -> String {
         }
     }
 
-    grid.to_string()
+    grid.render()
 }
 
 fn draw_box(grid: &mut Grid, node: &ErNodeLayout) {
@@ -111,8 +121,8 @@ fn draw_er_edge(
     }
 
     let gap = to_left - from_right;
-    if gap > label.len() {
-        let label_col = from_right + (gap - label.len()) / 2;
+    if gap > display_width(label) {
+        let label_col = from_right + (gap - display_width(label)) / 2;
         grid.write_str(row, label_col, label);
     }
 }

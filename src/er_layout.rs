@@ -1,5 +1,6 @@
 use std::collections::HashMap;
 
+use crate::display_width::display_width;
 use crate::er_ast::*;
 
 #[derive(Debug, Clone, PartialEq)]
@@ -52,7 +53,7 @@ pub fn compute(diagram: &ErDiagram) -> Result<ErLayout, String> {
     for (rank, rank_entities) in ranks_entities.iter().enumerate() {
         let mut y = 0;
         for entity in rank_entities {
-            let w = entity.len() + 4;
+            let w = display_width(entity) + 4;
             nodes.push(ErNodeLayout {
                 name: entity.to_string(),
                 x,
@@ -65,7 +66,7 @@ pub fn compute(diagram: &ErDiagram) -> Result<ErLayout, String> {
         }
 
         if rank < max_rank {
-            let rank_max_width = rank_entities.iter().map(|e| e.len() + 4).max().unwrap_or(0);
+            let rank_max_width = rank_entities.iter().map(|e| display_width(e) + 4).max().unwrap_or(0);
             let label_gap = diagram
                 .relationships
                 .iter()
@@ -73,7 +74,7 @@ pub fn compute(diagram: &ErDiagram) -> Result<ErLayout, String> {
                     ranks.get(r.from.as_str()) == Some(&rank)
                         && ranks.get(r.to.as_str()) == Some(&(rank + 1))
                 })
-                .map(|r| r.label.len() + 8)
+                .map(|r| display_width(&r.label) + 8)
                 .max()
                 .unwrap_or(MIN_GAP)
                 .max(MIN_GAP);
