@@ -1,4 +1,6 @@
 pub mod ast;
+pub mod er_ast;
+pub mod er_parser;
 pub mod graph_ast;
 pub mod graph_layout;
 pub mod graph_parser;
