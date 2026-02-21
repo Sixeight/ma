@@ -404,3 +404,45 @@ sequenceDiagram
     assert!(output.contains("break Error"), "break label");
     assert!(output.contains("Fail"));
 }
+
+// --- rect ---
+
+#[test]
+fn spec_rect() {
+    let input = "\
+sequenceDiagram
+    rect rgb(191, 223, 255)
+        A->>B: Hello
+    end
+";
+    let output = ma::render(input).unwrap();
+
+    assert!(output.contains("Hello"), "message inside rect visible");
+
+    let lines: Vec<&str> = output.lines().collect();
+    let frame_top = lines.iter().find(|l| l.contains('┌') && l.contains('┐') && l.contains("rect"));
+    assert!(frame_top.is_some(), "rect frame top visible");
+}
+
+#[test]
+fn spec_rect_with_surrounding_messages() {
+    let input = "\
+sequenceDiagram
+    A->>B: Before
+    rect rgb(0, 0, 0)
+        A->>B: Inside
+    end
+    B-->>A: After
+";
+    let output = ma::render(input).unwrap();
+
+    assert!(output.contains("Before"));
+    assert!(output.contains("Inside"));
+    assert!(output.contains("After"));
+
+    let before_pos = output.find("Before").unwrap();
+    let inside_pos = output.find("Inside").unwrap();
+    let after_pos = output.find("After").unwrap();
+    assert!(before_pos < inside_pos);
+    assert!(inside_pos < after_pos);
+}

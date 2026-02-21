@@ -287,7 +287,7 @@ fn collect_participants(
                 }
             }
             Statement::Note(_) | Statement::Activate(_) | Statement::Deactivate(_) | Statement::AutoNumber => {}
-            Statement::Loop(lb) | Statement::Opt(lb) | Statement::Break(lb) => {
+            Statement::Loop(lb) | Statement::Opt(lb) | Statement::Break(lb) | Statement::Rect(lb) => {
                 collect_participants_inner(&lb.body, &mut order, &mut display_names);
             }
             Statement::Alt(ab) | Statement::Par(ab) | Statement::Critical(ab) => {
@@ -417,7 +417,7 @@ fn compute_gaps_inner(statements: &[Statement], order: &[String], gaps: &mut [us
                     }
                 }
             }
-            Statement::Loop(lb) | Statement::Opt(lb) | Statement::Break(lb) => {
+            Statement::Loop(lb) | Statement::Opt(lb) | Statement::Break(lb) | Statement::Rect(lb) => {
                 compute_gaps_inner(&lb.body, order, gaps);
             }
             Statement::Alt(ab) | Statement::Par(ab) | Statement::Critical(ab) => {
@@ -573,6 +573,9 @@ fn flatten_statements(
             Statement::Critical(ab) => {
                 push_divided_block("critical", "option", ab, participants, order, rows, msg_counter);
             }
+            Statement::Rect(lb) => {
+                push_simple_block("rect", lb, participants, order, rows, msg_counter);
+            }
             _ => {}
         }
     }
@@ -699,7 +702,7 @@ fn compute_activations_inner(
                 let row_active: Vec<bool> = depths.iter().map(|&d| d > 0).collect();
                 activations.push(row_active);
             }
-            Statement::Loop(lb) | Statement::Opt(lb) | Statement::Break(lb) => {
+            Statement::Loop(lb) | Statement::Opt(lb) | Statement::Break(lb) | Statement::Rect(lb) => {
                 let row_active: Vec<bool> = depths.iter().map(|&d| d > 0).collect();
                 activations.push(row_active.clone());
                 compute_activations_inner(&lb.body, order, depths, activations);

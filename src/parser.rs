@@ -36,6 +36,7 @@ fn statement(input: &mut &str) -> winnow::Result<Option<Statement>> {
         alt_stmt.map(|ab| Some(Statement::Alt(ab))),
         opt_stmt.map(|lb| Some(Statement::Opt(lb))),
         break_stmt.map(|lb| Some(Statement::Break(lb))),
+        rect_stmt.map(|lb| Some(Statement::Rect(lb))),
         par_stmt.map(|ab| Some(Statement::Par(ab))),
         critical_stmt.map(|ab| Some(Statement::Critical(ab))),
         autonumber_stmt.map(|_| Some(Statement::AutoNumber)),
@@ -253,6 +254,31 @@ fn break_stmt(input: &mut &str) -> winnow::Result<LoopBlock> {
         label: label.trim().to_string(),
         body,
     })
+}
+
+fn rect_stmt(input: &mut &str) -> winnow::Result<LoopBlock> {
+    "rect".parse_next(input)?;
+    let label = till_line_ending.parse_next(input)?.trim().to_string();
+    opt(line_ending).parse_next(input)?;
+
+    let mut body = Vec::new();
+    loop {
+        space0.parse_next(input)?;
+        if input.starts_with("end") {
+            "end".parse_next(input)?;
+            opt(line_ending).parse_next(input)?;
+            break;
+        }
+        if input.is_empty() {
+            return Err(winnow::error::ParserError::from_input(input));
+        }
+        let stmt = statement.parse_next(input)?;
+        if let Some(s) = stmt {
+            body.push(s);
+        }
+    }
+
+    Ok(LoopBlock { label, body })
 }
 
 fn autonumber_stmt(input: &mut &str) -> winnow::Result<()> {

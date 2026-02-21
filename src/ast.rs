@@ -14,6 +14,7 @@ pub enum Statement {
     Alt(AltBlock),
     Opt(LoopBlock),
     Break(LoopBlock),
+    Rect(LoopBlock),
     Par(AltBlock),
     Critical(AltBlock),
     AutoNumber,
