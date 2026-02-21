@@ -102,6 +102,166 @@ pub fn compute(diagram: &Diagram) -> Result<Layout, String> {
     })
 }
 
+pub fn compute_with_max_width(diagram: &Diagram, max_width: usize) -> Result<Layout, String> {
+    let (order, display_names) = collect_participants(diagram);
+
+    if order.is_empty() {
+        return Err("no participants found".to_string());
+    }
+
+    let mut names = display_names;
+
+    loop {
+        // Try layout with gap shrinking
+        let gaps = compute_gaps(diagram, &order, &names);
+        let min_gaps = compute_min_box_gaps(&order, &names);
+        let full_width = {
+            let p = compute_positions(&order, &names, &gaps);
+            p.last().map(|pp| pp.box_right + 1).unwrap_or(0)
+        };
+        let shrunk = shrink_gaps_to_fit(&gaps, &min_gaps, full_width, max_width);
+        let participants = compute_positions(&order, &names, &shrunk);
+        let base_width = participants.last().map(|p| p.box_right + 1).unwrap_or(0);
+
+        if base_width <= max_width {
+            return finish_layout(diagram, &order, participants, max_width);
+        }
+
+        // Find the longest name and truncate it by 1 char
+        let (longest_id, longest_width) = order
+            .iter()
+            .map(|id| (id.clone(), display_width(names.get(id).unwrap())))
+            .max_by_key(|(_, w)| *w)
+            .unwrap();
+
+        if longest_width <= 2 {
+            return Err(format!(
+                "diagram requires at least {base_width} columns, but max_width is {max_width}"
+            ));
+        }
+
+        let name = names.get(&longest_id).unwrap().clone();
+        names.insert(longest_id, truncate_to_display_width(&name, longest_width - 1));
+    }
+}
+
+fn finish_layout(
+    diagram: &Diagram,
+    participant_order: &[String],
+    participants: Vec<ParticipantLayout>,
+    max_width: usize,
+) -> Result<Layout, String> {
+    let rows = compute_rows(diagram, participant_order, &participants);
+    let activations = compute_activations(diagram, participant_order, rows.len());
+
+    let mut total_width = participants
+        .last()
+        .map(|p| p.box_right + 1)
+        .unwrap_or(0);
+
+    for row in &rows {
+        match row {
+            Row::Message(m) if m.from_col == m.to_col => {
+                let right = m.from_col + 2 + display_width(&m.text) + 1;
+                total_width = total_width.max(right);
+                let arm_right = m.from_col + SELF_LOOP_ARM + 1;
+                total_width = total_width.max(arm_right);
+            }
+            Row::Note(n) => {
+                total_width = total_width.max(n.box_right + 1);
+            }
+            Row::BlockStart(b) | Row::BlockEnd(b) | Row::BlockDivider(b) => {
+                total_width = total_width.max(b.frame_right + 1);
+            }
+            _ => {}
+        }
+    }
+
+    // Cap at max_width — notes/blocks beyond will be clipped by the renderer
+    total_width = total_width.min(max_width);
+
+    Ok(Layout {
+        participants,
+        rows,
+        total_width,
+        activations,
+    })
+}
+
+fn compute_min_box_gaps(
+    order: &[String],
+    display_names: &std::collections::HashMap<String, String>,
+) -> Vec<usize> {
+    (0..order.len().saturating_sub(1))
+        .map(|i| {
+            let left = display_names.get(&order[i]).unwrap();
+            let right = display_names.get(&order[i + 1]).unwrap();
+            let left_half = display_width(left) / 2 + 2;
+            let right_half = display_width(right) / 2 + 2;
+            left_half + right_half + 2
+        })
+        .collect()
+}
+
+fn shrink_gaps_to_fit(
+    gaps: &[usize],
+    min_gaps: &[usize],
+    current_width: usize,
+    max_width: usize,
+) -> Vec<usize> {
+    let mut result = gaps.to_vec();
+    if current_width <= max_width {
+        return result;
+    }
+
+    let excess = current_width - max_width;
+    let reducible: usize = result
+        .iter()
+        .zip(min_gaps.iter())
+        .map(|(g, m)| g.saturating_sub(*m))
+        .sum();
+
+    if reducible == 0 {
+        return result;
+    }
+
+    let reduction = excess.min(reducible);
+    let mut remaining = reduction;
+    for (gap, min) in result.iter_mut().zip(min_gaps.iter()) {
+        let can_reduce = gap.saturating_sub(*min);
+        if can_reduce == 0 {
+            continue;
+        }
+        let share = (can_reduce * reduction).div_ceil(reducible);
+        let actual = share.min(remaining).min(can_reduce);
+        *gap -= actual;
+        remaining -= actual;
+    }
+
+    result
+}
+
+fn truncate_to_display_width(name: &str, target_width: usize) -> String {
+    if target_width <= 1 {
+        return "…".to_string();
+    }
+    let mut result = String::new();
+    let mut w = 0;
+    for ch in name.chars() {
+        if ch == '…' {
+            continue;
+        }
+        let ch_w = unicode_width::UnicodeWidthChar::width(ch).unwrap_or(1);
+        if w + ch_w >= target_width {
+            break;
+        }
+        result.push(ch);
+        w += ch_w;
+    }
+    result.push('…');
+    result
+}
+
 fn collect_participants(
     diagram: &Diagram,
 ) -> (Vec<String>, std::collections::HashMap<String, String>) {
@@ -866,6 +1026,53 @@ sequenceDiagram
             }
             other => panic!("expected Note row, got {other:?}"),
         }
+    }
+
+    // --- max_width ---
+
+    #[test]
+    fn layout_max_width_no_shrink_when_fits() {
+        let diagram = parse_diagram("sequenceDiagram\n    Alice->>Bob: Hello\n").unwrap();
+        let normal = compute(&diagram).unwrap();
+        let constrained = compute_with_max_width(&diagram, normal.total_width + 10).unwrap();
+        assert_eq!(constrained.total_width, normal.total_width);
+    }
+
+    #[test]
+    fn layout_max_width_shrinks_gaps() {
+        let input = "sequenceDiagram\n    Alice->>Bob: A somewhat long message here\n";
+        let diagram = parse_diagram(input).unwrap();
+        let normal = compute(&diagram).unwrap();
+        let target = normal.total_width - 5;
+        let constrained = compute_with_max_width(&diagram, target).unwrap();
+        assert!(
+            constrained.total_width <= target,
+            "width {} should be <= {target}",
+            constrained.total_width,
+        );
+    }
+
+    #[test]
+    fn layout_max_width_truncates_names() {
+        let input = "sequenceDiagram\n    VeryLongParticipantName->>AnotherLongName: Hi\n";
+        let diagram = parse_diagram(input).unwrap();
+        let constrained = compute_with_max_width(&diagram, 25).unwrap();
+        assert!(
+            constrained.total_width <= 25,
+            "width {} should be <= 25",
+            constrained.total_width,
+        );
+        assert!(
+            constrained.participants.iter().any(|p| p.name.contains('…')),
+            "at least one name should be truncated",
+        );
+    }
+
+    #[test]
+    fn layout_max_width_impossible_returns_error() {
+        let diagram = parse_diagram("sequenceDiagram\n    A->>B: Hi\n").unwrap();
+        let result = compute_with_max_width(&diagram, 3);
+        assert!(result.is_err());
     }
 
     #[test]

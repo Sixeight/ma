@@ -146,7 +146,74 @@ const TD_NODE_GAP: usize = 3;
 const LR_GAP: usize = 5;
 const LR_NODE_VERTICAL_GAP: usize = 2;
 
+pub fn compute_with_max_width(
+    diagram: &GraphDiagram,
+    max_width: usize,
+) -> Result<GraphLayout, String> {
+    let layout = compute(diagram)?;
+    if layout.width <= max_width {
+        return Ok(layout);
+    }
+
+    // Try with progressively smaller gaps
+    let ranks = assign_ranks(diagram);
+    let max_rank = *ranks.values().max().unwrap_or(&0);
+    let mut ranks_nodes: Vec<Vec<&NodeDecl>> = vec![Vec::new(); max_rank + 1];
+    for node in &diagram.nodes {
+        let rank = ranks[&node.id];
+        ranks_nodes[rank].push(node);
+    }
+
+    for node_gap in (0..TD_NODE_GAP).rev() {
+        for lr_gap in (1..LR_GAP).rev() {
+            let mut node_layouts = match diagram.direction {
+                Direction::TopDown => layout_td_with_gap(&ranks_nodes, node_gap),
+                Direction::LeftRight => {
+                    layout_lr_with_gap(&ranks_nodes, &ranks, &diagram.edges, lr_gap)
+                }
+            };
+
+            let edges: Vec<EdgeLayout> = diagram
+                .edges
+                .iter()
+                .map(|e| EdgeLayout {
+                    from_id: e.from.clone(),
+                    to_id: e.to.clone(),
+                    edge_type: e.edge_type,
+                    label: e.label.clone(),
+                })
+                .collect();
+
+            let subgraphs = compute_subgraph_layouts(&diagram.subgraphs, &mut node_layouts);
+
+            let mut width = node_layouts.iter().map(|n| n.x + n.width).max().unwrap_or(0);
+            let mut height = node_layouts.iter().map(|n| n.y + n.height).max().unwrap_or(0);
+            for sg in &subgraphs {
+                width = width.max(sg.x + sg.width);
+                height = height.max(sg.y + sg.height);
+            }
+
+            if width <= max_width {
+                return Ok(GraphLayout {
+                    nodes: node_layouts,
+                    edges,
+                    subgraphs,
+                    width,
+                    height,
+                    direction: diagram.direction.clone(),
+                });
+            }
+        }
+    }
+
+    Err(format!("graph diagram too wide for {max_width} columns"))
+}
+
 fn layout_td(ranks_nodes: &[Vec<&NodeDecl>]) -> Vec<NodeLayout> {
+    layout_td_with_gap(ranks_nodes, TD_NODE_GAP)
+}
+
+fn layout_td_with_gap(ranks_nodes: &[Vec<&NodeDecl>], node_gap: usize) -> Vec<NodeLayout> {
     let mut layouts = Vec::new();
 
     let mut rank_widths: Vec<usize> = Vec::new();
@@ -156,7 +223,7 @@ fn layout_td(ranks_nodes: &[Vec<&NodeDecl>]) -> Vec<NodeLayout> {
             .map(|n| box_width(&n.label, n.shape))
             .sum::<usize>()
             + if rank_nodes.len() > 1 {
-                (rank_nodes.len() - 1) * TD_NODE_GAP
+                (rank_nodes.len() - 1) * node_gap
             } else {
                 0
             };
@@ -188,7 +255,7 @@ fn layout_td(ranks_nodes: &[Vec<&NodeDecl>]) -> Vec<NodeLayout> {
                 center_x: x + w / 2,
                 center_y: y + 1,
             });
-            x += w + TD_NODE_GAP;
+            x += w + node_gap;
         }
     }
 
@@ -199,6 +266,15 @@ fn layout_lr(
     ranks_nodes: &[Vec<&NodeDecl>],
     ranks: &HashMap<String, usize>,
     edges: &[Edge],
+) -> Vec<NodeLayout> {
+    layout_lr_with_gap(ranks_nodes, ranks, edges, LR_GAP)
+}
+
+fn layout_lr_with_gap(
+    ranks_nodes: &[Vec<&NodeDecl>],
+    ranks: &HashMap<String, usize>,
+    edges: &[Edge],
+    min_gap: usize,
 ) -> Vec<NodeLayout> {
     let mut layouts = Vec::new();
     let mut rank_x = 0;
@@ -237,7 +313,7 @@ fn layout_lr(
                 .filter_map(|e| e.label.as_ref().map(|l| display_width(l) + 2))
                 .max()
                 .unwrap_or(0);
-            let gap = LR_GAP.max(label_gap);
+            let gap = min_gap.max(label_gap);
             rank_x += rank_max_width + gap;
         }
     }

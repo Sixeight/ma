@@ -3,10 +3,14 @@ use std::io::Read;
 use clap::Parser;
 
 #[derive(Parser)]
-#[command(name = "ma", about = "Render Mermaid sequence diagrams as ASCII art")]
+#[command(name = "ma", about = "Render Mermaid diagrams as ASCII art (sequence, flowchart, ER)")]
 struct Cli {
     /// Input file (reads from stdin if not provided)
     file: Option<std::path::PathBuf>,
+
+    /// Maximum output width in columns
+    #[arg(long, short = 'w')]
+    width: Option<usize>,
 }
 
 fn main() {
@@ -27,7 +31,7 @@ fn main() {
         }
     };
 
-    match ma::render(&input) {
+    match ma::render_with_options(&input, cli.width) {
         Ok(output) => print!("{output}"),
         Err(e) => {
             eprintln!("ERROR: {e}");

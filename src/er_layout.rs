@@ -34,6 +34,26 @@ const BOX_HEIGHT: usize = 3;
 const MIN_GAP: usize = 6;
 
 pub fn compute(diagram: &ErDiagram) -> Result<ErLayout, String> {
+    compute_with_gap(diagram, MIN_GAP)
+}
+
+pub fn compute_with_max_width(diagram: &ErDiagram, max_width: usize) -> Result<ErLayout, String> {
+    let layout = compute(diagram)?;
+    if layout.width <= max_width {
+        return Ok(layout);
+    }
+
+    for gap in (1..MIN_GAP).rev() {
+        let layout = compute_with_gap(diagram, gap)?;
+        if layout.width <= max_width {
+            return Ok(layout);
+        }
+    }
+
+    Err(format!("ER diagram too wide for {max_width} columns"))
+}
+
+fn compute_with_gap(diagram: &ErDiagram, min_gap: usize) -> Result<ErLayout, String> {
     if diagram.entities.is_empty() {
         return Err("no entities found".to_string());
     }
@@ -76,8 +96,8 @@ pub fn compute(diagram: &ErDiagram) -> Result<ErLayout, String> {
                 })
                 .map(|r| display_width(&r.label) + 8)
                 .max()
-                .unwrap_or(MIN_GAP)
-                .max(MIN_GAP);
+                .unwrap_or(min_gap)
+                .max(min_gap);
             x += rank_max_width + label_gap;
         }
     }
