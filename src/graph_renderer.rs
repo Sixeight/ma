@@ -40,6 +40,14 @@ impl Grid {
         }
     }
 
+    fn set_merge(&mut self, row: usize, col: usize, ch: char) {
+        if row < self.height && col < self.width {
+            let existing = self.cells[row][col];
+            let merged = merge_box_drawing(existing, ch);
+            self.set(row, col, merged);
+        }
+    }
+
     fn render(&self) -> String {
         self.cells
             .iter()
@@ -197,6 +205,54 @@ fn draw_diamond(grid: &mut Grid, x: usize, y: usize, width: usize, label: &str) 
     grid.set(y + 2, x + width - 1, '╱');
 }
 
+const DIR_L: u8 = 1;
+const DIR_R: u8 = 2;
+const DIR_U: u8 = 4;
+const DIR_D: u8 = 8;
+
+fn box_connections(ch: char) -> u8 {
+    match ch {
+        '─' | '═' | '╌' => DIR_L | DIR_R,
+        '│' | '║' | '┊' => DIR_U | DIR_D,
+        '┌' => DIR_R | DIR_D,
+        '┐' => DIR_L | DIR_D,
+        '└' => DIR_R | DIR_U,
+        '┘' => DIR_L | DIR_U,
+        '┬' => DIR_L | DIR_R | DIR_D,
+        '┴' => DIR_L | DIR_R | DIR_U,
+        '├' => DIR_U | DIR_D | DIR_R,
+        '┤' => DIR_U | DIR_D | DIR_L,
+        '┼' => DIR_L | DIR_R | DIR_U | DIR_D,
+        _ => 0,
+    }
+}
+
+fn connections_to_char(conn: u8) -> Option<char> {
+    match conn {
+        c if c == DIR_L | DIR_R => Some('─'),
+        c if c == DIR_U | DIR_D => Some('│'),
+        c if c == DIR_R | DIR_D => Some('┌'),
+        c if c == DIR_L | DIR_D => Some('┐'),
+        c if c == DIR_R | DIR_U => Some('└'),
+        c if c == DIR_L | DIR_U => Some('┘'),
+        c if c == DIR_L | DIR_R | DIR_D => Some('┬'),
+        c if c == DIR_L | DIR_R | DIR_U => Some('┴'),
+        c if c == DIR_U | DIR_D | DIR_R => Some('├'),
+        c if c == DIR_U | DIR_D | DIR_L => Some('┤'),
+        c if c == DIR_L | DIR_R | DIR_U | DIR_D => Some('┼'),
+        _ => None,
+    }
+}
+
+fn merge_box_drawing(existing: char, new_char: char) -> char {
+    let ec = box_connections(existing);
+    let nc = box_connections(new_char);
+    if ec == 0 {
+        return new_char;
+    }
+    connections_to_char(ec | nc).unwrap_or(new_char)
+}
+
 fn td_vertical_connector(edge_type: EdgeType) -> char {
     match edge_type {
         EdgeType::DottedArrow | EdgeType::DottedLink => '┊',
@@ -322,22 +378,66 @@ fn draw_lr_edge(
 ) {
     let from_right = from.x + from.width;
     let to_left = to.x;
-    let row = from.center_y;
     let horiz = lr_horizontal_connector(edge.edge_type);
 
-    for col in from_right..to_left {
-        grid.set(row, col, horiz);
-    }
+    if from.center_y == to.center_y {
+        // Straight horizontal
+        let row = from.center_y;
+        for col in from_right..to_left {
+            grid.set_merge(row, col, horiz);
+        }
+        if has_arrow_head(edge.edge_type) {
+            grid.set(row, to_left - 1, '>');
+        }
+        if let Some(ref label) = edge.label {
+            let gap = to_left - from_right;
+            let label_col = from_right + (gap.saturating_sub(display_width(label))) / 2;
+            if row > 0 {
+                grid.write_str(row - 1, label_col, label);
+            }
+        }
+    } else {
+        // L-shaped routing: horizontal → corner → vertical → corner → horizontal
+        let mid_col = from_right + (to_left - from_right) / 2;
+        let vert = td_vertical_connector(edge.edge_type);
 
-    if has_arrow_head(edge.edge_type) {
-        grid.set(row, to_left - 1, '>');
-    }
+        // Horizontal from source to midpoint
+        for col in from_right..mid_col {
+            grid.set(from.center_y, col, horiz);
+        }
 
-    if let Some(ref label) = edge.label {
-        let gap = to_left - from_right;
-        let label_col = from_right + (gap.saturating_sub(display_width(label))) / 2;
-        if row > 0 {
-            grid.write_str(row - 1, label_col, label);
+        // Corners and vertical segment
+        if from.center_y < to.center_y {
+            grid.set_merge(from.center_y, mid_col, '┐');
+            for row in (from.center_y + 1)..to.center_y {
+                grid.set_merge(row, mid_col, vert);
+            }
+            grid.set_merge(to.center_y, mid_col, '└');
+        } else {
+            grid.set_merge(from.center_y, mid_col, '┘');
+            for row in (to.center_y + 1)..from.center_y {
+                grid.set_merge(row, mid_col, vert);
+            }
+            grid.set_merge(to.center_y, mid_col, '┌');
+        }
+
+        // Horizontal from midpoint to target
+        for col in (mid_col + 1)..to_left {
+            grid.set(to.center_y, col, horiz);
+        }
+        if has_arrow_head(edge.edge_type) {
+            grid.set(to.center_y, to_left - 1, '>');
+        }
+
+        // Label on the source-side horizontal segment
+        if let Some(ref label) = edge.label {
+            let gap = mid_col.saturating_sub(from_right);
+            if gap > 0 {
+                let label_col = from_right + (gap.saturating_sub(display_width(label))) / 2;
+                if from.center_y > 0 {
+                    grid.write_str(from.center_y - 1, label_col, label);
+                }
+            }
         }
     }
 }
@@ -625,5 +725,34 @@ mod tests {
         assert!(first_line.contains('┐'), "first line has top-right corner");
         assert!(last_line.contains('└'), "last line has bottom-left corner");
         assert!(last_line.contains('┘'), "last line has bottom-right corner");
+    }
+
+    #[test]
+    fn render_lr_fan_out_edges_reach_targets() {
+        let output = render_input("graph LR\n    A --> B\n    A --> C\n");
+        assert!(
+            output.contains('>'),
+            "should have at least one arrow head"
+        );
+        let lines: Vec<&str> = output.lines().collect();
+        // B and C should both appear
+        assert!(output.contains("B"), "B should be rendered");
+        assert!(output.contains("C"), "C should be rendered");
+        // Both B and C should have an incoming '>' on their line
+        let b_line = lines.iter().find(|l| l.contains("│ B │")).expect("B node line");
+        let c_line = lines.iter().find(|l| l.contains("│ C │")).expect("C node line");
+        assert!(b_line.contains('>'), "B should have incoming arrow: {b_line}");
+        assert!(c_line.contains('>'), "C should have incoming arrow: {c_line}");
+    }
+
+    #[test]
+    fn render_lr_fan_out_has_vertical_routing() {
+        let output = render_input("graph LR\n    A --> B\n    A --> C\n");
+        // L-shaped routing should produce corner characters
+        let has_corner = output.contains('┐')
+            || output.contains('┘')
+            || output.contains('└')
+            || output.contains('┌');
+        assert!(has_corner, "L-shaped routing should have corners:\n{output}");
     }
 }
