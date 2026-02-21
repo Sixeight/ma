@@ -1,5 +1,6 @@
 use std::collections::HashMap;
 
+use crate::er_ast::Cardinality;
 use crate::er_layout::*;
 
 struct Grid {
@@ -56,7 +57,7 @@ pub fn render(layout: &ErLayout) -> String {
 
     for edge in &layout.edges {
         if let (Some(from), Some(to)) = (node_map.get(edge.from.as_str()), node_map.get(edge.to.as_str())) {
-            draw_er_edge(&mut grid, from, to, &edge.label);
+            draw_er_edge(&mut grid, from, to, &edge.label, edge.left_card, edge.right_card);
         }
     }
 
@@ -85,7 +86,14 @@ fn draw_box(grid: &mut Grid, node: &ErNodeLayout) {
     grid.set(y + 2, x + w - 1, '┘');
 }
 
-fn draw_er_edge(grid: &mut Grid, from: &ErNodeLayout, to: &ErNodeLayout, label: &str) {
+fn draw_er_edge(
+    grid: &mut Grid,
+    from: &ErNodeLayout,
+    to: &ErNodeLayout,
+    label: &str,
+    left_card: Cardinality,
+    right_card: Cardinality,
+) {
     let from_right = from.x + from.width;
     let to_left = to.x;
     let row = from.center_y;
@@ -94,10 +102,36 @@ fn draw_er_edge(grid: &mut Grid, from: &ErNodeLayout, to: &ErNodeLayout, label: 
         grid.set(row, col, '─');
     }
 
+    let left_sym = left_cardinality_str(left_card);
+    grid.write_str(row, from_right, left_sym);
+
+    let right_sym = right_cardinality_str(right_card);
+    if to_left >= 2 {
+        grid.write_str(row, to_left - 2, right_sym);
+    }
+
     let gap = to_left - from_right;
     if gap > label.len() {
         let label_col = from_right + (gap - label.len()) / 2;
         grid.write_str(row, label_col, label);
+    }
+}
+
+fn left_cardinality_str(card: Cardinality) -> &'static str {
+    match card {
+        Cardinality::ExactlyOne => "||",
+        Cardinality::ZeroOrOne => "o|",
+        Cardinality::OneOrMany => "}|",
+        Cardinality::ZeroOrMany => "}o",
+    }
+}
+
+fn right_cardinality_str(card: Cardinality) -> &'static str {
+    match card {
+        Cardinality::ExactlyOne => "||",
+        Cardinality::ZeroOrOne => "|o",
+        Cardinality::OneOrMany => "|{",
+        Cardinality::ZeroOrMany => "o{",
     }
 }
 
@@ -123,9 +157,9 @@ mod tests {
         let layout = er_layout::compute(&diagram).unwrap();
         let output = render(&layout);
         let expected = "\
-┌───┐      ┌───┐
-│ A │──r1──│ B │
-└───┘      └───┘";
+┌───┐          ┌───┐
+│ A │||──r1──||│ B │
+└───┘          └───┘";
         assert_eq!(output, expected);
     }
 

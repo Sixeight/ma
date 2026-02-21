@@ -73,7 +73,7 @@ pub fn compute(diagram: &ErDiagram) -> Result<ErLayout, String> {
                     ranks.get(r.from.as_str()) == Some(&rank)
                         && ranks.get(r.to.as_str()) == Some(&(rank + 1))
                 })
-                .map(|r| r.label.len() + 4)
+                .map(|r| r.label.len() + 8)
                 .max()
                 .unwrap_or(MIN_GAP)
                 .max(MIN_GAP);

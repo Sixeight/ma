@@ -5,9 +5,9 @@ fn spec_er_single_relationship() {
     let input = "erDiagram\n    CUSTOMER ||--o{ ORDER : places\n";
     let output = ma::render(input).unwrap();
     let expected = "\
-┌──────────┐          ┌───────┐
-│ CUSTOMER │──places──│ ORDER │
-└──────────┘          └───────┘";
+┌──────────┐              ┌───────┐
+│ CUSTOMER │||──places──o{│ ORDER │
+└──────────┘              └───────┘";
     assert_eq!(output, expected);
 }
 
@@ -38,6 +38,24 @@ fn spec_er_label_with_spaces() {
     let input = "erDiagram\n    CUSTOMER }o--|| ADDRESS : billing address\n";
     let output = ma::render(input).unwrap();
     assert!(output.contains("billing address"));
+    assert!(output.contains("}o"), "should contain left ZeroOrMany symbol");
+    assert!(output.contains("||"), "should contain right ExactlyOne symbol");
+}
+
+#[test]
+fn spec_er_cardinality_symbols_all_variants() {
+    let input = "erDiagram\n    A o|--|o B : rel\n";
+    let output = ma::render(input).unwrap();
+    assert!(output.contains("o|"), "should contain left ZeroOrOne symbol");
+    assert!(output.contains("|o"), "should contain right ZeroOrOne symbol");
+}
+
+#[test]
+fn spec_er_cardinality_one_or_many() {
+    let input = "erDiagram\n    A }|--|{ B : rel\n";
+    let output = ma::render(input).unwrap();
+    assert!(output.contains("}|"), "should contain left OneOrMany symbol");
+    assert!(output.contains("|{"), "should contain right OneOrMany symbol");
 }
 
 #[test]
