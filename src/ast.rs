@@ -17,6 +17,8 @@ pub enum Statement {
     Rect(LoopBlock),
     Par(AltBlock),
     Critical(AltBlock),
+    Create(ParticipantDecl),
+    Destroy(String),
     AutoNumber,
 }
 

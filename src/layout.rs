@@ -7,6 +7,7 @@ pub struct Layout {
     pub rows: Vec<Row>,
     pub total_width: usize,
     pub activations: Vec<Vec<bool>>,
+    pub destroyed: Vec<bool>,
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -24,6 +25,7 @@ pub enum Row {
     BlockStart(BlockRow),
     BlockEnd(BlockRow),
     BlockDivider(BlockRow),
+    Destroy(DestroyRow),
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -31,6 +33,12 @@ pub struct BlockRow {
     pub label: String,
     pub frame_left: usize,
     pub frame_right: usize,
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub struct DestroyRow {
+    pub col: usize,
+    pub participant_idx: usize,
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -70,6 +78,7 @@ pub fn compute(diagram: &Diagram) -> Result<Layout, String> {
     let participants = compute_positions(&participant_order, &display_names, &gaps);
     let rows = compute_rows(diagram, &participant_order, &participants);
     let activations = compute_activations(diagram, &participant_order, rows.len());
+    let destroyed = compute_destroyed(&rows, participants.len());
 
     let mut total_width = participants
         .last()
@@ -99,6 +108,7 @@ pub fn compute(diagram: &Diagram) -> Result<Layout, String> {
         rows,
         total_width,
         activations,
+        destroyed,
     })
 }
 
@@ -153,6 +163,7 @@ fn finish_layout(
 ) -> Result<Layout, String> {
     let rows = compute_rows(diagram, participant_order, &participants);
     let activations = compute_activations(diagram, participant_order, rows.len());
+    let destroyed = compute_destroyed(&rows, participants.len());
 
     let mut total_width = participants
         .last()
@@ -185,6 +196,7 @@ fn finish_layout(
         rows,
         total_width,
         activations,
+        destroyed,
     })
 }
 
@@ -271,7 +283,7 @@ fn collect_participants(
 
     for stmt in &diagram.statements {
         match stmt {
-            Statement::ParticipantDecl(p) => {
+            Statement::ParticipantDecl(p) | Statement::Create(p) => {
                 if !order.contains(&p.id) {
                     order.push(p.id.clone());
                     let name = p.alias.clone().unwrap_or_else(|| p.id.clone());
@@ -286,7 +298,7 @@ fn collect_participants(
                     }
                 }
             }
-            Statement::Note(_) | Statement::Activate(_) | Statement::Deactivate(_) | Statement::AutoNumber => {}
+            Statement::Note(_) | Statement::Activate(_) | Statement::Deactivate(_) | Statement::Destroy(_) | Statement::AutoNumber => {}
             Statement::Loop(lb) | Statement::Opt(lb) | Statement::Break(lb) | Statement::Rect(lb) => {
                 collect_participants_inner(&lb.body, &mut order, &mut display_names);
             }
@@ -576,6 +588,15 @@ fn flatten_statements(
             Statement::Rect(lb) => {
                 push_simple_block("rect", lb, participants, order, rows, msg_counter);
             }
+            Statement::Destroy(id) => {
+                if let Some(idx) = order.iter().position(|p| p == id) {
+                    let col = participants[idx].center_col;
+                    rows.push(Row::Destroy(DestroyRow {
+                        col,
+                        participant_idx: idx,
+                    }));
+                }
+            }
             _ => {}
         }
     }
@@ -721,9 +742,23 @@ fn compute_activations_inner(
                 let row_active: Vec<bool> = depths.iter().map(|&d| d > 0).collect();
                 activations.push(row_active);
             }
-            Statement::ParticipantDecl(_) | Statement::AutoNumber => {}
+            Statement::Destroy(_) => {
+                let row_active: Vec<bool> = depths.iter().map(|&d| d > 0).collect();
+                activations.push(row_active);
+            }
+            Statement::ParticipantDecl(_) | Statement::Create(_) | Statement::AutoNumber => {}
         }
     }
+}
+
+fn compute_destroyed(rows: &[Row], participant_count: usize) -> Vec<bool> {
+    let mut destroyed = vec![false; participant_count];
+    for row in rows {
+        if let Row::Destroy(d) = row {
+            destroyed[d.participant_idx] = true;
+        }
+    }
+    destroyed
 }
 
 #[cfg(test)]

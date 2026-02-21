@@ -66,7 +66,7 @@ impl Grid {
 fn row_height(row: &Row) -> usize {
     match row {
         Row::Message(_) | Row::Note(_) => 3,
-        Row::BlockStart(_) | Row::BlockEnd(_) | Row::BlockDivider(_) => 1,
+        Row::BlockStart(_) | Row::BlockEnd(_) | Row::BlockDivider(_) | Row::Destroy(_) => 1,
     }
 }
 
@@ -76,11 +76,12 @@ pub fn render(layout: &Layout) -> String {
     let height = box_height + body_height + box_height;
     let mut grid = Grid::new(layout.total_width, height);
 
-    draw_participant_boxes(&mut grid, layout, 0, true);
+    draw_participant_boxes_filtered(&mut grid, layout, 0, true, &[]);
 
     let body_start = box_height;
     let mut y = body_start;
     let mut active_frames: Vec<&BlockRow> = Vec::new();
+    let mut alive = vec![true; layout.participants.len()];
     for (i, row) in layout.rows.iter().enumerate() {
         let row_activations = layout
             .activations
@@ -90,12 +91,12 @@ pub fn render(layout: &Layout) -> String {
         let h = row_height(row);
         match row {
             Row::Message(msg) => {
-                draw_lifelines(&mut grid, layout, y, h, &row_activations);
+                draw_lifelines_filtered(&mut grid, layout, y, h, &row_activations, &alive);
                 draw_message(&mut grid, layout, msg, y, &row_activations);
                 draw_frame_sides(&mut grid, layout, &active_frames, y, h);
             }
             Row::Note(note) => {
-                draw_lifelines(&mut grid, layout, y, h, &row_activations);
+                draw_lifelines_filtered(&mut grid, layout, y, h, &row_activations, &alive);
                 draw_note(&mut grid, note, y);
                 draw_frame_sides(&mut grid, layout, &active_frames, y, h);
             }
@@ -110,18 +111,31 @@ pub fn render(layout: &Layout) -> String {
             Row::BlockDivider(block) => {
                 draw_block_divider(&mut grid, layout, block, y);
             }
+            Row::Destroy(destroy) => {
+                draw_destroy(&mut grid, destroy, y);
+                alive[destroy.participant_idx] = false;
+            }
         }
         y += h;
     }
 
     let bottom_y = body_start + body_height;
-    draw_participant_boxes(&mut grid, layout, bottom_y, false);
+    draw_participant_boxes_filtered(&mut grid, layout, bottom_y, false, &layout.destroyed);
 
     grid.render()
 }
 
-fn draw_participant_boxes(grid: &mut Grid, layout: &Layout, y: usize, is_top: bool) {
-    for p in &layout.participants {
+fn draw_participant_boxes_filtered(
+    grid: &mut Grid,
+    layout: &Layout,
+    y: usize,
+    is_top: bool,
+    skip: &[bool],
+) {
+    for (i, p) in layout.participants.iter().enumerate() {
+        if skip.get(i).copied().unwrap_or(false) {
+            continue;
+        }
         grid.set(y, p.box_left, BOX_TL);
         for col in (p.box_left + 1)..p.box_right {
             grid.set(y, col, BOX_H);
@@ -146,14 +160,18 @@ fn draw_participant_boxes(grid: &mut Grid, layout: &Layout, y: usize, is_top: bo
     }
 }
 
-fn draw_lifelines(
+fn draw_lifelines_filtered(
     grid: &mut Grid,
     layout: &Layout,
     y: usize,
     count: usize,
     activations: &[bool],
+    alive: &[bool],
 ) {
     for (i, p) in layout.participants.iter().enumerate() {
+        if !alive.get(i).copied().unwrap_or(true) {
+            continue;
+        }
         let ch = if activations.get(i).copied().unwrap_or(false) {
             HEAVY_V
         } else {
@@ -399,6 +417,10 @@ fn reverse_arrow_head_char(arrow: &Arrow) -> char {
         ArrowHead::Cross => 'x',
         ArrowHead::Open => ARROW_L,
     }
+}
+
+fn draw_destroy(grid: &mut Grid, destroy: &DestroyRow, y: usize) {
+    grid.set(y, destroy.col, 'X');
 }
 
 #[cfg(test)]

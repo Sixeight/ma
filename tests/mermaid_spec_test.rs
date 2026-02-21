@@ -446,3 +446,77 @@ sequenceDiagram
     assert!(before_pos < inside_pos);
     assert!(inside_pos < after_pos);
 }
+
+// --- create / destroy ---
+
+#[test]
+fn spec_create_participant() {
+    let input = "\
+sequenceDiagram
+    A->>B: Hello
+    create participant C
+    B->>C: Init
+";
+    let output = ma::render(input).unwrap();
+
+    assert!(output.contains("Hello"));
+    assert!(output.contains("Init"));
+    assert!(output.contains("│ C │"), "created participant visible");
+}
+
+#[test]
+fn spec_destroy_draws_x() {
+    let input = "\
+sequenceDiagram
+    A->>B: Hello
+    destroy B
+    B->>A: Goodbye
+";
+    let output = ma::render(input).unwrap();
+
+    assert!(output.contains("Hello"));
+    assert!(output.contains("Goodbye"));
+    assert!(output.contains('X'), "destroy marker X visible");
+}
+
+#[test]
+fn spec_destroy_stops_lifeline() {
+    let input = "\
+sequenceDiagram
+    A->>B: Hello
+    destroy B
+    B->>A: Goodbye
+    A->>A: Think
+";
+    let output = ma::render(input).unwrap();
+
+    // Find B's lifeline column and check that after destroy+message, no more lifeline
+    assert!(output.contains("Hello"));
+    assert!(output.contains("Goodbye"));
+    assert!(output.contains("Think"));
+
+    // B should not have a bottom box
+    let lines: Vec<&str> = output.lines().collect();
+    let bottom_section = &lines[lines.len() - 3..];
+    let bottom_text = bottom_section.join("\n");
+    let b_count_bottom = bottom_text.matches("│ B │").count();
+    assert_eq!(b_count_bottom, 0, "destroyed participant should not have bottom box");
+}
+
+#[test]
+fn spec_create_and_destroy() {
+    let input = "\
+sequenceDiagram
+    A->>B: Hello
+    create participant C
+    B->>C: Init
+    destroy C
+    C->>B: Done
+";
+    let output = ma::render(input).unwrap();
+
+    assert!(output.contains("Hello"));
+    assert!(output.contains("Init"));
+    assert!(output.contains("Done"));
+    assert!(output.contains('X'), "destroy marker visible");
+}

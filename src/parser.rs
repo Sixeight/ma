@@ -7,7 +7,16 @@ use crate::ast::*;
 
 pub fn parse_diagram(input: &str) -> Result<Diagram, String> {
     let mut input = input;
-    diagram(&mut input).map_err(|e| format!("{e}"))
+    diagram(&mut input).map_err(|_| {
+        let line_num = input.lines().count().max(1);
+        let context = input.lines().next().unwrap_or("").trim();
+        let context_display = if context.len() > 40 {
+            format!("{}...", &context[..40])
+        } else {
+            context.to_string()
+        };
+        format!("syntax error at line {line_num}: unexpected `{context_display}`")
+    })
 }
 
 fn diagram(input: &mut &str) -> winnow::Result<Diagram> {
@@ -41,6 +50,8 @@ fn statement(input: &mut &str) -> winnow::Result<Option<Statement>> {
         critical_stmt.map(|ab| Some(Statement::Critical(ab))),
         autonumber_stmt.map(|_| Some(Statement::AutoNumber)),
         note_stmt.map(|n| Some(Statement::Note(n))),
+        create_stmt.map(|p| Some(Statement::Create(p))),
+        destroy_stmt.map(|id| Some(Statement::Destroy(id))),
         activate_stmt.map(|id| Some(Statement::Activate(id))),
         deactivate_stmt.map(|id| Some(Statement::Deactivate(id))),
         message.map(|m| Some(Statement::Message(m))),
@@ -61,7 +72,7 @@ fn blank_line(input: &mut &str) -> winnow::Result<()> {
     line_ending.void().parse_next(input)
 }
 
-fn activate_stmt<'s>(input: &mut &'s str) -> winnow::Result<String> {
+fn activate_stmt(input: &mut &str) -> winnow::Result<String> {
     "activate".parse_next(input)?;
     space1.parse_next(input)?;
     let id = identifier.parse_next(input)?;
@@ -69,8 +80,22 @@ fn activate_stmt<'s>(input: &mut &'s str) -> winnow::Result<String> {
     Ok(id.to_string())
 }
 
-fn deactivate_stmt<'s>(input: &mut &'s str) -> winnow::Result<String> {
+fn deactivate_stmt(input: &mut &str) -> winnow::Result<String> {
     "deactivate".parse_next(input)?;
+    space1.parse_next(input)?;
+    let id = identifier.parse_next(input)?;
+    opt(line_ending).parse_next(input)?;
+    Ok(id.to_string())
+}
+
+fn create_stmt(input: &mut &str) -> winnow::Result<ParticipantDecl> {
+    "create".parse_next(input)?;
+    space1.parse_next(input)?;
+    participant_decl(input)
+}
+
+fn destroy_stmt(input: &mut &str) -> winnow::Result<String> {
+    "destroy".parse_next(input)?;
     space1.parse_next(input)?;
     let id = identifier.parse_next(input)?;
     opt(line_ending).parse_next(input)?;
@@ -152,7 +177,7 @@ fn block_with_divider(input: &mut &str, divider: &str) -> winnow::Result<AltBloc
         }
         if input.starts_with(divider) {
             input.next_slice(divider.len());
-            let else_label = if input.starts_with(|c: char| c == ' ' || c == '\t') {
+            let else_label = if input.starts_with([' ', '\t']) {
                 space1.parse_next(input)?;
                 let l = till_line_ending.parse_next(input)?;
                 opt(line_ending).parse_next(input)?;
@@ -258,7 +283,7 @@ fn break_stmt(input: &mut &str) -> winnow::Result<LoopBlock> {
 
 fn rect_stmt(input: &mut &str) -> winnow::Result<LoopBlock> {
     "rect".parse_next(input)?;
-    let label = till_line_ending.parse_next(input)?.trim().to_string();
+    let label = opt(preceded(space1, till_line_ending)).parse_next(input)?;
     opt(line_ending).parse_next(input)?;
 
     let mut body = Vec::new();
@@ -278,7 +303,10 @@ fn rect_stmt(input: &mut &str) -> winnow::Result<LoopBlock> {
         }
     }
 
-    Ok(LoopBlock { label, body })
+    Ok(LoopBlock {
+        label: label.map(|s| s.trim().to_string()).unwrap_or_default(),
+        body,
+    })
 }
 
 fn autonumber_stmt(input: &mut &str) -> winnow::Result<()> {
