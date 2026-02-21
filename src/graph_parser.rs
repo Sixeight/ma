@@ -7,7 +7,15 @@ use crate::graph_ast::*;
 
 pub fn parse_graph(input: &str) -> Result<GraphDiagram, String> {
     let mut input = input;
-    graph_diagram(&mut input).map_err(|e| format!("{e}"))
+    graph_diagram(&mut input).map_err(|_| {
+        let context = input.lines().next().unwrap_or("").trim();
+        let context_display = if context.len() > 40 {
+            format!("{}...", &context[..40])
+        } else {
+            context.to_string()
+        };
+        format!("syntax error in graph diagram: unexpected `{context_display}`")
+    })
 }
 
 fn graph_diagram(input: &mut &str) -> winnow::Result<GraphDiagram> {
@@ -46,6 +54,13 @@ fn collect_line(
             add_node(nodes, to_decl);
             edges.push(edge);
         }
+        GraphLine::Edges(items) => {
+            for (edge, from_decl, to_decl) in items {
+                add_node(nodes, from_decl);
+                add_node(nodes, to_decl);
+                edges.push(edge);
+            }
+        }
         GraphLine::Node(decl) => {
             add_node(nodes, decl);
         }
@@ -59,6 +74,16 @@ fn collect_line(
                         }
                         if !sg_node_ids.contains(&to_decl.id) {
                             sg_node_ids.push(to_decl.id.clone());
+                        }
+                    }
+                    GraphLine::Edges(items) => {
+                        for (_, from_decl, to_decl) in items {
+                            if !sg_node_ids.contains(&from_decl.id) {
+                                sg_node_ids.push(from_decl.id.clone());
+                            }
+                            if !sg_node_ids.contains(&to_decl.id) {
+                                sg_node_ids.push(to_decl.id.clone());
+                            }
                         }
                     }
                     GraphLine::Node(decl) => {
@@ -89,6 +114,7 @@ fn add_node(nodes: &mut Vec<NodeDecl>, decl: NodeDecl) {
 #[derive(Debug)]
 enum GraphLine {
     Edge(Edge, NodeDecl, NodeDecl),
+    Edges(Vec<(Edge, NodeDecl, NodeDecl)>),
     Node(NodeDecl),
     SubgraphBlock(String, Vec<GraphLine>),
 }
@@ -230,16 +256,52 @@ fn edge_line(input: &mut &str) -> winnow::Result<GraphLine> {
     let et = edge_type.parse_next(input)?;
     let label = opt(edge_label).parse_next(input)?;
     space0.parse_next(input)?;
-    let to = node_ref.parse_next(input)?;
+    let first_to = node_ref.parse_next(input)?;
+
+    let mut extra_targets: Vec<NodeDecl> = Vec::new();
+    loop {
+        space0.parse_next(input)?;
+        if opt("&").parse_next(input)?.is_none() {
+            break;
+        }
+        space0.parse_next(input)?;
+        extra_targets.push(node_ref.parse_next(input)?);
+    }
     opt(line_ending).parse_next(input)?;
 
-    let edge = Edge {
-        from: from.id.clone(),
-        to: to.id.clone(),
-        edge_type: et,
-        label,
-    };
-    Ok(GraphLine::Edge(edge, from, to))
+    if extra_targets.is_empty() {
+        let edge = Edge {
+            from: from.id.clone(),
+            to: first_to.id.clone(),
+            edge_type: et,
+            label,
+        };
+        Ok(GraphLine::Edge(edge, from, first_to))
+    } else {
+        let mut items = vec![(
+            Edge {
+                from: from.id.clone(),
+                to: first_to.id.clone(),
+                edge_type: et,
+                label: label.clone(),
+            },
+            from.clone(),
+            first_to,
+        )];
+        for target in extra_targets {
+            items.push((
+                Edge {
+                    from: from.id.clone(),
+                    to: target.id.clone(),
+                    edge_type: et,
+                    label: label.clone(),
+                },
+                from.clone(),
+                target,
+            ));
+        }
+        Ok(GraphLine::Edges(items))
+    }
 }
 
 fn alt_edge_line(input: &mut &str) -> winnow::Result<GraphLine> {

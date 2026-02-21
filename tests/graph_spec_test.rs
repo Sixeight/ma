@@ -631,3 +631,36 @@ sequenceDiagram
     assert!(output.contains("Bob"));
     assert!(output.contains("Hello"));
 }
+
+// =============================================================================
+// Multi-target edges (A --> B & C)
+// =============================================================================
+
+#[test]
+fn spec_multi_target_same_as_separate() {
+    let separate = ma::render("graph TD\n    A --> B\n    A --> C\n").unwrap();
+    let multi = ma::render("graph TD\n    A --> B & C\n").unwrap();
+    assert_eq!(separate, multi, "A --> B & C same as two separate edges");
+}
+
+#[test]
+fn spec_multi_target_three() {
+    let separate = ma::render("graph TD\n    A --> B\n    A --> C\n    A --> D\n").unwrap();
+    let multi = ma::render("graph TD\n    A --> B & C & D\n").unwrap();
+    assert_eq!(separate, multi, "A --> B & C & D expands to three edges");
+}
+
+#[test]
+fn spec_multi_target_lr() {
+    let separate = ma::render("graph LR\n    A --> B\n    A --> C\n").unwrap();
+    let multi = ma::render("graph LR\n    A --> B & C\n").unwrap();
+    assert_eq!(separate, multi, "multi-target works in LR layout");
+}
+
+#[test]
+fn spec_multi_target_with_label() {
+    let input = "graph TD\n    A -->|yes| B & C\n";
+    let output = ma::render(input).unwrap();
+    assert!(output.contains("│ B │"), "B rendered");
+    assert!(output.contains("│ C │"), "C rendered");
+}
