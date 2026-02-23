@@ -1,6 +1,6 @@
 use std::collections::HashMap;
 
-use crate::display_width::display_width;
+use crate::display_width::{display_width, multiline_width, split_br};
 use crate::er_ast::Cardinality;
 use crate::er_layout::*;
 
@@ -152,9 +152,15 @@ fn draw_er_edge(
     }
 
     let gap = to_left - from_right;
-    if gap > display_width(label) {
-        let label_col = from_right + (gap - display_width(label)) / 2;
-        grid.write_str(row, label_col, label);
+    let lines = split_br(label);
+    let max_w = multiline_width(label);
+    if gap > max_w {
+        let label_col = from_right + (gap - max_w) / 2;
+        let start_row = if lines.len() > 1 { row.saturating_sub(lines.len() / 2) } else { row };
+        for (i, line) in lines.iter().enumerate() {
+            let line_col = label_col + (max_w - display_width(line)) / 2;
+            grid.write_str(start_row + i, line_col, line);
+        }
     }
 }
 
@@ -206,6 +212,26 @@ mod tests {
 │ A │||──r1──||│ B │
 └───┘          └───┘";
         assert_eq!(output, expected);
+    }
+
+    #[test]
+    fn render_multiline_label() {
+        let diagram = ErDiagram {
+            entities: vec![entity("A"), entity("B")],
+            relationships: vec![Relationship {
+                from: "A".into(),
+                to: "B".into(),
+                left_card: Cardinality::ExactlyOne,
+                right_card: Cardinality::ExactlyOne,
+                label: "has<br/>many".into(),
+            }],
+        };
+        let layout = er_layout::compute(&diagram).unwrap();
+        let output = render(&layout);
+        // The label should NOT contain the literal "<br/>" tag
+        assert!(!output.contains("<br/>"), "should not contain literal <br/>");
+        assert!(output.contains("has"), "should contain 'has'");
+        assert!(output.contains("many"), "should contain 'many'");
     }
 
     #[test]

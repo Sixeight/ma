@@ -1,6 +1,6 @@
 use std::collections::HashMap;
 
-use crate::display_width::display_width;
+use crate::display_width::{display_width, multiline_width};
 use crate::er_ast::*;
 
 #[derive(Debug, Clone, PartialEq)]
@@ -118,7 +118,7 @@ fn compute_with_gap(diagram: &ErDiagram, min_gap: usize) -> Result<ErLayout, Str
                     ranks.get(r.from.as_str()) == Some(&rank)
                         && ranks.get(r.to.as_str()) == Some(&(rank + 1))
                 })
-                .map(|r| display_width(&r.label) + 8)
+                .map(|r| multiline_width(&r.label) + 8)
                 .max()
                 .unwrap_or(min_gap)
                 .max(min_gap);
