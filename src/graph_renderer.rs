@@ -365,6 +365,31 @@ fn draw_td_edge(
         if let Some(ref label) = edge.label {
             let label_col = from_cx.saturating_sub(display_width(label) / 2);
             grid.write_str(from_below, label_col, label);
+        } else if from_cx != to_cx && to_above > from_below {
+            // L-shaped routing: vertical from source, horizontal turn, vertical to target
+            let mid_row = from_below + (to_above - from_below) / 2;
+            for row in from_below..mid_row {
+                if !is_subgraph_border_row(layout, row) {
+                    grid.set(row, from_cx, vert);
+                }
+            }
+            let (left, right) = if from_cx < to_cx {
+                grid.set(mid_row, from_cx, '└');
+                grid.set(mid_row, to_cx, '┐');
+                (from_cx + 1, to_cx)
+            } else {
+                grid.set(mid_row, from_cx, '┘');
+                grid.set(mid_row, to_cx, '┌');
+                (to_cx + 1, from_cx)
+            };
+            for col in left..right {
+                grid.set(mid_row, col, '─');
+            }
+            for row in (mid_row + 1)..to_above {
+                if !is_subgraph_border_row(layout, row) {
+                    grid.set(row, to_cx, vert);
+                }
+            }
         } else {
             for row in from_below..to_above {
                 if !is_subgraph_border_row(layout, row) {
@@ -786,6 +811,32 @@ mod tests {
 │ C │
 └───┘";
         assert_eq!(output, expected);
+    }
+
+    #[test]
+    fn render_td_offset_edge_connects_properly() {
+        // When fan-out puts child to the right, the edge from child to grandchild
+        // should still visually connect (no gap between │ and ▼)
+        let output = render_input(
+            "graph TD\n    A --> B\n    A --> C\n    C --> D\n",
+        );
+        // Find the ▼ above D and check there's a │ or corner above it
+        let lines: Vec<&str> = output.lines().collect();
+        let arrow_line = lines.iter().position(|l| {
+            // Find ▼ that's NOT part of the fan-out (the one above D)
+            let trimmed = l.trim();
+            trimmed == "▼"
+        });
+        if let Some(arrow_idx) = arrow_line {
+            let arrow_col = lines[arrow_idx].find('▼').unwrap();
+            // The line above should have │ or └ or ┘ at the same column or have a corner connector
+            let above = lines[arrow_idx - 1];
+            let above_char = above.chars().nth(arrow_col).unwrap_or(' ');
+            assert!(
+                matches!(above_char, '│' | '┘' | '└' | '┌' | '┐' | '┴' | '┬'),
+                "expected connector above ▼ at col {arrow_col}, got '{above_char}'\n{output}"
+            );
+        }
     }
 
     #[test]
