@@ -1,6 +1,6 @@
 use std::collections::HashMap;
 
-use crate::display_width::display_width;
+use crate::display_width::{display_width, split_br};
 use crate::graph_ast::{Direction, EdgeType, NodeShape};
 use crate::graph_layout::*;
 
@@ -113,11 +113,13 @@ fn render_lr(layout: &GraphLayout) -> String {
 
 fn draw_node(grid: &mut Grid, node: &NodeLayout) {
     match node.shape {
-        NodeShape::Box => draw_box(grid, node.x, node.y, node.width, &node.label),
+        NodeShape::Box => draw_box(grid, node.x, node.y, node.width, node.height, &node.label),
         NodeShape::Round | NodeShape::Circle => {
-            draw_round(grid, node.x, node.y, node.width, &node.label)
+            draw_round(grid, node.x, node.y, node.width, node.height, &node.label)
         }
-        NodeShape::Diamond => draw_diamond(grid, node.x, node.y, node.width, &node.label),
+        NodeShape::Diamond => {
+            draw_diamond(grid, node.x, node.y, node.width, node.height, &node.label)
+        }
     }
 }
 
@@ -149,60 +151,78 @@ fn draw_subgraph(grid: &mut Grid, sg: &SubgraphLayout) {
     grid.set(y + h - 1, x + w - 1, '┘');
 }
 
-fn draw_box(grid: &mut Grid, x: usize, y: usize, width: usize, label: &str) {
+fn draw_box(grid: &mut Grid, x: usize, y: usize, width: usize, height: usize, label: &str) {
+    let lines = split_br(label);
+
     grid.set(y, x, '┌');
     for col in (x + 1)..(x + width - 1) {
         grid.set(y, col, '─');
     }
     grid.set(y, x + width - 1, '┐');
 
-    grid.set(y + 1, x, '│');
-    grid.write_str(y + 1, x + 2, label);
-    grid.set(y + 1, x + width - 1, '│');
-
-    grid.set(y + 2, x, '└');
-    for col in (x + 1)..(x + width - 1) {
-        grid.set(y + 2, col, '─');
+    for (i, line) in lines.iter().enumerate() {
+        let row = y + 1 + i;
+        grid.set(row, x, '│');
+        grid.write_str(row, x + 2, line);
+        grid.set(row, x + width - 1, '│');
     }
-    grid.set(y + 2, x + width - 1, '┘');
+
+    let bottom = y + height - 1;
+    grid.set(bottom, x, '└');
+    for col in (x + 1)..(x + width - 1) {
+        grid.set(bottom, col, '─');
+    }
+    grid.set(bottom, x + width - 1, '┘');
 }
 
-fn draw_round(grid: &mut Grid, x: usize, y: usize, width: usize, label: &str) {
+fn draw_round(grid: &mut Grid, x: usize, y: usize, width: usize, height: usize, label: &str) {
+    let lines = split_br(label);
+
     grid.set(y, x, '╭');
     for col in (x + 1)..(x + width - 1) {
         grid.set(y, col, '─');
     }
     grid.set(y, x + width - 1, '╮');
 
-    grid.set(y + 1, x, '│');
     let inner = width - 2;
-    let pad_left = (inner - display_width(label)) / 2;
-    grid.write_str(y + 1, x + 1 + pad_left, label);
-    grid.set(y + 1, x + width - 1, '│');
-
-    grid.set(y + 2, x, '╰');
-    for col in (x + 1)..(x + width - 1) {
-        grid.set(y + 2, col, '─');
+    for (i, line) in lines.iter().enumerate() {
+        let row = y + 1 + i;
+        grid.set(row, x, '│');
+        let pad_left = (inner - display_width(line)) / 2;
+        grid.write_str(row, x + 1 + pad_left, line);
+        grid.set(row, x + width - 1, '│');
     }
-    grid.set(y + 2, x + width - 1, '╯');
+
+    let bottom = y + height - 1;
+    grid.set(bottom, x, '╰');
+    for col in (x + 1)..(x + width - 1) {
+        grid.set(bottom, col, '─');
+    }
+    grid.set(bottom, x + width - 1, '╯');
 }
 
-fn draw_diamond(grid: &mut Grid, x: usize, y: usize, width: usize, label: &str) {
+fn draw_diamond(grid: &mut Grid, x: usize, y: usize, width: usize, height: usize, label: &str) {
+    let lines = split_br(label);
+
     grid.set(y, x, '╱');
     for col in (x + 1)..(x + width - 1) {
         grid.set(y, col, '─');
     }
     grid.set(y, x + width - 1, '╲');
 
-    grid.set(y + 1, x, '│');
-    grid.write_str(y + 1, x + 2, label);
-    grid.set(y + 1, x + width - 1, '│');
-
-    grid.set(y + 2, x, '╲');
-    for col in (x + 1)..(x + width - 1) {
-        grid.set(y + 2, col, '─');
+    for (i, line) in lines.iter().enumerate() {
+        let row = y + 1 + i;
+        grid.set(row, x, '│');
+        grid.write_str(row, x + 2, line);
+        grid.set(row, x + width - 1, '│');
     }
-    grid.set(y + 2, x + width - 1, '╱');
+
+    let bottom = y + height - 1;
+    grid.set(bottom, x, '╲');
+    for col in (x + 1)..(x + width - 1) {
+        grid.set(bottom, col, '─');
+    }
+    grid.set(bottom, x + width - 1, '╱');
 }
 
 const DIR_L: u8 = 1;
@@ -743,6 +763,29 @@ mod tests {
         let c_line = lines.iter().find(|l| l.contains("│ C │")).expect("C node line");
         assert!(b_line.contains('>'), "B should have incoming arrow: {b_line}");
         assert!(c_line.contains('>'), "C should have incoming arrow: {c_line}");
+    }
+
+    #[test]
+    fn render_td_multiline_label() {
+        let output = render_input("graph TD\n    A[Hello<br/>World]\n");
+        let expected = "\
+┌───────┐
+│ Hello │
+│ World │
+└───────┘";
+        assert_eq!(output, expected);
+    }
+
+    #[test]
+    fn render_td_multiline_label_three_lines() {
+        let output = render_input("graph TD\n    A[A<br/>B<br/>C]\n");
+        let expected = "\
+┌───┐
+│ A │
+│ B │
+│ C │
+└───┘";
+        assert_eq!(output, expected);
     }
 
     #[test]

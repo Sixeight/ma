@@ -1,6 +1,6 @@
 use std::collections::HashMap;
 
-use crate::display_width::display_width;
+use crate::display_width::{display_width, line_count, multiline_width};
 use crate::graph_ast::*;
 
 #[derive(Debug, Clone, PartialEq)]
@@ -231,6 +231,17 @@ fn layout_td_with_gap(ranks_nodes: &[Vec<&NodeDecl>], node_gap: usize) -> Vec<No
     }
     let max_width = *rank_widths.iter().max().unwrap_or(&0);
 
+    let mut rank_heights: Vec<usize> = Vec::new();
+    for rank_nodes in ranks_nodes {
+        let max_h = rank_nodes
+            .iter()
+            .map(|n| box_height(&n.label))
+            .max()
+            .unwrap_or(BOX_HEIGHT);
+        rank_heights.push(max_h);
+    }
+
+    let mut y = 0;
     for (rank, rank_nodes) in ranks_nodes.iter().enumerate() {
         let rank_total = rank_widths[rank];
         let base_x = if max_width > rank_total {
@@ -239,11 +250,11 @@ fn layout_td_with_gap(ranks_nodes: &[Vec<&NodeDecl>], node_gap: usize) -> Vec<No
             0
         };
 
-        let y = rank * (BOX_HEIGHT + TD_RANK_SPACING);
         let mut x = base_x;
 
         for node in rank_nodes {
             let w = box_width(&node.label, node.shape);
+            let h = box_height(&node.label);
             layouts.push(NodeLayout {
                 id: node.id.clone(),
                 label: node.label.clone(),
@@ -251,12 +262,14 @@ fn layout_td_with_gap(ranks_nodes: &[Vec<&NodeDecl>], node_gap: usize) -> Vec<No
                 x,
                 y,
                 width: w,
-                height: BOX_HEIGHT,
+                height: h,
                 center_x: x + w / 2,
-                center_y: y + 1,
+                center_y: y + h / 2,
             });
             x += w + node_gap;
         }
+
+        y += rank_heights[rank] + TD_RANK_SPACING;
     }
 
     layouts
@@ -289,6 +302,7 @@ fn layout_lr_with_gap(
 
         for node in rank_nodes {
             let w = box_width(&node.label, node.shape);
+            let h = box_height(&node.label);
             layouts.push(NodeLayout {
                 id: node.id.clone(),
                 label: node.label.clone(),
@@ -296,11 +310,11 @@ fn layout_lr_with_gap(
                 x: rank_x,
                 y,
                 width: w,
-                height: BOX_HEIGHT,
+                height: h,
                 center_x: rank_x + w / 2,
-                center_y: y + 1,
+                center_y: y + h / 2,
             });
-            y += BOX_HEIGHT + LR_NODE_VERTICAL_GAP;
+            y += h + LR_NODE_VERTICAL_GAP;
         }
 
         if rank + 1 < ranks_nodes.len() {
@@ -322,11 +336,15 @@ fn layout_lr_with_gap(
 }
 
 fn box_width(label: &str, shape: NodeShape) -> usize {
-    let base = display_width(label) + 4;
+    let base = multiline_width(label) + 4;
     match shape {
         NodeShape::Circle => base + 4,
         _ => base,
     }
+}
+
+fn box_height(label: &str) -> usize {
+    2 + line_count(label)
 }
 
 const SUBGRAPH_PAD_LEFT: usize = 2;
