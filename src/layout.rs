@@ -1,5 +1,5 @@
 use crate::ast::*;
-use crate::display_width::display_width;
+use crate::display_width::{display_width, multiline_width};
 
 #[derive(Debug, Clone, PartialEq)]
 pub struct Layout {
@@ -88,7 +88,7 @@ pub fn compute(diagram: &Diagram) -> Result<Layout, String> {
     for row in &rows {
         match row {
             Row::Message(m) if m.from_col == m.to_col => {
-                let right = m.from_col + 2 + display_width(&m.text) + 1;
+                let right = m.from_col + 2 + multiline_width(&m.text) + 1;
                 total_width = total_width.max(right);
                 let arm_right = m.from_col + SELF_LOOP_ARM + 1;
                 total_width = total_width.max(arm_right);
@@ -173,7 +173,7 @@ fn finish_layout(
     for row in &rows {
         match row {
             Row::Message(m) if m.from_col == m.to_col => {
-                let right = m.from_col + 2 + display_width(&m.text) + 1;
+                let right = m.from_col + 2 + multiline_width(&m.text) + 1;
                 total_width = total_width.max(right);
                 let arm_right = m.from_col + SELF_LOOP_ARM + 1;
                 total_width = total_width.max(arm_right);
@@ -367,14 +367,14 @@ fn compute_gaps_inner(statements: &[Statement], order: &[String], gaps: &mut [us
                     if fi == ti {
                         // Self-message: need space to the right for text + loop arm
                         let required =
-                            (display_width(&m.text) + 3).max(SELF_LOOP_ARM + 2);
+                            (multiline_width(&m.text) + 3).max(SELF_LOOP_ARM + 2);
                         if fi < gaps.len() {
                             gaps[fi] = gaps[fi].max(required);
                         }
                     } else {
                         let (left, right) = if fi < ti { (fi, ti) } else { (ti, fi) };
                         let span_count = right - left;
-                        let required = display_width(&m.text) + ARROW_DECORATION_WIDTH + 2;
+                        let required = multiline_width(&m.text) + ARROW_DECORATION_WIDTH + 2;
                         let per_gap = required.div_ceil(span_count);
                         for gap in &mut gaps[left..right] {
                             *gap = (*gap).max(per_gap);
@@ -383,7 +383,7 @@ fn compute_gaps_inner(statements: &[Statement], order: &[String], gaps: &mut [us
                 }
             }
             Statement::Note(n) => {
-                let note_box_width = display_width(&n.text) + 4;
+                let note_box_width = multiline_width(&n.text) + 4;
                 match &n.placement {
                     NotePlacement::RightOf(id) => {
                         if let Some(idx) = order.iter().position(|p| p == id)
@@ -528,7 +528,7 @@ fn flatten_statements(
                 }));
             }
             Statement::Note(n) => {
-                let note_box_width = display_width(&n.text) + 4;
+                let note_box_width = multiline_width(&n.text) + 4;
                 let (box_left, box_right) = match &n.placement {
                     NotePlacement::RightOf(id) => {
                         let idx = order.iter().position(|p| p == id).unwrap();

@@ -1,5 +1,5 @@
 use crate::ast::*;
-use crate::display_width::display_width;
+use crate::display_width::{display_width, line_count, split_br};
 use crate::layout::*;
 
 const BOX_TL: char = '┌';
@@ -65,7 +65,8 @@ impl Grid {
 
 fn row_height(row: &Row) -> usize {
     match row {
-        Row::Message(_) | Row::Note(_) => 3,
+        Row::Message(m) => 2 + line_count(&m.text),
+        Row::Note(n) => 2 + line_count(&n.text),
         Row::BlockStart(_) | Row::BlockEnd(_) | Row::BlockDivider(_) | Row::Destroy(_) => 1,
     }
 }
@@ -202,9 +203,12 @@ fn draw_message(
     };
 
     let text_col = left_col + 2;
-    grid.write_str(y, text_col, &msg.text);
+    let lines = split_br(&msg.text);
+    for (i, line) in lines.iter().enumerate() {
+        grid.write_str(y + i, text_col, line);
+    }
 
-    let arrow_y = y + 1;
+    let arrow_y = y + lines.len();
 
     match msg.arrow.line_style {
         LineStyle::Solid => {
@@ -269,24 +273,30 @@ fn draw_self_message(
 ) {
     let center = msg.from_col;
     let arm_end = center + SELF_LOOP_ARM;
+    let lines = split_br(&msg.text);
+    let text_rows = lines.len();
 
-    // y: text
-    grid.write_str(y, center + 2, &msg.text);
+    // text lines
+    for (i, line) in lines.iter().enumerate() {
+        grid.write_str(y + i, center + 2, line);
+    }
 
-    // y+1: outgoing arm ──┐
+    // outgoing arm ──┐
+    let arm_y = y + text_rows;
     for col in (center + 1)..arm_end {
-        grid.set(y + 1, col, BOX_H);
+        grid.set(arm_y, col, BOX_H);
     }
-    grid.set(y + 1, arm_end, BOX_TR);
+    grid.set(arm_y, arm_end, BOX_TR);
 
-    // y+2: return arm <─┘
-    grid.set(y + 2, center + 1, reverse_arrow_head_char(&msg.arrow));
+    // return arm <─┘
+    let return_y = arm_y + 1;
+    grid.set(return_y, center + 1, reverse_arrow_head_char(&msg.arrow));
     for col in (center + 2)..arm_end {
-        grid.set(y + 2, col, BOX_H);
+        grid.set(return_y, col, BOX_H);
     }
-    grid.set(y + 2, arm_end, BOX_BR);
+    grid.set(return_y, arm_end, BOX_BR);
 
-    // Restore lifeline at center for all 3 rows
+    // Restore lifeline at center
     let idx = layout
         .participants
         .iter()
@@ -296,7 +306,8 @@ fn draw_self_message(
     } else {
         BOX_V
     };
-    for dy in 0..3 {
+    let h = 2 + text_rows;
+    for dy in 0..h {
         grid.set(y + dy, center, ch);
     }
 }
@@ -304,6 +315,7 @@ fn draw_self_message(
 fn draw_note(grid: &mut Grid, note: &NoteRow, y: usize) {
     let left = note.box_left;
     let right = note.box_right;
+    let lines = split_br(&note.text);
 
     grid.set(y, left, BOX_TL);
     for col in (left + 1)..right {
@@ -311,18 +323,22 @@ fn draw_note(grid: &mut Grid, note: &NoteRow, y: usize) {
     }
     grid.set(y, right, BOX_TR);
 
-    grid.set(y + 1, left, BOX_V);
-    for col in (left + 1)..right {
-        grid.set(y + 1, col, ' ');
+    for (i, line) in lines.iter().enumerate() {
+        let row = y + 1 + i;
+        grid.set(row, left, BOX_V);
+        for col in (left + 1)..right {
+            grid.set(row, col, ' ');
+        }
+        grid.write_str(row, left + 2, line);
+        grid.set(row, right, BOX_V);
     }
-    grid.write_str(y + 1, left + 2, &note.text);
-    grid.set(y + 1, right, BOX_V);
 
-    grid.set(y + 2, left, BOX_BL);
+    let bottom = y + 1 + lines.len();
+    grid.set(bottom, left, BOX_BL);
     for col in (left + 1)..right {
-        grid.set(y + 2, col, BOX_H);
+        grid.set(bottom, col, BOX_H);
     }
-    grid.set(y + 2, right, BOX_BR);
+    grid.set(bottom, right, BOX_BR);
 }
 
 const CROSS: char = '┼';
@@ -531,6 +547,40 @@ mod tests {
 
         let body = output.lines().skip(3).take(3).collect::<Vec<_>>().join("\n");
         assert!(!body.contains('┃'), "inactive lifeline should not use heavy vertical");
+    }
+
+    #[test]
+    fn render_multiline_note() {
+        let input = "sequenceDiagram\n    Alice->>Bob: Hello\n    Note right of Bob: Line1<br/>Line2\n";
+        let diagram = crate::parser::parse_diagram(input).unwrap();
+        let layout = crate::layout::compute(&diagram).unwrap();
+        let output = render(&layout);
+        assert!(output.contains("Line1"), "output should contain Line1");
+        assert!(output.contains("Line2"), "output should contain Line2");
+        let lines: Vec<&str> = output.lines().collect();
+        let l1 = lines.iter().position(|l| l.contains("Line1")).unwrap();
+        let l2 = lines.iter().position(|l| l.contains("Line2")).unwrap();
+        assert_eq!(l2, l1 + 1, "Line2 should be on the line after Line1");
+    }
+
+    #[test]
+    fn render_multiline_message() {
+        let input = "sequenceDiagram\n    Alice->>Bob: Hello<br/>World\n";
+        let diagram = crate::parser::parse_diagram(input).unwrap();
+        let layout = crate::layout::compute(&diagram).unwrap();
+        let output = render(&layout);
+        // Message text should appear on two lines
+        assert!(output.contains("Hello"), "output should contain Hello");
+        assert!(output.contains("World"), "output should contain World");
+        // They should be on separate lines
+        let lines: Vec<&str> = output.lines().collect();
+        let hello_line = lines.iter().position(|l| l.contains("Hello")).unwrap();
+        let world_line = lines.iter().position(|l| l.contains("World")).unwrap();
+        assert_eq!(
+            world_line,
+            hello_line + 1,
+            "World should be on the line after Hello"
+        );
     }
 
     #[test]
