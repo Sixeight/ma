@@ -1,5 +1,5 @@
 use crate::ast::*;
-use crate::display_width::{display_width, multiline_width};
+use crate::display_width::{display_width, line_count, multiline_width};
 
 #[derive(Debug, Clone, PartialEq)]
 pub struct Layout {
@@ -16,6 +16,7 @@ pub struct ParticipantLayout {
     pub center_col: usize,
     pub box_left: usize,
     pub box_right: usize,
+    pub box_height: usize,
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -140,7 +141,7 @@ pub fn compute_with_max_width(diagram: &Diagram, max_width: usize) -> Result<Lay
         // Find the longest name and truncate it by 1 char
         let (longest_id, longest_width) = order
             .iter()
-            .map(|id| (id.clone(), display_width(names.get(id).unwrap())))
+            .map(|id| (id.clone(), multiline_width(names.get(id).unwrap())))
             .max_by_key(|(_, w)| *w)
             .unwrap();
 
@@ -208,8 +209,8 @@ fn compute_min_box_gaps(
         .map(|i| {
             let left = display_names.get(&order[i]).unwrap();
             let right = display_names.get(&order[i + 1]).unwrap();
-            let left_half = display_width(left) / 2 + 2;
-            let right_half = display_width(right) / 2 + 2;
+            let left_half = multiline_width(left) / 2 + 2;
+            let right_half = multiline_width(right) / 2 + 2;
             left_half + right_half + 2
         })
         .collect()
@@ -347,8 +348,8 @@ fn compute_gaps(
     for (i, gap_idx) in (0..order.len().saturating_sub(1)).enumerate() {
         let left_name = display_names.get(&order[i]).unwrap();
         let right_name = display_names.get(&order[i + 1]).unwrap();
-        let left_half = display_width(left_name) / 2 + 2;
-        let right_half = display_width(right_name) / 2 + 2;
+        let left_half = multiline_width(left_name) / 2 + 2;
+        let right_half = multiline_width(right_name) / 2 + 2;
         let min_for_boxes = left_half + right_half + 2;
         gaps[gap_idx] = gaps[gap_idx].max(min_for_boxes);
     }
@@ -451,7 +452,7 @@ fn compute_positions(
     let mut participants = Vec::new();
 
     let first_name = display_names.get(&order[0]).unwrap();
-    let first_box_width = display_width(first_name) + 4;
+    let first_box_width = multiline_width(first_name) + 4;
     let first_center = first_box_width / 2;
 
     participants.push(ParticipantLayout {
@@ -459,19 +460,21 @@ fn compute_positions(
         center_col: first_center,
         box_left: 0,
         box_right: first_box_width - 1,
+        box_height: 2 + line_count(first_name),
     });
 
     for (i, gap) in gaps.iter().enumerate() {
         let prev_center = participants[i].center_col;
         let center = prev_center + gap;
         let name = display_names.get(&order[i + 1]).unwrap();
-        let box_width = display_width(name) + 4;
+        let box_width = multiline_width(name) + 4;
 
         participants.push(ParticipantLayout {
             name: name.clone(),
             center_col: center,
             box_left: center - box_width / 2,
             box_right: center + (box_width - 1) / 2,
+            box_height: 2 + line_count(name),
         });
     }
 

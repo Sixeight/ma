@@ -72,7 +72,12 @@ fn row_height(row: &Row) -> usize {
 }
 
 pub fn render(layout: &Layout) -> String {
-    let box_height = 3;
+    let box_height = layout
+        .participants
+        .iter()
+        .map(|p| p.box_height)
+        .max()
+        .unwrap_or(3);
     let body_height: usize = layout.rows.iter().map(row_height).sum();
     let height = box_height + body_height + box_height;
     let mut grid = Grid::new(layout.total_width, height);
@@ -133,6 +138,13 @@ fn draw_participant_boxes_filtered(
     is_top: bool,
     skip: &[bool],
 ) {
+    let max_box_height = layout
+        .participants
+        .iter()
+        .map(|p| p.box_height)
+        .max()
+        .unwrap_or(3);
+
     for (i, p) in layout.participants.iter().enumerate() {
         if skip.get(i).copied().unwrap_or(false) {
             continue;
@@ -143,18 +155,29 @@ fn draw_participant_boxes_filtered(
         }
         grid.set(y, p.box_right, BOX_TR);
 
-        grid.set(y + 1, p.box_left, BOX_V);
-        grid.write_str(y + 1, p.box_left + 2, &p.name);
-        grid.set(y + 1, p.box_right, BOX_V);
-
-        grid.set(y + 2, p.box_left, BOX_BL);
-        for col in (p.box_left + 1)..p.box_right {
-            grid.set(y + 2, col, BOX_H);
+        let lines = split_br(&p.name);
+        for (li, line) in lines.iter().enumerate() {
+            let row = y + 1 + li;
+            grid.set(row, p.box_left, BOX_V);
+            grid.write_str(row, p.box_left + 2, line);
+            grid.set(row, p.box_right, BOX_V);
         }
-        grid.set(y + 2, p.box_right, BOX_BR);
+        // Fill remaining rows if this box is shorter than the max
+        for li in lines.len()..(max_box_height - 2) {
+            let row = y + 1 + li;
+            grid.set(row, p.box_left, BOX_V);
+            grid.set(row, p.box_right, BOX_V);
+        }
+
+        let bottom = y + max_box_height - 1;
+        grid.set(bottom, p.box_left, BOX_BL);
+        for col in (p.box_left + 1)..p.box_right {
+            grid.set(bottom, col, BOX_H);
+        }
+        grid.set(bottom, p.box_right, BOX_BR);
 
         if is_top {
-            grid.set(y + 2, p.center_col, BOX_TD);
+            grid.set(bottom, p.center_col, BOX_TD);
         } else {
             grid.set(y, p.center_col, BOX_TU);
         }
@@ -581,6 +604,22 @@ mod tests {
             hello_line + 1,
             "World should be on the line after Hello"
         );
+    }
+
+    #[test]
+    fn render_participant_name_with_br_tag() {
+        let input = "sequenceDiagram\n    participant A as PlaceInfo<br/>Details\n    A->>A: test\n";
+        let diagram = crate::parser::parse_diagram(input).unwrap();
+        let layout = crate::layout::compute(&diagram).unwrap();
+        let output = render(&layout);
+        // <br/> should NOT appear literally in the output
+        assert!(
+            !output.contains("<br/>"),
+            "output should not contain literal <br/>: {output}"
+        );
+        // Both lines of the name should be rendered
+        assert!(output.contains("PlaceInfo"), "should contain PlaceInfo");
+        assert!(output.contains("Details"), "should contain Details");
     }
 
     #[test]
