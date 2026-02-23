@@ -203,18 +203,33 @@ fn shape_label(input: &mut &str) -> winnow::Result<(NodeShape, String)> {
     .parse_next(input)
 }
 
+fn quoted_inner(quote: char, closer: char) -> impl FnMut(&mut &str) -> winnow::Result<String> {
+    move |input: &mut &str| {
+        if input.starts_with(quote) {
+            let _q: char = winnow::token::any.parse_next(input)?;
+            let text = take_while(1.., move |c: char| c != quote).parse_next(input)?;
+            let result = text.to_string();
+            let _q2: char = winnow::token::any.parse_next(input)?;
+            Ok(result)
+        } else {
+            let text = take_while(1.., move |c: char| c != closer).parse_next(input)?;
+            Ok(text.to_string())
+        }
+    }
+}
+
 fn round_label(input: &mut &str) -> winnow::Result<String> {
     "(".parse_next(input)?;
-    let text = take_while(1.., |c: char| c != ')').parse_next(input)?;
+    let text = quoted_inner('"', ')').parse_next(input)?;
     ")".parse_next(input)?;
-    Ok(text.to_string())
+    Ok(text)
 }
 
 fn diamond_label(input: &mut &str) -> winnow::Result<String> {
     "{".parse_next(input)?;
-    let text = take_while(1.., |c: char| c != '}').parse_next(input)?;
+    let text = quoted_inner('"', '}').parse_next(input)?;
     "}".parse_next(input)?;
-    Ok(text.to_string())
+    Ok(text)
 }
 
 fn circle_label(input: &mut &str) -> winnow::Result<String> {
@@ -226,9 +241,9 @@ fn circle_label(input: &mut &str) -> winnow::Result<String> {
 
 fn bracketed_label(input: &mut &str) -> winnow::Result<String> {
     "[".parse_next(input)?;
-    let text = take_while(1.., |c: char| c != ']').parse_next(input)?;
+    let text = quoted_inner('"', ']').parse_next(input)?;
     "]".parse_next(input)?;
-    Ok(text.to_string())
+    Ok(text)
 }
 
 fn edge_type(input: &mut &str) -> winnow::Result<EdgeType> {
@@ -623,6 +638,31 @@ mod tests {
         assert_eq!(diagram.subgraphs.len(), 1);
         assert_eq!(diagram.subgraphs[0].node_ids, vec!["A"]);
         assert_eq!(diagram.nodes.len(), 1);
+    }
+
+    #[test]
+    fn parse_quoted_bracket_label() {
+        let input = "graph TD\n    A[\"[NOTE] Hello World\"] --> B\n";
+        let diagram = parse_graph(input).unwrap();
+        assert_eq!(diagram.nodes.len(), 2);
+        assert_eq!(diagram.nodes[0].label, "[NOTE] Hello World");
+        assert_eq!(diagram.nodes[0].shape, NodeShape::Box);
+    }
+
+    #[test]
+    fn parse_quoted_round_label() {
+        let input = "graph TD\n    A(\"(inner) text\")\n";
+        let diagram = parse_graph(input).unwrap();
+        assert_eq!(diagram.nodes[0].label, "(inner) text");
+        assert_eq!(diagram.nodes[0].shape, NodeShape::Round);
+    }
+
+    #[test]
+    fn parse_quoted_diamond_label() {
+        let input = "graph TD\n    A{\"choice {A}\"}\n";
+        let diagram = parse_graph(input).unwrap();
+        assert_eq!(diagram.nodes[0].label, "choice {A}");
+        assert_eq!(diagram.nodes[0].shape, NodeShape::Diamond);
     }
 
     #[test]
