@@ -408,7 +408,7 @@ fn layout_td_with_gap(ranks_nodes: &[Vec<&NodeDecl>], node_gap: usize) -> Vec<No
     for rank_nodes in ranks_nodes {
         let max_h = rank_nodes
             .iter()
-            .map(|n| box_height(&n.label))
+            .map(|n| box_height(&n.label, n.shape))
             .max()
             .unwrap_or(BOX_HEIGHT);
         rank_heights.push(max_h);
@@ -427,7 +427,7 @@ fn layout_td_with_gap(ranks_nodes: &[Vec<&NodeDecl>], node_gap: usize) -> Vec<No
 
         for node in rank_nodes {
             let w = box_width(&node.label, node.shape);
-            let h = box_height(&node.label);
+            let h = box_height(&node.label, node.shape);
             layouts.push(NodeLayout {
                 id: node.id.clone(),
                 label: node.label.clone(),
@@ -475,7 +475,7 @@ fn layout_lr_with_gap(
 
         for node in rank_nodes {
             let w = box_width(&node.label, node.shape);
-            let h = box_height(&node.label);
+            let h = box_height(&node.label, node.shape);
             layouts.push(NodeLayout {
                 id: node.id.clone(),
                 label: node.label.clone(),
@@ -516,8 +516,11 @@ fn box_width(label: &str, shape: NodeShape) -> usize {
     }
 }
 
-fn box_height(label: &str) -> usize {
-    2 + line_count(label)
+fn box_height(label: &str, shape: NodeShape) -> usize {
+    match shape {
+        NodeShape::Diamond => 4 + line_count(label),
+        _ => 2 + line_count(label),
+    }
 }
 
 const SUBGRAPH_PAD_LEFT: usize = 2;

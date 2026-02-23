@@ -105,10 +105,7 @@ fn spec_node_round_shape() {
 fn spec_node_diamond_shape() {
     let input = "graph TD\n    A{Hello}\n";
     let output = ma::render(input).unwrap();
-    let expected = "\
-╱───────╲
-│ Hello │
-╲───────╱";
+    let expected = " ╱─────╲\n╱       ╲\n│ Hello │\n╲       ╱\n ╲─────╱";
     assert_eq!(output, expected);
 }
 

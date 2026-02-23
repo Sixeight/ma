@@ -204,25 +204,37 @@ fn draw_round(grid: &mut Grid, x: usize, y: usize, width: usize, height: usize, 
 fn draw_diamond(grid: &mut Grid, x: usize, y: usize, width: usize, height: usize, label: &str) {
     let lines = split_br(label);
 
-    grid.set(y, x, '╱');
-    for col in (x + 1)..(x + width - 1) {
+    // Top border (inset by 1)
+    grid.set(y, x + 1, '╱');
+    for col in (x + 2)..(x + width - 2) {
         grid.set(y, col, '─');
     }
-    grid.set(y, x + width - 1, '╲');
+    grid.set(y, x + width - 2, '╲');
 
+    // Upper slope
+    grid.set(y + 1, x, '╱');
+    grid.set(y + 1, x + width - 1, '╲');
+
+    // Text rows
     for (i, line) in lines.iter().enumerate() {
-        let row = y + 1 + i;
+        let row = y + 2 + i;
         grid.set(row, x, '│');
         grid.write_str(row, x + 2, line);
         grid.set(row, x + width - 1, '│');
     }
 
+    // Lower slope
+    let lower = y + height - 2;
+    grid.set(lower, x, '╲');
+    grid.set(lower, x + width - 1, '╱');
+
+    // Bottom border (inset by 1)
     let bottom = y + height - 1;
-    grid.set(bottom, x, '╲');
-    for col in (x + 1)..(x + width - 1) {
+    grid.set(bottom, x + 1, '╲');
+    for col in (x + 2)..(x + width - 2) {
         grid.set(bottom, col, '─');
     }
-    grid.set(bottom, x + width - 1, '╱');
+    grid.set(bottom, x + width - 2, '╱');
 }
 
 const DIR_L: u8 = 1;
@@ -512,10 +524,7 @@ mod tests {
     #[test]
     fn render_diamond_node() {
         let output = render_input("graph TD\n    A{Hello}\n");
-        let expected = "\
-╱───────╲
-│ Hello │
-╲───────╱";
+        let expected = " ╱─────╲\n╱       ╲\n│ Hello │\n╲       ╱\n ╲─────╱";
         assert_eq!(output, expected);
     }
 
