@@ -43,9 +43,15 @@ pub struct EdgeLayout {
     pub label: Option<String>,
 }
 
+const SUBGRAPH_GAP: usize = 3;
+
 pub fn compute(diagram: &GraphDiagram) -> Result<GraphLayout, String> {
     if diagram.nodes.is_empty() {
         return Err("no nodes found".to_string());
+    }
+
+    if !diagram.subgraphs.is_empty() {
+        return layout_with_subgraphs(diagram);
     }
 
     let ranks = assign_ranks(diagram);
@@ -86,6 +92,168 @@ pub fn compute(diagram: &GraphDiagram) -> Result<GraphLayout, String> {
         nodes: node_layouts,
         edges,
         subgraphs,
+        width,
+        height,
+        direction: diagram.direction.clone(),
+    })
+}
+
+fn layout_with_subgraphs(diagram: &GraphDiagram) -> Result<GraphLayout, String> {
+    let node_to_subgraph: HashMap<String, usize> = diagram
+        .subgraphs
+        .iter()
+        .enumerate()
+        .flat_map(|(i, sg)| sg.node_ids.iter().map(move |id| (id.clone(), i)))
+        .collect();
+
+    // Build mini-diagrams for each subgraph
+    let mut sg_groups: Vec<GraphDiagram> = Vec::new();
+    for sg in &diagram.subgraphs {
+        let nodes: Vec<NodeDecl> = diagram
+            .nodes
+            .iter()
+            .filter(|n| sg.node_ids.contains(&n.id))
+            .cloned()
+            .collect();
+        let edges: Vec<Edge> = diagram
+            .edges
+            .iter()
+            .filter(|e| sg.node_ids.contains(&e.from) && sg.node_ids.contains(&e.to))
+            .cloned()
+            .collect();
+        sg_groups.push(GraphDiagram {
+            direction: diagram.direction.clone(),
+            nodes,
+            edges,
+            subgraphs: vec![],
+        });
+    }
+
+    // Collect bare nodes (not in any subgraph)
+    let bare_nodes: Vec<&NodeDecl> = diagram
+        .nodes
+        .iter()
+        .filter(|n| !node_to_subgraph.contains_key(&n.id))
+        .collect();
+    let bare_edges: Vec<&Edge> = diagram
+        .edges
+        .iter()
+        .filter(|e| {
+            !node_to_subgraph.contains_key(&e.from) && !node_to_subgraph.contains_key(&e.to)
+        })
+        .collect();
+
+    // Layout each subgraph independently
+    let mut all_nodes: Vec<NodeLayout> = Vec::new();
+    let mut sg_layouts: Vec<SubgraphLayout> = Vec::new();
+    let mut x_offset: usize = 0;
+
+    for (i, sg_diagram) in sg_groups.iter().enumerate() {
+        if sg_diagram.nodes.is_empty() {
+            continue;
+        }
+
+        let ranks = assign_ranks(sg_diagram);
+        let max_rank = *ranks.values().max().unwrap_or(&0);
+        let mut ranks_nodes: Vec<Vec<&NodeDecl>> = vec![Vec::new(); max_rank + 1];
+        for node in &sg_diagram.nodes {
+            let rank = ranks[&node.id];
+            ranks_nodes[rank].push(node);
+        }
+
+        let mut node_layouts = match diagram.direction {
+            Direction::TopDown => layout_td(&ranks_nodes),
+            Direction::LeftRight => layout_lr(&ranks_nodes, &ranks, &sg_diagram.edges),
+        };
+
+        // Apply subgraph padding
+        let sg = &diagram.subgraphs[i];
+        for nl in &mut node_layouts {
+            nl.x += x_offset + SUBGRAPH_PAD_LEFT;
+            nl.y += SUBGRAPH_PAD_TOP;
+            nl.center_x += x_offset + SUBGRAPH_PAD_LEFT;
+            nl.center_y += SUBGRAPH_PAD_TOP;
+        }
+
+        let content_right = node_layouts
+            .iter()
+            .map(|n| n.x + n.width)
+            .max()
+            .unwrap_or(0);
+        let content_bottom = node_layouts
+            .iter()
+            .map(|n| n.y + n.height)
+            .max()
+            .unwrap_or(0);
+
+        let content_width = content_right - x_offset + SUBGRAPH_PAD_RIGHT;
+        let title_width = display_width(&sg.label) + SUBGRAPH_TITLE_DECOR;
+        let sg_width = content_width.max(title_width);
+        let sg_height = content_bottom + SUBGRAPH_PAD_BOTTOM;
+
+        sg_layouts.push(SubgraphLayout {
+            label: sg.label.clone(),
+            x: x_offset,
+            y: 0,
+            width: sg_width,
+            height: sg_height,
+        });
+
+        all_nodes.extend(node_layouts);
+        x_offset += sg_width + SUBGRAPH_GAP;
+    }
+
+    // Layout bare nodes
+    if !bare_nodes.is_empty() {
+        let bare_diagram = GraphDiagram {
+            direction: diagram.direction.clone(),
+            nodes: bare_nodes.into_iter().cloned().collect(),
+            edges: bare_edges.into_iter().cloned().collect(),
+            subgraphs: vec![],
+        };
+        let ranks = assign_ranks(&bare_diagram);
+        let max_rank = *ranks.values().max().unwrap_or(&0);
+        let mut ranks_nodes: Vec<Vec<&NodeDecl>> = vec![Vec::new(); max_rank + 1];
+        for node in &bare_diagram.nodes {
+            let rank = ranks[&node.id];
+            ranks_nodes[rank].push(node);
+        }
+
+        let mut node_layouts = match diagram.direction {
+            Direction::TopDown => layout_td(&ranks_nodes),
+            Direction::LeftRight => layout_lr(&ranks_nodes, &ranks, &bare_diagram.edges),
+        };
+
+        for nl in &mut node_layouts {
+            nl.x += x_offset;
+            nl.center_x += x_offset;
+        }
+
+        all_nodes.extend(node_layouts);
+    }
+
+    let edges: Vec<EdgeLayout> = diagram
+        .edges
+        .iter()
+        .map(|e| EdgeLayout {
+            from_id: e.from.clone(),
+            to_id: e.to.clone(),
+            edge_type: e.edge_type,
+            label: e.label.clone(),
+        })
+        .collect();
+
+    let mut width = all_nodes.iter().map(|n| n.x + n.width).max().unwrap_or(0);
+    let mut height = all_nodes.iter().map(|n| n.y + n.height).max().unwrap_or(0);
+    for sg in &sg_layouts {
+        width = width.max(sg.x + sg.width);
+        height = height.max(sg.y + sg.height);
+    }
+
+    Ok(GraphLayout {
+        nodes: all_nodes,
+        edges,
+        subgraphs: sg_layouts,
         width,
         height,
         direction: diagram.direction.clone(),
@@ -153,6 +321,11 @@ pub fn compute_with_max_width(
     let layout = compute(diagram)?;
     if layout.width <= max_width {
         return Ok(layout);
+    }
+
+    // Subgraph case: no gap reduction fallback (already laid out independently)
+    if !diagram.subgraphs.is_empty() {
+        return Err(format!("graph diagram too wide for {max_width} columns"));
     }
 
     // Try with progressively smaller gaps
@@ -510,6 +683,77 @@ mod tests {
         assert_eq!(layout.edges.len(), 2);
         assert_eq!(layout.edges[0].edge_type, EdgeType::Arrow);
         assert_eq!(layout.edges[1].edge_type, EdgeType::OpenLink);
+    }
+
+    #[test]
+    fn layout_two_subgraphs_no_overlap() {
+        let diagram = parse_graph(
+            "graph TD\n    subgraph GroupA\n        A --> B\n        A --> C\n    end\n    subgraph GroupB\n        D --> E\n    end\n",
+        )
+        .unwrap();
+        let layout = compute(&diagram).unwrap();
+
+        assert_eq!(layout.subgraphs.len(), 2);
+        let sg_a = layout.subgraphs.iter().find(|s| s.label == "GroupA").unwrap();
+        let sg_b = layout.subgraphs.iter().find(|s| s.label == "GroupB").unwrap();
+
+        // Subgraph x-ranges must not overlap
+        let a_right = sg_a.x + sg_a.width;
+        let b_right = sg_b.x + sg_b.width;
+        assert!(
+            a_right <= sg_b.x || b_right <= sg_a.x,
+            "subgraphs overlap: GroupA({}-{}), GroupB({}-{})",
+            sg_a.x, a_right, sg_b.x, b_right
+        );
+
+        // Each node must be within its subgraph bounds
+        for node_id in &["A", "B", "C"] {
+            let n = layout.nodes.iter().find(|n| n.id == *node_id).unwrap();
+            assert!(n.x >= sg_a.x, "{node_id} x < sg_a.x");
+            assert!(n.x + n.width <= sg_a.x + sg_a.width, "{node_id} right > sg_a right");
+            assert!(n.y >= sg_a.y, "{node_id} y < sg_a.y");
+            assert!(n.y + n.height <= sg_a.y + sg_a.height, "{node_id} bottom > sg_a bottom");
+        }
+        for node_id in &["D", "E"] {
+            let n = layout.nodes.iter().find(|n| n.id == *node_id).unwrap();
+            assert!(n.x >= sg_b.x, "{node_id} x < sg_b.x");
+            assert!(n.x + n.width <= sg_b.x + sg_b.width, "{node_id} right > sg_b right");
+            assert!(n.y >= sg_b.y, "{node_id} y < sg_b.y");
+            assert!(n.y + n.height <= sg_b.y + sg_b.height, "{node_id} bottom > sg_b bottom");
+        }
+    }
+
+    #[test]
+    fn layout_subgraph_with_bare_nodes() {
+        let diagram = parse_graph(
+            "graph TD\n    C\n    subgraph Backend\n        A --> B\n    end\n    C --> A\n",
+        )
+        .unwrap();
+        let layout = compute(&diagram).unwrap();
+
+        assert_eq!(layout.subgraphs.len(), 1);
+        let sg = &layout.subgraphs[0];
+        assert_eq!(sg.label, "Backend");
+
+        // C is a bare node, should not be inside the subgraph
+        let c = layout.nodes.iter().find(|n| n.id == "C").unwrap();
+        let a = layout.nodes.iter().find(|n| n.id == "A").unwrap();
+        let b = layout.nodes.iter().find(|n| n.id == "B").unwrap();
+
+        // A and B must be inside the subgraph
+        assert!(a.x >= sg.x, "A x >= sg.x");
+        assert!(a.x + a.width <= sg.x + sg.width, "A right <= sg right");
+        assert!(b.x >= sg.x, "B x >= sg.x");
+        assert!(b.x + b.width <= sg.x + sg.width, "B right <= sg right");
+
+        // C must not overlap with the subgraph x-range
+        let c_right = c.x + c.width;
+        let sg_right = sg.x + sg.width;
+        assert!(
+            c_right <= sg.x || c.x >= sg_right,
+            "bare node C overlaps subgraph: C({}-{}), sg({}-{})",
+            c.x, c_right, sg.x, sg_right
+        );
     }
 
     #[test]
