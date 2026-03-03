@@ -781,3 +781,80 @@ graph TD
     assert!(has_top_corner, "gutter top corner ┐ exists:\n{output}");
     assert!(has_bottom_corner, "gutter bottom corner ┘ exists:\n{output}");
 }
+
+// =============================================================================
+// Style directives (ignored)
+// =============================================================================
+
+#[test]
+fn spec_style_directive_ignored() {
+    let input = "\
+graph TD
+    A --> B
+    style A fill:#f9f,stroke:#333
+";
+    let output = ma::render(input).unwrap();
+    assert!(output.contains("│ A │"), "A rendered");
+    assert!(output.contains("│ B │"), "B rendered");
+    assert!(!output.contains("style"), "style directive not rendered as node");
+    assert!(!output.contains("fill"), "style properties not rendered");
+}
+
+#[test]
+fn spec_style_directive_with_stroke_dasharray() {
+    let input = "\
+graph LR
+    A --> B
+    style B stroke-dasharray: 5 5,stroke:#f66
+";
+    let output = ma::render(input).unwrap();
+    assert!(output.contains("│ A │"), "A rendered");
+    assert!(output.contains("│ B │"), "B rendered");
+    assert!(!output.contains("stroke"), "stroke not rendered as node");
+}
+
+#[test]
+fn spec_multiple_style_directives() {
+    let input = "\
+graph TD
+    A --> B
+    B --> C
+    style A fill:#f9f
+    style B fill:#bbf
+    style C fill:#bfb
+";
+    let output = ma::render(input).unwrap();
+    assert_eq!(output.matches("│ A │").count(), 1, "exactly one A");
+    assert_eq!(output.matches("│ B │").count(), 1, "exactly one B");
+    assert_eq!(output.matches("│ C │").count(), 1, "exactly one C");
+    assert!(!output.contains("style"), "no style nodes");
+}
+
+#[test]
+fn spec_classdef_directive_ignored() {
+    let input = "\
+graph TD
+    A --> B
+    classDef highlight fill:#f9f,stroke:#333
+    class A highlight
+";
+    let output = ma::render(input).unwrap();
+    assert!(output.contains("│ A │"), "A rendered");
+    assert!(output.contains("│ B │"), "B rendered");
+    assert!(!output.contains("classDef"), "classDef not rendered as node");
+    assert!(!output.contains("class"), "class not rendered as node");
+    assert!(!output.contains("highlight"), "class name not rendered");
+}
+
+#[test]
+fn spec_linkstyle_directive_ignored() {
+    let input = "\
+graph LR
+    A --> B
+    linkStyle 0 stroke:#f66
+";
+    let output = ma::render(input).unwrap();
+    assert!(output.contains("│ A │"), "A rendered");
+    assert!(output.contains("│ B │"), "B rendered");
+    assert!(!output.contains("linkStyle"), "linkStyle not rendered as node");
+}

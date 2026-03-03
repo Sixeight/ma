@@ -128,6 +128,7 @@ fn graph_line(input: &mut &str) -> winnow::Result<Option<GraphLine>> {
 
     let result = alt((
         blank_line.map(|_| None),
+        style_line.map(|_| None),
         subgraph_block.map(Some),
         edge_line.map(Some),
         alt_edge_line.map(Some),
@@ -167,6 +168,14 @@ fn subgraph_block(input: &mut &str) -> winnow::Result<GraphLine> {
 
 fn blank_line(input: &mut &str) -> winnow::Result<()> {
     line_ending.void().parse_next(input)
+}
+
+fn style_line(input: &mut &str) -> winnow::Result<()> {
+    alt(("classDef", "linkStyle", "style", "class")).parse_next(input)?;
+    space1.parse_next(input)?;
+    let _ = take_while(0.., |c: char| c != '\n' && c != '\r').parse_next(input)?;
+    opt(line_ending).parse_next(input)?;
+    Ok(())
 }
 
 fn direction(input: &mut &str) -> winnow::Result<Direction> {
