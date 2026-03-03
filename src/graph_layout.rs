@@ -88,6 +88,42 @@ pub fn compute(diagram: &GraphDiagram) -> Result<GraphLayout, String> {
         height = height.max(sg.y + sg.height);
     }
 
+    // Self-loop nodes need extra space: arm (2 cols) + label width to the right,
+    // and 1 row below the node for the return arrow
+    for edge in &diagram.edges {
+        if edge.from == edge.to {
+            if let Some(nl) = node_layouts.iter().find(|n| n.id == edge.from) {
+                let label_w = edge
+                    .label
+                    .as_ref()
+                    .map(|l| display_width(l))
+                    .unwrap_or(0);
+                let needed_right = nl.x + nl.width + 2 + label_w;
+                width = width.max(needed_right);
+                let needed_bottom = nl.y + nl.height + 1;
+                height = height.max(needed_bottom);
+            }
+        }
+    }
+
+    // Cross-rank fan-in edges: reserve gutter column width.
+    let max_right = node_layouts.iter().map(|n| n.x + n.width).max().unwrap_or(0);
+    let has_cross_rank_fan_in = diagram.edges.iter().any(|edge| {
+        if edge.from == edge.to {
+            return false;
+        }
+        let parents: Vec<&NodeLayout> = diagram
+            .edges
+            .iter()
+            .filter(|e| e.to == edge.to && e.from != e.to)
+            .filter_map(|e| node_layouts.iter().find(|n| n.id == e.from))
+            .collect();
+        parents.len() > 1 && !parents.windows(2).all(|w| w[0].y == w[1].y)
+    });
+    if has_cross_rank_fan_in {
+        width = width.max(max_right + 2);
+    }
+
     Ok(GraphLayout {
         nodes: node_layouts,
         edges,
@@ -266,6 +302,9 @@ fn assign_ranks(diagram: &GraphDiagram) -> HashMap<String, usize> {
         in_edges.entry(node.id.clone()).or_default();
     }
     for edge in &diagram.edges {
+        if edge.from == edge.to {
+            continue;
+        }
         in_edges
             .entry(edge.to.clone())
             .or_default()
@@ -757,6 +796,15 @@ mod tests {
             "bare node C overlaps subgraph: C({}-{}), sg({}-{})",
             c.x, c_right, sg.x, sg_right
         );
+    }
+
+    #[test]
+    fn rank_self_loop() {
+        let diagram = parse_graph("graph TD\n    A --> B\n    B -->|fallback| B\n    B --> C\n").unwrap();
+        let ranks = assign_ranks(&diagram);
+        assert_eq!(ranks["A"], 0);
+        assert_eq!(ranks["B"], 1);
+        assert_eq!(ranks["C"], 2);
     }
 
     #[test]

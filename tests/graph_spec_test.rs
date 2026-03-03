@@ -614,6 +614,97 @@ graph TD
 }
 
 // =============================================================================
+// Self-loop
+// =============================================================================
+
+#[test]
+fn spec_fan_in_different_ranks() {
+    // D(rank 1) and H(rank 2) both point to E — they are at different y positions.
+    // The renderer must NOT draw a merge bar (which assumes same y) for this case.
+    let input = "\
+graph TD
+    A --> B
+    B --> D
+    D --> E
+    G --> H
+    H --> E
+";
+    let output = ma::render(input).unwrap();
+    // E should be rendered
+    assert!(output.contains("│ E │"), "E rendered");
+    // Each line should be well-formed: no broken merge bars where ┬ appears
+    // without matching └ or ┘ on the same line
+    for (i, line) in output.lines().enumerate() {
+        // A merge bar has └ and ┘ on the same line — that's fine.
+        // But a lone ┬─┘ without └ on the same line indicates a broken merge bar.
+        if line.contains('┘')
+            && !line.contains('└')
+            && !line.contains('┐')
+            && !line.contains('┌')
+            && !line.contains('├')
+            && !line.contains('▼')
+        {
+            // This line has a dangling ┘ without a proper left end — broken merge bar
+            panic!("broken merge bar at line {i}: {line}\nfull output:\n{output}");
+        }
+    }
+}
+
+#[test]
+fn spec_fan_in_different_ranks_labeled_edge_connects() {
+    // When a labeled edge crosses multiple ranks (fan-in from different ranks),
+    // both labels should be rendered and the target should have an arrow.
+    // Note: arrows from different parents may overlap at the same ▼ position.
+    let input = "\
+graph TD
+    A -->|data| B
+    B -->|lookup| C
+    C -->|label1| E
+    D -->|label2| E
+";
+    let output = ma::render(input).unwrap();
+    // Both labels should appear
+    assert!(output.contains("label1"), "label1 rendered");
+    assert!(output.contains("label2"), "label2 rendered");
+    // E should be rendered intact (no edges routing through it)
+    assert!(output.contains("│ E │"), "E node rendered intact");
+    // Intermediate nodes should not be corrupted by edge routing
+    assert!(output.contains("│ B │"), "B node rendered intact");
+    assert!(output.contains("│ C │"), "C node rendered intact");
+}
+
+#[test]
+fn spec_self_loop_does_not_crash() {
+    let input = "graph TD\n    A --> B\n    B -->|fallback| B\n    B --> C\n";
+    let output = ma::render(input);
+    assert!(output.is_ok(), "self-loop should not crash: {:?}", output.err());
+    let rendered = output.unwrap();
+    assert!(rendered.contains("│ A │"), "A rendered");
+    // B's right border becomes ├ due to self-loop, so check for │ B ├
+    assert!(rendered.contains("│ B ├"), "B rendered with self-loop");
+    assert!(rendered.contains("│ C │"), "C rendered");
+}
+
+#[test]
+fn spec_self_loop_td_visual() {
+    let input = "graph TD\n    A -->|retry| A\n";
+    let output = ma::render(input).unwrap();
+    // Self-loop should show the loop arm to the right of the node
+    assert!(output.contains("├"), "self-loop branches from right border");
+    assert!(output.contains("◄"), "self-loop returns with ◄");
+    assert!(output.contains("retry"), "self-loop label rendered");
+}
+
+#[test]
+fn spec_self_loop_lr_visual() {
+    let input = "graph LR\n    A -->|retry| A\n";
+    let output = ma::render(input).unwrap();
+    assert!(output.contains("├"), "self-loop branches from right border");
+    assert!(output.contains("◄"), "self-loop returns with ◄");
+    assert!(output.contains("retry"), "self-loop label rendered");
+}
+
+// =============================================================================
 // Dispatch — graph input does not break sequence diagrams
 // =============================================================================
 
@@ -660,4 +751,33 @@ fn spec_multi_target_with_label() {
     let output = ma::render(input).unwrap();
     assert!(output.contains("│ B │"), "B rendered");
     assert!(output.contains("│ C │"), "C rendered");
+}
+
+// =============================================================================
+// Cross-rank fan-in: gutter column routing
+// =============================================================================
+
+#[test]
+fn spec_cross_rank_fan_in_gutter_routing() {
+    // B(rank 1) and F(rank 4) both → G — different ranks.
+    // B's center_x overlaps with wide intermediate node E.
+    // Routing should go via gutter column (right of all intermediate nodes).
+    let input = "\
+graph TD
+    A -->|data| B
+    B -->|label_b| G
+    C --> D
+    D --> E[WideNodeName123456]
+    E --> F
+    F -->|label_f| G
+";
+    let output = ma::render(input).unwrap();
+    assert!(output.contains("label_b"), "label_b rendered");
+    assert!(output.contains("│ G │"), "G node intact");
+    // Gutter routing: ┐ at route_start row, ┘ at to_above row
+    let lines: Vec<&str> = output.lines().collect();
+    let has_top_corner = lines.iter().any(|l| l.contains('┐') && !l.contains("┌─"));
+    let has_bottom_corner = lines.iter().any(|l| l.contains('┘') && !l.contains("└─"));
+    assert!(has_top_corner, "gutter top corner ┐ exists:\n{output}");
+    assert!(has_bottom_corner, "gutter bottom corner ┘ exists:\n{output}");
 }

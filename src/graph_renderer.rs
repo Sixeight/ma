@@ -80,10 +80,22 @@ fn render_td(layout: &GraphLayout) -> String {
         draw_node(&mut grid, node);
     }
 
+    // Draw non-self-loop edges first, then self-loops on top
+    // so self-loop labels aren't overwritten by cross-rank routing
     for edge in &layout.edges {
+        if edge.from_id == edge.to_id {
+            continue;
+        }
         let from = node_map[edge.from_id.as_str()];
         let to = node_map[edge.to_id.as_str()];
         draw_td_edge(&mut grid, from, to, edge, layout);
+    }
+    for edge in &layout.edges {
+        if edge.from_id != edge.to_id {
+            continue;
+        }
+        let from = node_map[edge.from_id.as_str()];
+        draw_td_self_loop(&mut grid, from, edge);
     }
 
     grid.render()
@@ -103,9 +115,19 @@ fn render_lr(layout: &GraphLayout) -> String {
     }
 
     for edge in &layout.edges {
+        if edge.from_id == edge.to_id {
+            continue;
+        }
         let from = node_map[edge.from_id.as_str()];
         let to = node_map[edge.to_id.as_str()];
         draw_lr_edge(&mut grid, from, to, edge);
+    }
+    for edge in &layout.edges {
+        if edge.from_id != edge.to_id {
+            continue;
+        }
+        let from = node_map[edge.from_id.as_str()];
+        draw_td_self_loop(&mut grid, from, edge);
     }
 
     grid.render()
@@ -303,6 +325,181 @@ fn is_subgraph_border_row(layout: &GraphLayout, row: usize) -> bool {
         .any(|sg| row == sg.y || row == sg.y + sg.height - 1)
 }
 
+fn route_crosses_node(
+    layout: &GraphLayout,
+    col: usize,
+    row_start: usize,
+    row_end: usize,
+    from_id: &str,
+    to_id: &str,
+) -> bool {
+    layout.nodes.iter().any(|n| {
+        n.id != from_id
+            && n.id != to_id
+            && col >= n.x
+            && col < n.x + n.width
+            && row_start < n.y + n.height
+            && row_end > n.y
+    })
+}
+
+fn draw_td_single_edge_route(
+    grid: &mut Grid,
+    from_cx: usize,
+    to_cx: usize,
+    from_below: usize,
+    to_above: usize,
+    edge: &EdgeLayout,
+    layout: &GraphLayout,
+) {
+    let edge_type = edge.edge_type;
+    let vert = td_vertical_connector(edge_type);
+
+    let route_start = if let Some(ref label) = edge.label {
+        let label_col = from_cx.saturating_sub(display_width(label) / 2);
+        grid.write_str(from_below, label_col, label);
+        from_below + 1
+    } else {
+        from_below
+    };
+
+    let from_col_clear = !route_crosses_node(
+        layout,
+        from_cx,
+        route_start,
+        to_above,
+        &edge.from_id,
+        &edge.to_id,
+    );
+
+    if from_cx == to_cx && from_col_clear {
+        // Straight down
+        for row in route_start..to_above {
+            if !is_subgraph_border_row(layout, row) {
+                grid.set(row, from_cx, vert);
+            }
+        }
+    } else if from_col_clear && to_above > route_start {
+        // Source column is clear: route down at from_cx, turn at to_above row.
+        // The turn shares the to_above row with the arrow head.
+        for row in route_start..to_above {
+            if !is_subgraph_border_row(layout, row) {
+                grid.set(row, from_cx, vert);
+            }
+        }
+        // Draw horizontal + corner at to_above (▼ overwrites to_cx later)
+        if from_cx < to_cx {
+            grid.set_merge(to_above, from_cx, '└');
+            for col in (from_cx + 1)..to_cx {
+                grid.set(to_above, col, '─');
+            }
+        } else {
+            grid.set_merge(to_above, from_cx, '┘');
+            for col in (to_cx + 1)..from_cx {
+                grid.set(to_above, col, '─');
+            }
+        }
+    } else if !from_col_clear && to_above > route_start {
+        // from_cx column is blocked by intermediate nodes.
+        // Route via gutter column (right of all intermediate nodes).
+        let gutter_col = layout
+            .nodes
+            .iter()
+            .filter(|n| n.id != edge.from_id && n.id != edge.to_id)
+            .filter(|n| n.y + n.height > route_start && n.y < to_above)
+            .map(|n| n.x + n.width)
+            .max()
+            .unwrap_or(from_cx)
+            + 1;
+
+        if gutter_col < grid.width {
+            for col in (from_cx + 1)..=gutter_col {
+                grid.set(route_start, col, '─');
+            }
+            grid.set(route_start, gutter_col, '┐');
+
+            for row in (route_start + 1)..to_above {
+                grid.set(row, gutter_col, vert);
+            }
+
+            let (turn, a, b) = if to_cx < gutter_col {
+                ('┘', to_cx + 1, gutter_col)
+            } else {
+                ('└', gutter_col + 1, to_cx)
+            };
+            grid.set_merge(to_above, gutter_col, turn);
+            for col in a..b {
+                grid.set(to_above, col, '─');
+            }
+        }
+    } else if edge.label.is_none() && from_cx != to_cx && to_above > from_below {
+        // No label, original L-shaped routing at midpoint
+        let mid_row = from_below + (to_above - from_below) / 2;
+        for row in from_below..mid_row {
+            if !is_subgraph_border_row(layout, row) {
+                grid.set(row, from_cx, vert);
+            }
+        }
+        let (left, right) = if from_cx < to_cx {
+            grid.set(mid_row, from_cx, '└');
+            grid.set(mid_row, to_cx, '┐');
+            (from_cx + 1, to_cx)
+        } else {
+            grid.set(mid_row, from_cx, '┘');
+            grid.set(mid_row, to_cx, '┌');
+            (to_cx + 1, from_cx)
+        };
+        for col in left..right {
+            grid.set(mid_row, col, '─');
+        }
+        for row in (mid_row + 1)..to_above {
+            if !is_subgraph_border_row(layout, row) {
+                grid.set(row, to_cx, vert);
+            }
+        }
+    }
+    // else: label + arrow only (no intermediate routing)
+
+    if !is_subgraph_border_row(layout, to_above) {
+        if has_arrow_head(edge_type) {
+            grid.set(to_above, to_cx, '▼');
+        } else {
+            grid.set(to_above, to_cx, vert);
+        }
+    }
+}
+
+fn draw_td_self_loop(grid: &mut Grid, node: &NodeLayout, edge: &EdgeLayout) {
+    let right_col = node.x + node.width - 1;
+    let arm_col = right_col + 1;
+    let loop_col = right_col + 2;
+    let mid_row = node.y + 1; // text row where ├ goes
+    let from_below = node.y + node.height;
+
+    // ├─┐ on the text row
+    grid.set(mid_row, right_col, '├');
+    grid.set(mid_row, arm_col, '─');
+    grid.set(mid_row, loop_col, '┐');
+
+    // label to the right of the arm
+    if let Some(ref label) = edge.label {
+        grid.write_str(mid_row, loop_col + 1, label);
+    }
+
+    // │ going down
+    for row in (mid_row + 1)..from_below {
+        grid.set(row, loop_col, '│');
+    }
+
+    // ◄─┘ on the from_below row, right of center_x
+    let return_col = node.center_x + 1;
+    grid.set(from_below, return_col, '◄');
+    for col in (return_col + 1)..loop_col {
+        grid.set(from_below, col, '─');
+    }
+    grid.set(from_below, loop_col, '┘');
+}
+
 fn draw_td_edge(
     grid: &mut Grid,
     from: &NodeLayout,
@@ -310,6 +507,11 @@ fn draw_td_edge(
     edge: &EdgeLayout,
     layout: &GraphLayout,
 ) {
+    if from.id == to.id {
+        draw_td_self_loop(grid, from, edge);
+        return;
+    }
+
     let edge_type = edge.edge_type;
     let from_cx = from.center_x;
     let to_cx = to.center_x;
@@ -319,14 +521,22 @@ fn draw_td_edge(
 
     grid.set(bottom_row, from_cx, '┬');
 
-    let sibling_count = layout.edges.iter().filter(|e| e.from_id == from.id).count();
-    let parent_count = layout.edges.iter().filter(|e| e.to_id == to.id).count();
+    let sibling_count = layout
+        .edges
+        .iter()
+        .filter(|e| e.from_id == from.id && e.from_id != e.to_id)
+        .count();
+    let parent_count = layout
+        .edges
+        .iter()
+        .filter(|e| e.to_id == to.id && e.from_id != e.to_id)
+        .count();
 
     if sibling_count > 1 {
         let child_centers: Vec<usize> = layout
             .edges
             .iter()
-            .filter(|e| e.from_id == from.id)
+            .filter(|e| e.from_id == from.id && e.from_id != e.to_id)
             .filter_map(|e| layout.nodes.iter().find(|n| n.id == e.to_id))
             .map(|n| n.center_x)
             .collect();
@@ -346,72 +556,38 @@ fn draw_td_edge(
             grid.set(to_above, to_cx, td_vertical_connector(edge_type));
         }
     } else if parent_count > 1 {
-        let parent_centers: Vec<usize> = layout
+        let parents: Vec<&NodeLayout> = layout
             .edges
             .iter()
-            .filter(|e| e.to_id == to.id)
+            .filter(|e| e.to_id == to.id && e.from_id != e.to_id)
             .filter_map(|e| layout.nodes.iter().find(|n| n.id == e.from_id))
-            .map(|n| n.center_x)
             .collect();
-        let min_cx = *parent_centers.iter().min().unwrap();
-        let max_cx = *parent_centers.iter().max().unwrap();
+        let all_same_y = parents.windows(2).all(|w| w[0].y == w[1].y);
 
-        grid.set(from_below, min_cx, '└');
-        for col in (min_cx + 1)..max_cx {
-            grid.set(from_below, col, '─');
-        }
-        grid.set(from_below, max_cx, '┘');
-        grid.set(from_below, to_cx, '┬');
+        if all_same_y {
+            let parent_centers: Vec<usize> = parents.iter().map(|n| n.center_x).collect();
+            let min_cx = *parent_centers.iter().min().unwrap();
+            let max_cx = *parent_centers.iter().max().unwrap();
 
-        if has_arrow_head(edge_type) {
-            grid.set(to_above, to_cx, '▼');
-        } else {
-            grid.set(to_above, to_cx, td_vertical_connector(edge_type));
-        }
-    } else {
-        let vert = td_vertical_connector(edge_type);
-        if let Some(ref label) = edge.label {
-            let label_col = from_cx.saturating_sub(display_width(label) / 2);
-            grid.write_str(from_below, label_col, label);
-        } else if from_cx != to_cx && to_above > from_below {
-            // L-shaped routing: vertical from source, horizontal turn, vertical to target
-            let mid_row = from_below + (to_above - from_below) / 2;
-            for row in from_below..mid_row {
-                if !is_subgraph_border_row(layout, row) {
-                    grid.set(row, from_cx, vert);
-                }
+            grid.set(from_below, min_cx, '└');
+            for col in (min_cx + 1)..max_cx {
+                grid.set(from_below, col, '─');
             }
-            let (left, right) = if from_cx < to_cx {
-                grid.set(mid_row, from_cx, '└');
-                grid.set(mid_row, to_cx, '┐');
-                (from_cx + 1, to_cx)
-            } else {
-                grid.set(mid_row, from_cx, '┘');
-                grid.set(mid_row, to_cx, '┌');
-                (to_cx + 1, from_cx)
-            };
-            for col in left..right {
-                grid.set(mid_row, col, '─');
-            }
-            for row in (mid_row + 1)..to_above {
-                if !is_subgraph_border_row(layout, row) {
-                    grid.set(row, to_cx, vert);
-                }
-            }
-        } else {
-            for row in from_below..to_above {
-                if !is_subgraph_border_row(layout, row) {
-                    grid.set(row, from_cx, vert);
-                }
-            }
-        }
-        if !is_subgraph_border_row(layout, to_above) {
+            grid.set(from_below, max_cx, '┘');
+            grid.set(from_below, to_cx, '┬');
+
             if has_arrow_head(edge_type) {
                 grid.set(to_above, to_cx, '▼');
             } else {
-                grid.set(to_above, to_cx, vert);
+                grid.set(to_above, to_cx, td_vertical_connector(edge_type));
             }
+        } else {
+            draw_td_single_edge_route(
+                grid, from_cx, to_cx, from_below, to_above, edge, layout,
+            );
         }
+    } else {
+        draw_td_single_edge_route(grid, from_cx, to_cx, from_below, to_above, edge, layout);
     }
 }
 
@@ -429,6 +605,11 @@ fn draw_lr_edge(
     to: &NodeLayout,
     edge: &EdgeLayout,
 ) {
+    if from.id == to.id {
+        draw_td_self_loop(grid, from, edge);
+        return;
+    }
+
     let from_right = from.x + from.width;
     let to_left = to.x;
     let horiz = lr_horizontal_connector(edge.edge_type);
@@ -842,6 +1023,30 @@ mod tests {
                 "expected connector above ▼ at col {arrow_col}, got '{above_char}'\n{output}"
             );
         }
+    }
+
+    #[test]
+    fn render_td_cross_rank_fan_in_routes_when_clear() {
+        // D(rank 0, right column) → E(rank 3, center column)
+        // D's column doesn't overlap with intermediate nodes B, C → routing is drawn
+        let output = render_input(
+            "graph TD\n    A -->|x| B\n    B -->|y| C\n    C --> E\n    D -->|z| E\n",
+        );
+        // D's edge should have label "z" and visible routing
+        assert!(output.contains("z"), "label z rendered");
+        // Intermediate nodes must remain intact
+        assert!(output.contains("│ B │"), "B intact");
+        assert!(output.contains("│ C │"), "C intact");
+        // The D→E edge should route to E with a visible turn (▼───┘)
+        assert!(output.contains("▼───┘"), "D→E routing merges at ▼───┘");
+    }
+
+    #[test]
+    fn render_td_self_loop() {
+        let output = render_input("graph TD\n    A -->|retry| A\n");
+        assert!(output.contains("├"), "self-loop has ├ on right border");
+        assert!(output.contains("◄"), "self-loop returns with ◄");
+        assert!(output.contains("retry"), "label rendered");
     }
 
     #[test]
