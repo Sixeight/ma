@@ -1,4 +1,4 @@
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 
 use crate::display_width::{display_width, line_count, multiline_width};
 use crate::graph_ast::*;
@@ -312,10 +312,11 @@ fn assign_ranks(diagram: &GraphDiagram) -> HashMap<String, usize> {
     }
 
     let mut ranks: HashMap<String, usize> = HashMap::new();
+    let mut visiting: HashSet<String> = HashSet::new();
 
     for node in &diagram.nodes {
         if !ranks.contains_key(&node.id) {
-            compute_rank(&node.id, &in_edges, &mut ranks);
+            compute_rank(&node.id, &in_edges, &mut ranks, &mut visiting);
         }
     }
 
@@ -326,23 +327,31 @@ fn compute_rank(
     id: &str,
     in_edges: &HashMap<String, Vec<String>>,
     ranks: &mut HashMap<String, usize>,
+    visiting: &mut HashSet<String>,
 ) -> usize {
     if let Some(&r) = ranks.get(id) {
         return r;
     }
 
+    if !visiting.insert(id.to_string()) {
+        // Cycle detected — treat back-edge as rank 0
+        return 0;
+    }
+
     let predecessors = in_edges.get(id).cloned().unwrap_or_default();
     if predecessors.is_empty() {
+        visiting.remove(id);
         ranks.insert(id.to_string(), 0);
         return 0;
     }
 
     let max_pred = predecessors
         .iter()
-        .map(|p| compute_rank(p, in_edges, ranks))
+        .map(|p| compute_rank(p, in_edges, ranks, visiting))
         .max()
         .unwrap_or(0);
     let rank = max_pred + 1;
+    visiting.remove(id);
     ranks.insert(id.to_string(), rank);
     rank
 }
@@ -825,5 +834,30 @@ mod tests {
         assert!(sg.y <= a.y, "subgraph top <= node A y");
         assert!(sg.x + sg.width >= b.x + b.width, "subgraph right >= node B right");
         assert!(sg.y + sg.height >= b.y + b.height, "subgraph bottom >= node B bottom");
+    }
+
+    #[test]
+    fn rank_cycle_two_nodes() {
+        let diagram = parse_graph("flowchart LR\n    A --> B\n    B --> A\n").unwrap();
+        let ranks = assign_ranks(&diagram);
+        // Both nodes should get a rank (no stack overflow)
+        assert!(ranks.contains_key("A"));
+        assert!(ranks.contains_key("B"));
+    }
+
+    #[test]
+    fn rank_cycle_three_nodes() {
+        let diagram = parse_graph("flowchart TD\n    A --> B\n    B --> C\n    C --> A\n").unwrap();
+        let ranks = assign_ranks(&diagram);
+        assert!(ranks.contains_key("A"));
+        assert!(ranks.contains_key("B"));
+        assert!(ranks.contains_key("C"));
+    }
+
+    #[test]
+    fn layout_cycle_does_not_panic() {
+        let diagram = parse_graph("flowchart LR\n    A --> B\n    B --> A\n").unwrap();
+        let layout = compute(&diagram);
+        assert!(layout.is_ok());
     }
 }

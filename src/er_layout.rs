@@ -1,4 +1,4 @@
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 
 use crate::display_width::{display_width, multiline_width};
 use crate::er_ast::*;
@@ -159,9 +159,10 @@ fn assign_ranks(diagram: &ErDiagram) -> HashMap<&str, usize> {
     }
 
     let mut ranks: HashMap<&str, usize> = HashMap::new();
+    let mut visiting: HashSet<&str> = HashSet::new();
     for entity in &diagram.entities {
         if !ranks.contains_key(entity.name.as_str()) {
-            compute_rank(&entity.name, &in_edges, &mut ranks);
+            compute_rank(&entity.name, &in_edges, &mut ranks, &mut visiting);
         }
     }
     ranks
@@ -171,23 +172,30 @@ fn compute_rank<'a>(
     id: &'a str,
     in_edges: &HashMap<&str, Vec<&'a str>>,
     ranks: &mut HashMap<&'a str, usize>,
+    visiting: &mut HashSet<&'a str>,
 ) -> usize {
     if let Some(&r) = ranks.get(id) {
         return r;
     }
 
+    if !visiting.insert(id) {
+        return 0;
+    }
+
     let predecessors = in_edges.get(id).cloned().unwrap_or_default();
     if predecessors.is_empty() {
+        visiting.remove(id);
         ranks.insert(id, 0);
         return 0;
     }
 
     let max_pred = predecessors
         .iter()
-        .map(|p| compute_rank(p, in_edges, ranks))
+        .map(|p| compute_rank(p, in_edges, ranks, visiting))
         .max()
         .unwrap_or(0);
     let rank = max_pred + 1;
+    visiting.remove(id);
     ranks.insert(id, rank);
     rank
 }
