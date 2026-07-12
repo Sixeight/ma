@@ -1,64 +1,9 @@
 use std::collections::HashMap;
 
+use crate::canvas::Canvas as Grid;
 use crate::display_width::{display_width, split_br};
 use crate::graph_ast::{Direction, EdgeType, NodeShape};
 use crate::graph_layout::*;
-
-struct Grid {
-    cells: Vec<Vec<char>>,
-    width: usize,
-    height: usize,
-}
-
-impl Grid {
-    fn new(width: usize, height: usize) -> Self {
-        Self {
-            cells: vec![vec![' '; width]; height],
-            width,
-            height,
-        }
-    }
-
-    fn set(&mut self, row: usize, col: usize, ch: char) {
-        if row < self.height && col < self.width {
-            if self.cells[row][col] == '\0' && col > 0 && self.cells[row][col - 1] != '\0' {
-                self.cells[row][col - 1] = ' ';
-            }
-            self.cells[row][col] = ch;
-        }
-    }
-
-    fn write_str(&mut self, row: usize, col: usize, s: &str) {
-        let mut offset = 0;
-        for ch in s.chars() {
-            self.set(row, col + offset, ch);
-            let w = unicode_width::UnicodeWidthChar::width(ch).unwrap_or(1);
-            for j in 1..w {
-                self.set(row, col + offset + j, '\0');
-            }
-            offset += w;
-        }
-    }
-
-    fn set_merge(&mut self, row: usize, col: usize, ch: char) {
-        if row < self.height && col < self.width {
-            let existing = self.cells[row][col];
-            let merged = merge_box_drawing(existing, ch);
-            self.set(row, col, merged);
-        }
-    }
-
-    fn render(&self) -> String {
-        self.cells
-            .iter()
-            .map(|row| {
-                let line: String = row.iter().filter(|&&ch| ch != '\0').collect();
-                line.trim_end().to_string()
-            })
-            .collect::<Vec<_>>()
-            .join("\n")
-    }
-}
 
 pub fn render(layout: &GraphLayout) -> String {
     match layout.direction {
@@ -389,12 +334,12 @@ fn draw_td_single_edge_route(
         }
         // Draw horizontal + corner at to_above (▼ overwrites to_cx later)
         if from_cx < to_cx {
-            grid.set_merge(to_above, from_cx, '└');
+            grid.set_merged(to_above, from_cx, '└', merge_box_drawing);
             for col in (from_cx + 1)..to_cx {
                 grid.set(to_above, col, '─');
             }
         } else {
-            grid.set_merge(to_above, from_cx, '┘');
+            grid.set_merged(to_above, from_cx, '┘', merge_box_drawing);
             for col in (to_cx + 1)..from_cx {
                 grid.set(to_above, col, '─');
             }
@@ -412,7 +357,7 @@ fn draw_td_single_edge_route(
             .unwrap_or(from_cx)
             + 1;
 
-        if gutter_col < grid.width {
+        if gutter_col < grid.width() {
             for col in (from_cx + 1)..=gutter_col {
                 grid.set(route_start, col, '─');
             }
@@ -427,7 +372,7 @@ fn draw_td_single_edge_route(
             } else {
                 ('└', gutter_col + 1, to_cx)
             };
-            grid.set_merge(to_above, gutter_col, turn);
+            grid.set_merged(to_above, gutter_col, turn, merge_box_drawing);
             for col in a..b {
                 grid.set(to_above, col, '─');
             }
@@ -618,7 +563,7 @@ fn draw_lr_edge(
         // Straight horizontal
         let row = from.center_y;
         for col in from_right..to_left {
-            grid.set_merge(row, col, horiz);
+            grid.set_merged(row, col, horiz, merge_box_drawing);
         }
         if has_arrow_head(edge.edge_type) {
             grid.set(row, to_left - 1, '>');
@@ -642,17 +587,17 @@ fn draw_lr_edge(
 
         // Corners and vertical segment
         if from.center_y < to.center_y {
-            grid.set_merge(from.center_y, mid_col, '┐');
+            grid.set_merged(from.center_y, mid_col, '┐', merge_box_drawing);
             for row in (from.center_y + 1)..to.center_y {
-                grid.set_merge(row, mid_col, vert);
+                grid.set_merged(row, mid_col, vert, merge_box_drawing);
             }
-            grid.set_merge(to.center_y, mid_col, '└');
+            grid.set_merged(to.center_y, mid_col, '└', merge_box_drawing);
         } else {
-            grid.set_merge(from.center_y, mid_col, '┘');
+            grid.set_merged(from.center_y, mid_col, '┘', merge_box_drawing);
             for row in (to.center_y + 1)..from.center_y {
-                grid.set_merge(row, mid_col, vert);
+                grid.set_merged(row, mid_col, vert, merge_box_drawing);
             }
-            grid.set_merge(to.center_y, mid_col, '┌');
+            grid.set_merged(to.center_y, mid_col, '┌', merge_box_drawing);
         }
 
         // Horizontal from midpoint to target

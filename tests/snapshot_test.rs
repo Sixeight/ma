@@ -1,6 +1,19 @@
 use pretty_assertions::assert_eq;
 
 #[test]
+fn width_limit_rejects_sequence_content_that_would_be_clipped() {
+    let input = "\
+sequenceDiagram
+    Alice->>Bob: A message that cannot fit in twenty columns
+";
+
+    let error = ma::render_with_options(input, Some(20)).unwrap_err();
+
+    assert!(error.contains("requires at least"), "unexpected error: {error}");
+    assert!(error.contains("max_width is 20"), "unexpected error: {error}");
+}
+
+#[test]
 fn snapshot_two_participants() {
     let input = "\
 sequenceDiagram

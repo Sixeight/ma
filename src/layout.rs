@@ -81,28 +81,7 @@ pub fn compute(diagram: &Diagram) -> Result<Layout, String> {
     let activations = compute_activations(diagram, &participant_order, rows.len());
     let destroyed = compute_destroyed(&rows, participants.len());
 
-    let mut total_width = participants
-        .last()
-        .map(|p| p.box_right + 1)
-        .unwrap_or(0);
-
-    for row in &rows {
-        match row {
-            Row::Message(m) if m.from_col == m.to_col => {
-                let right = m.from_col + 2 + multiline_width(&m.text) + 1;
-                total_width = total_width.max(right);
-                let arm_right = m.from_col + SELF_LOOP_ARM + 1;
-                total_width = total_width.max(arm_right);
-            }
-            Row::Note(n) => {
-                total_width = total_width.max(n.box_right + 1);
-            }
-            Row::BlockStart(b) | Row::BlockEnd(b) | Row::BlockDivider(b) => {
-                total_width = total_width.max(b.frame_right + 1);
-            }
-            _ => {}
-        }
-    }
+    let total_width = required_width(&participants, &rows);
 
     Ok(Layout {
         participants,
@@ -166,18 +145,40 @@ fn finish_layout(
     let activations = compute_activations(diagram, participant_order, rows.len());
     let destroyed = compute_destroyed(&rows, participants.len());
 
+    let total_width = required_width(&participants, &rows);
+
+    if total_width > max_width {
+        return Err(format!(
+            "diagram requires at least {total_width} columns, but max_width is {max_width}"
+        ));
+    }
+
+    Ok(Layout {
+        participants,
+        rows,
+        total_width,
+        activations,
+        destroyed,
+    })
+}
+
+fn required_width(participants: &[ParticipantLayout], rows: &[Row]) -> usize {
     let mut total_width = participants
         .last()
         .map(|p| p.box_right + 1)
         .unwrap_or(0);
 
-    for row in &rows {
+    for row in rows {
         match row {
-            Row::Message(m) if m.from_col == m.to_col => {
-                let right = m.from_col + 2 + multiline_width(&m.text) + 1;
+            Row::Message(m) => {
+                let text_left = m.from_col.min(m.to_col) + 2;
+                let text_padding = usize::from(m.from_col == m.to_col);
+                let right = text_left + multiline_width(&m.text) + text_padding;
                 total_width = total_width.max(right);
-                let arm_right = m.from_col + SELF_LOOP_ARM + 1;
-                total_width = total_width.max(arm_right);
+                if m.from_col == m.to_col {
+                    let arm_right = m.from_col + SELF_LOOP_ARM + 1;
+                    total_width = total_width.max(arm_right);
+                }
             }
             Row::Note(n) => {
                 total_width = total_width.max(n.box_right + 1);
@@ -189,16 +190,7 @@ fn finish_layout(
         }
     }
 
-    // Cap at max_width — notes/blocks beyond will be clipped by the renderer
-    total_width = total_width.min(max_width);
-
-    Ok(Layout {
-        participants,
-        rows,
-        total_width,
-        activations,
-        destroyed,
-    })
+    total_width
 }
 
 fn compute_min_box_gaps(

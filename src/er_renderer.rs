@@ -1,56 +1,9 @@
 use std::collections::HashMap;
 
+use crate::canvas::Canvas as Grid;
 use crate::display_width::{display_width, multiline_width, split_br};
 use crate::er_ast::Cardinality;
 use crate::er_layout::*;
-
-struct Grid {
-    cells: Vec<Vec<char>>,
-    width: usize,
-    height: usize,
-}
-
-impl Grid {
-    fn new(width: usize, height: usize) -> Self {
-        Self {
-            cells: vec![vec![' '; width]; height],
-            width,
-            height,
-        }
-    }
-
-    fn set(&mut self, row: usize, col: usize, ch: char) {
-        if row < self.height && col < self.width {
-            if self.cells[row][col] == '\0' && col > 0 && self.cells[row][col - 1] != '\0' {
-                self.cells[row][col - 1] = ' ';
-            }
-            self.cells[row][col] = ch;
-        }
-    }
-
-    fn write_str(&mut self, row: usize, col: usize, s: &str) {
-        let mut offset = 0;
-        for ch in s.chars() {
-            self.set(row, col + offset, ch);
-            let w = unicode_width::UnicodeWidthChar::width(ch).unwrap_or(1);
-            for j in 1..w {
-                self.set(row, col + offset + j, '\0');
-            }
-            offset += w;
-        }
-    }
-
-    fn render(&self) -> String {
-        self.cells
-            .iter()
-            .map(|row| {
-                let line: String = row.iter().filter(|&&ch| ch != '\0').collect();
-                line.trim_end().to_string()
-            })
-            .collect::<Vec<_>>()
-            .join("\n")
-    }
-}
 
 pub fn render(layout: &ErLayout) -> String {
     let mut grid = Grid::new(layout.width, layout.height);
