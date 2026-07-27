@@ -168,3 +168,36 @@ erDiagram
     assert!(output.contains("id"), "attribute visible");
     assert!(output.contains("places"), "relationship label visible");
 }
+
+#[test]
+fn spec_er_non_identifying_relationship_is_dotted() {
+    let output = ma::render("erDiagram\n    A ||..o{ B : owns\n").unwrap();
+    assert!(output.contains('┈'), "non-identifying relationship is dotted");
+}
+
+#[test]
+fn spec_er_alias_and_attribute_comment_are_visible() {
+    let input = "erDiagram\n    CUSTOMER[\"Customer Account\"] {\n        string name \"Full legal name\"\n    }\n";
+    let output = ma::render(input).unwrap();
+    assert!(output.contains("Customer Account"));
+    assert!(output.contains("Full legal name"));
+    assert!(!output.contains("│ CUSTOMER │"));
+}
+
+#[test]
+fn spec_er_key_and_comment_are_preserved_together() {
+    let input = "erDiagram\n    CUSTOMER {\n        int id PK \"Database identifier\"\n    }\n";
+    let output = ma::render(input).unwrap();
+    assert!(
+        output.contains("int id PK \"Database identifier\""),
+        "{output}"
+    );
+}
+
+#[test]
+fn spec_er_aliases_on_relationship_references_are_visible() {
+    let input = "erDiagram\n    CUSTOMER[\"Customer Account\"] ||..o{ ORDER[\"Order Record\"] : owns\n";
+    let output = ma::render(input).unwrap();
+    assert!(output.contains("Customer Account"), "{output}");
+    assert!(output.contains("Order Record"), "{output}");
+}

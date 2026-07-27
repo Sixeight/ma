@@ -75,6 +75,7 @@ pub struct Message {
 pub struct Arrow {
     pub line_style: LineStyle,
     pub head: ArrowHead,
+    pub bidirectional: bool,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq)]

@@ -1,6 +1,6 @@
-use winnow::prelude::*;
 use winnow::ascii::{line_ending, space0, space1, till_line_ending};
 use winnow::combinator::{alt, opt, preceded, repeat};
+use winnow::prelude::*;
 use winnow::token::take_while;
 
 use crate::ast::*;
@@ -316,24 +316,21 @@ fn autonumber_stmt(input: &mut &str) -> winnow::Result<()> {
 }
 
 fn note_stmt(input: &mut &str) -> winnow::Result<Note> {
-    "Note".parse_next(input)?;
+    alt(("Note", "note")).parse_next(input)?;
     space1.parse_next(input)?;
 
     let placement = alt((
-        ("right of", space1, identifier).map(|(_, _, id): (&str, &str, &str)| {
-            NotePlacement::RightOf(id.to_string())
-        }),
-        ("left of", space1, identifier).map(|(_, _, id): (&str, &str, &str)| {
-            NotePlacement::LeftOf(id.to_string())
-        }),
+        ("right of", space1, identifier)
+            .map(|(_, _, id): (&str, &str, &str)| NotePlacement::RightOf(id.to_string())),
+        ("left of", space1, identifier)
+            .map(|(_, _, id): (&str, &str, &str)| NotePlacement::LeftOf(id.to_string())),
         ("over", space1, identifier, ",", space0, identifier).map(
             |(_, _, a, _, _, b): (&str, &str, &str, &str, &str, &str)| {
                 NotePlacement::OverTwo(a.to_string(), b.to_string())
             },
         ),
-        ("over", space1, identifier).map(|(_, _, id): (&str, &str, &str)| {
-            NotePlacement::Over(id.to_string())
-        }),
+        ("over", space1, identifier)
+            .map(|(_, _, id): (&str, &str, &str)| NotePlacement::Over(id.to_string())),
     ))
     .parse_next(input)?;
 
@@ -374,11 +371,9 @@ fn message(input: &mut &str) -> winnow::Result<Message> {
 }
 
 fn arrow(input: &mut &str) -> winnow::Result<Arrow> {
-    let line_style = alt((
-        "--".value(LineStyle::Dotted),
-        "-".value(LineStyle::Solid),
-    ))
-    .parse_next(input)?;
+    let bidirectional = opt("<<").parse_next(input)?.is_some();
+    let line_style =
+        alt(("--".value(LineStyle::Dotted), "-".value(LineStyle::Solid))).parse_next(input)?;
 
     let head = alt((
         ">>".value(ArrowHead::Arrowhead),
@@ -388,7 +383,11 @@ fn arrow(input: &mut &str) -> winnow::Result<Arrow> {
     ))
     .parse_next(input)?;
 
-    Ok(Arrow { line_style, head })
+    Ok(Arrow {
+        line_style,
+        head,
+        bidirectional,
+    })
 }
 
 fn identifier<'s>(input: &mut &'s str) -> winnow::Result<&'s str> {
@@ -487,6 +486,28 @@ mod tests {
         let a = arrow(&mut input).unwrap();
         assert_eq!(a.line_style, LineStyle::Dotted);
         assert_eq!(a.head, ArrowHead::Open);
+    }
+
+    #[test]
+    fn parse_bidirectional_arrows() {
+        let mut solid = "<<->>Bob";
+        let solid_arrow = arrow(&mut solid).unwrap();
+        assert!(solid_arrow.bidirectional);
+        assert_eq!(solid_arrow.line_style, LineStyle::Solid);
+
+        let mut dotted = "<<-->>Bob";
+        let dotted_arrow = arrow(&mut dotted).unwrap();
+        assert!(dotted_arrow.bidirectional);
+        assert_eq!(dotted_arrow.line_style, LineStyle::Dotted);
+    }
+
+    #[test]
+    fn parse_bidirectional_self_message() {
+        let diagram = parse_diagram("sequenceDiagram\n    A<<->>A: sync\n").unwrap();
+        let Statement::Message(message) = &diagram.statements[0] else {
+            panic!("expected message");
+        };
+        assert!(message.arrow.bidirectional);
     }
 
     // --- message ---
@@ -602,8 +623,14 @@ sequenceDiagram
 ";
         let diagram = parse_diagram(input).unwrap();
         assert_eq!(diagram.statements.len(), 4);
-        assert_eq!(diagram.statements[1], Statement::Activate("Bob".to_string()));
-        assert_eq!(diagram.statements[3], Statement::Deactivate("Bob".to_string()));
+        assert_eq!(
+            diagram.statements[1],
+            Statement::Activate("Bob".to_string())
+        );
+        assert_eq!(
+            diagram.statements[3],
+            Statement::Deactivate("Bob".to_string())
+        );
     }
 
     #[test]
@@ -765,5 +792,12 @@ sequenceDiagram
             }
             other => panic!("expected Note, got {other:?}"),
         }
+    }
+
+    #[test]
+    fn parse_lowercase_note() {
+        let input = "sequenceDiagram\n    note right of Bob: Got it!\n";
+        let diagram = parse_diagram(input).unwrap();
+        assert!(matches!(&diagram.statements[0], Statement::Note(_)));
     }
 }

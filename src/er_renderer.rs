@@ -2,25 +2,33 @@ use std::collections::HashMap;
 
 use crate::canvas::Canvas as Grid;
 use crate::display_width::{display_width, multiline_width, split_br};
-use crate::er_ast::Cardinality;
+use crate::er_ast::{Cardinality, RelationshipLineStyle};
 use crate::er_layout::*;
 
 pub fn render(layout: &ErLayout) -> String {
     let mut grid = Grid::new(layout.width, layout.height);
 
-    let node_map: HashMap<&str, &ErNodeLayout> = layout
-        .nodes
-        .iter()
-        .map(|n| (n.name.as_str(), n))
-        .collect();
+    let node_map: HashMap<&str, &ErNodeLayout> =
+        layout.nodes.iter().map(|n| (n.name.as_str(), n)).collect();
 
     for node in &layout.nodes {
         draw_box(&mut grid, node);
     }
 
     for edge in &layout.edges {
-        if let (Some(from), Some(to)) = (node_map.get(edge.from.as_str()), node_map.get(edge.to.as_str())) {
-            draw_er_edge(&mut grid, from, to, &edge.label, edge.left_card, edge.right_card);
+        if let (Some(from), Some(to)) = (
+            node_map.get(edge.from.as_str()),
+            node_map.get(edge.to.as_str()),
+        ) {
+            draw_er_edge(
+                &mut grid,
+                from,
+                to,
+                &edge.label,
+                edge.left_card,
+                edge.right_card,
+                edge.line_style,
+            );
         }
     }
 
@@ -39,7 +47,7 @@ fn draw_box(grid: &mut Grid, node: &ErNodeLayout) {
     grid.set(y, x + w - 1, '┐');
 
     grid.set(y + 1, x, '│');
-    grid.write_str(y + 1, x + 2, &node.name);
+    grid.write_str(y + 1, x + 2, node.alias.as_deref().unwrap_or(&node.name));
     grid.set(y + 1, x + w - 1, '│');
 
     if node.attributes.is_empty() {
@@ -61,11 +69,7 @@ fn draw_box(grid: &mut Grid, node: &ErNodeLayout) {
         for (i, attr) in node.attributes.iter().enumerate() {
             let row = sep_y + 1 + i;
             grid.set(row, x, '│');
-            let text = if let Some(ref key) = attr.key {
-                format!("{} {} {}", attr.attr_type, attr.name, key)
-            } else {
-                format!("{} {}", attr.attr_type, attr.name)
-            };
+            let text = attr.display_text();
             grid.write_str(row, x + 2, &text);
             grid.set(row, x + w - 1, '│');
         }
@@ -87,13 +91,21 @@ fn draw_er_edge(
     label: &str,
     left_card: Cardinality,
     right_card: Cardinality,
+    line_style: RelationshipLineStyle,
 ) {
     let from_right = from.x + from.width;
     let to_left = to.x;
     let row = from.center_y;
 
     for col in from_right..to_left {
-        grid.set(row, col, '─');
+        grid.set(
+            row,
+            col,
+            match line_style {
+                RelationshipLineStyle::Identifying => '─',
+                RelationshipLineStyle::NonIdentifying => '┈',
+            },
+        );
     }
 
     let left_sym = left_cardinality_str(left_card);
@@ -109,7 +121,11 @@ fn draw_er_edge(
     let max_w = multiline_width(label);
     if gap > max_w {
         let label_col = from_right + (gap - max_w) / 2;
-        let start_row = if lines.len() > 1 { row.saturating_sub(lines.len() / 2) } else { row };
+        let start_row = if lines.len() > 1 {
+            row.saturating_sub(lines.len() / 2)
+        } else {
+            row
+        };
         for (i, line) in lines.iter().enumerate() {
             let line_col = label_col + (max_w - display_width(line)) / 2;
             grid.write_str(start_row + i, line_col, line);
@@ -143,7 +159,11 @@ mod tests {
     use pretty_assertions::assert_eq;
 
     fn entity(name: &str) -> Entity {
-        Entity { name: name.to_string(), attributes: Vec::new() }
+        Entity {
+            name: name.to_string(),
+            alias: None,
+            attributes: Vec::new(),
+        }
     }
 
     #[test]
@@ -155,6 +175,7 @@ mod tests {
                 to: "B".into(),
                 left_card: Cardinality::ExactlyOne,
                 right_card: Cardinality::ExactlyOne,
+                line_style: RelationshipLineStyle::Identifying,
                 label: "r1".into(),
             }],
         };
@@ -176,13 +197,17 @@ mod tests {
                 to: "B".into(),
                 left_card: Cardinality::ExactlyOne,
                 right_card: Cardinality::ExactlyOne,
+                line_style: RelationshipLineStyle::Identifying,
                 label: "has<br/>many".into(),
             }],
         };
         let layout = er_layout::compute(&diagram).unwrap();
         let output = render(&layout);
         // The label should NOT contain the literal "<br/>" tag
-        assert!(!output.contains("<br/>"), "should not contain literal <br/>");
+        assert!(
+            !output.contains("<br/>"),
+            "should not contain literal <br/>"
+        );
         assert!(output.contains("has"), "should contain 'has'");
         assert!(output.contains("many"), "should contain 'many'");
     }
@@ -197,6 +222,7 @@ mod tests {
                     to: "ORDER".into(),
                     left_card: Cardinality::ExactlyOne,
                     right_card: Cardinality::ZeroOrMany,
+                    line_style: RelationshipLineStyle::Identifying,
                     label: "places".into(),
                 },
                 Relationship {
@@ -204,6 +230,7 @@ mod tests {
                     to: "LINE-ITEM".into(),
                     left_card: Cardinality::ExactlyOne,
                     right_card: Cardinality::OneOrMany,
+                    line_style: RelationshipLineStyle::Identifying,
                     label: "contains".into(),
                 },
             ],

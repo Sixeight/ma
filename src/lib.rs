@@ -18,6 +18,7 @@ pub fn render(input: &str) -> Result<String, String> {
 }
 
 pub fn render_with_options(input: &str, max_width: Option<usize>) -> Result<String, String> {
+    let input = strip_init_directives(input);
     let trimmed = input.trim_start();
     if trimmed.starts_with("graph") || trimmed.starts_with("flowchart") {
         let diagram = graph_parser::parse_graph(input)?;
@@ -46,6 +47,19 @@ pub fn render_with_options(input: &str, max_width: Option<usize>) -> Result<Stri
     }
 }
 
+fn strip_init_directives(mut input: &str) -> &str {
+    loop {
+        let trimmed = input.trim_start();
+        if !trimmed.starts_with("%%{init") {
+            return trimmed;
+        }
+        let Some(end) = trimmed.find("}%%") else {
+            return trimmed;
+        };
+        input = &trimmed[end + 3..];
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -57,7 +71,10 @@ mod tests {
             err.contains("unknown diagram type"),
             "error should mention unknown diagram type, got: {err}"
         );
-        assert!(err.contains("classDiagram"), "error should include the type, got: {err}");
+        assert!(
+            err.contains("classDiagram"),
+            "error should include the type, got: {err}"
+        );
     }
 
     #[test]
@@ -82,5 +99,12 @@ mod tests {
     fn render_er_diagram_works() {
         let output = render("erDiagram\n    A ||--o{ B : has\n").unwrap();
         assert!(output.contains("A"));
+    }
+
+    #[test]
+    fn render_ignores_init_directive_before_diagram() {
+        let output =
+            render("%%{init: {'theme': 'neutral'}}%%\nsequenceDiagram\n    A->>B: Hi\n").unwrap();
+        assert!(output.contains("Hi"));
     }
 }

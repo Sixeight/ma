@@ -194,18 +194,18 @@ pub fn compute(diagram: &GraphDiagram) -> Result<GraphLayout, String> {
     // Self-loop nodes need extra space: arm (2 cols) + label width to the right,
     // and 1 row below the node for the return arrow
     for edge in &diagram.edges {
-        if edge.from == edge.to {
-            if let Some(nl) = node_layouts.iter().find(|n| n.id == edge.from) {
-                let label_w = edge
-                    .label
-                    .as_ref()
-                    .map(|l| display_width(l))
-                    .unwrap_or(0);
-                let needed_right = nl.x + nl.width + 2 + label_w;
-                width = width.max(needed_right);
-                let needed_bottom = nl.y + nl.height + 1;
-                height = height.max(needed_bottom);
-            }
+        if edge.from == edge.to
+            && let Some(nl) = node_layouts.iter().find(|n| n.id == edge.from)
+        {
+            let label_w = edge
+                .label
+                .as_ref()
+                .map(|l| display_width(l))
+                .unwrap_or(0);
+            let needed_right = nl.x + nl.width + 2 + label_w;
+            width = width.max(needed_right);
+            let needed_bottom = nl.y + nl.height + 1;
+            height = height.max(needed_bottom);
         }
     }
 
@@ -713,6 +713,7 @@ fn box_width(label: &str, shape: NodeShape) -> usize {
     let base = multiline_width(label) + 4;
     match shape {
         NodeShape::Circle => base + 4,
+        NodeShape::Subroutine | NodeShape::Hexagon => base + 2,
         _ => base,
     }
 }
@@ -720,6 +721,7 @@ fn box_width(label: &str, shape: NodeShape) -> usize {
 fn box_height(label: &str, shape: NodeShape) -> usize {
     match shape {
         NodeShape::Diamond => 4 + line_count(label),
+        NodeShape::Cylinder => 3 + line_count(label),
         _ => 2 + line_count(label),
     }
 }

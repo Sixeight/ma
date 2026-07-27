@@ -131,6 +131,33 @@ fn spec_node_round_with_edge() {
 }
 
 #[test]
+fn spec_additional_node_shapes_render_distinctly() {
+    let stadium = ma::render("graph TD\n    A([Stadium])\n").unwrap();
+    assert!(stadium.contains("( Stadium )"));
+
+    let subroutine = ma::render("graph TD\n    A[[Subroutine]]\n").unwrap();
+    assert!(subroutine.contains("│║Subroutine  ║│"));
+
+    let cylinder = ma::render("graph TD\n    A[(Database)]\n").unwrap();
+    let cylinder_lines: Vec<_> = cylinder.lines().collect();
+    assert!(cylinder_lines[1].starts_with('╰'), "top ellipse is visible");
+    assert!(cylinder_lines[2].contains("│ Database │"));
+
+    let hexagon = ma::render("graph TD\n    A{{Hexagon}}\n").unwrap();
+    assert!(hexagon.contains('╱') && hexagon.contains('╲'));
+}
+
+#[test]
+fn spec_chained_fan_out_preserves_each_edge_label() {
+    let input = "graph LR\n    A -->|first| B & C -->|second| D\n";
+    let output = ma::render(input).unwrap();
+    assert!(output.contains("first"), "{output}");
+    assert!(!output.contains("firstt"), "{output}");
+    assert_eq!(output.matches("first").count(), 1, "{output}");
+    assert_eq!(output.matches("second").count(), 2, "{output}");
+}
+
+#[test]
 fn spec_node_mixed_shapes_lr() {
     let input = "graph LR\n    A(Round) --> B{Diamond}\n";
     let output = ma::render(input).unwrap();

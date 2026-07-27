@@ -59,7 +59,7 @@ echo 'sequenceDiagram
 ```
 
 Features:
-- Arrow types: solid (`->>`, `->`), dotted (`-->>`, `-->`), cross (`-x`, `--x`)
+- Arrow types: solid (`->>`, `->`), dotted (`-->>`, `-->`), cross (`-x`, `--x`), bidirectional (`<<->>`, `<<-->>`)
 - Participant aliases (`participant A as Alice`)
 - Activation / deactivation (`activate`, `deactivate`, `+` / `-` shorthand)
 - Self-messages (rendered as loops)
@@ -93,7 +93,7 @@ echo 'graph TD
 
 Features:
 - Directions: TD/TB (top-down), LR (left-right)
-- Node shapes: rectangle `[]`, round `()`, diamond `{}`, circle `(())`
+- Node shapes: rectangle `[]`, round `()`, diamond `{}`, circle `(())`, stadium `([])`, subroutine `[[]]`, cylinder `[()]`, hexagon `{{}}`
 - Edge types: arrow `-->`, open `---`, dotted `-.->`, thick `==>` (and link variants)
 - Edge labels (`-->|label|` or `-- label -->`)
 - Fan-out / fan-in with L-shaped edge routing
@@ -101,6 +101,7 @@ Features:
 - Self-loops (`A --> A`)
 - Subgraphs (`subgraph`...`end`)
 - Multi-target edges (`A --> B & C`)
+- Chained edges (`A --> B --> C`), including fan-out chains
 
 ### ER Diagram
 
@@ -119,6 +120,8 @@ echo 'erDiagram
 Features:
 - Cardinality symbols: `||` (exactly one), `o|`/`|o` (zero or one), `}|`/`|{` (one or many), `}o`/`o{` (zero or many)
 - Entity attributes
+- Entity aliases and attribute comments
+- Identifying (`--`) and non-identifying (`..`) relationships
 - Relationship labels
 
 ## Unicode Support

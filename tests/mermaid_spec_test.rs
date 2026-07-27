@@ -70,6 +70,20 @@ sequenceDiagram
 }
 
 #[test]
+fn spec_bidirectional_arrow_has_heads_at_both_ends() {
+    let output = ma::render("sequenceDiagram\n    A<<->>B: sync\n").unwrap();
+    let arrow = output.lines().find(|line| line.contains('>')).unwrap();
+    assert!(arrow.contains('<'));
+}
+
+#[test]
+fn spec_bidirectional_self_message_has_heads_on_both_arms() {
+    let output = ma::render("sequenceDiagram\n    A<<->>A: sync\n").unwrap();
+    assert!(output.lines().any(|line| line.contains("<──")));
+    assert!(output.lines().any(|line| line.contains("<──┘")));
+}
+
+#[test]
 fn spec_activation_shorthand() {
     let input = "\
 sequenceDiagram
@@ -519,4 +533,28 @@ sequenceDiagram
     assert!(output.contains("Init"));
     assert!(output.contains("Done"));
     assert!(output.contains('X'), "destroy marker visible");
+}
+
+#[test]
+fn spec_bidirectional_arrows_keep_both_heads_in_every_direction() {
+    let input = "sequenceDiagram\n    A<<-->>B: dotted\n    B<<->>A: solid\n    A<<->>A: self\n";
+    let output = ma::render(input).unwrap();
+
+    let dotted = output
+        .lines()
+        .find(|line| line.contains(" ─ ─ ─ "))
+        .unwrap();
+    assert!(dotted.contains('<') && dotted.contains('>'), "{dotted}");
+    let solid = output.lines().find(|line| line.contains("─────")).unwrap();
+    assert!(solid.contains('<') && solid.contains('>'), "{solid}");
+    assert!(
+        output.contains("│<──┐"),
+        "self-message keeps its source head:\n{output}"
+    );
+}
+
+#[test]
+fn spec_unterminated_init_directive_is_rejected() {
+    let input = "%%{init: {'theme': 'neutral'}\nsequenceDiagram\n    A->>B: hidden\n";
+    assert!(ma::render(input).is_err());
 }

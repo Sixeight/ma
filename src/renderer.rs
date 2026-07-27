@@ -64,7 +64,9 @@ pub fn render(layout: &Layout) -> String {
                 active_frames.push(block);
             }
             Row::BlockEnd(block) => {
-                active_frames.retain(|f| f.frame_left != block.frame_left || f.frame_right != block.frame_right);
+                active_frames.retain(|f| {
+                    f.frame_left != block.frame_left || f.frame_right != block.frame_right
+                });
                 draw_block_end(&mut grid, layout, block, y);
             }
             Row::BlockDivider(block) => {
@@ -207,10 +209,15 @@ fn draw_message(
     match msg.direction {
         Direction::LeftToRight => {
             grid.set(arrow_y, right_col - 1, arrow_head_char(&msg.arrow));
+            if msg.arrow.bidirectional {
+                grid.set(arrow_y, left_col + 1, reverse_arrow_head_char(&msg.arrow));
+            }
         }
         Direction::RightToLeft => {
             grid.set(arrow_y, left_col + 1, reverse_arrow_head_char(&msg.arrow));
-            if right_col >= 2 {
+            if msg.arrow.bidirectional {
+                grid.set(arrow_y, right_col - 1, arrow_head_char(&msg.arrow));
+            } else if right_col >= 2 {
                 grid.set(arrow_y, right_col - 1, BOX_H);
             }
         }
@@ -261,6 +268,9 @@ fn draw_self_message(
     let arm_y = y + text_rows;
     for col in (center + 1)..arm_end {
         grid.set(arm_y, col, BOX_H);
+    }
+    if msg.arrow.bidirectional {
+        grid.set(arm_y, center + 1, reverse_arrow_head_char(&msg.arrow));
     }
     grid.set(arm_y, arm_end, BOX_TR);
 
@@ -476,7 +486,10 @@ mod tests {
         assert!(output.contains("Bob"), "output should contain Bob");
         assert!(output.contains("Hello"), "output should contain Hello");
         assert!(output.contains("Hi!"), "output should contain Hi!");
-        assert!(output.contains("┌"), "output should contain box drawing chars");
+        assert!(
+            output.contains("┌"),
+            "output should contain box drawing chars"
+        );
         assert!(output.contains("│"), "output should contain lifeline");
     }
 
@@ -488,7 +501,10 @@ mod tests {
         let output = render(&layout);
 
         let alice_count = output.matches("Alice").count();
-        assert_eq!(alice_count, 2, "Alice should appear in top and bottom boxes");
+        assert_eq!(
+            alice_count, 2,
+            "Alice should appear in top and bottom boxes"
+        );
 
         let bob_count = output.matches("Bob").count();
         assert_eq!(bob_count, 2, "Bob should appear in top and bottom boxes");
@@ -501,7 +517,10 @@ mod tests {
         let layout = crate::layout::compute(&diagram).unwrap();
         let output = render(&layout);
 
-        assert!(output.contains(">│") || output.contains(">"), "should have right arrow");
+        assert!(
+            output.contains(">│") || output.contains(">"),
+            "should have right arrow"
+        );
     }
 
     #[test]
@@ -511,7 +530,10 @@ mod tests {
         let layout = crate::layout::compute(&diagram).unwrap();
         let output = render(&layout);
 
-        assert!(output.contains('┃'), "active lifeline should use heavy vertical");
+        assert!(
+            output.contains('┃'),
+            "active lifeline should use heavy vertical"
+        );
     }
 
     #[test]
@@ -521,13 +543,22 @@ mod tests {
         let layout = crate::layout::compute(&diagram).unwrap();
         let output = render(&layout);
 
-        let body = output.lines().skip(3).take(3).collect::<Vec<_>>().join("\n");
-        assert!(!body.contains('┃'), "inactive lifeline should not use heavy vertical");
+        let body = output
+            .lines()
+            .skip(3)
+            .take(3)
+            .collect::<Vec<_>>()
+            .join("\n");
+        assert!(
+            !body.contains('┃'),
+            "inactive lifeline should not use heavy vertical"
+        );
     }
 
     #[test]
     fn render_multiline_note() {
-        let input = "sequenceDiagram\n    Alice->>Bob: Hello\n    Note right of Bob: Line1<br/>Line2\n";
+        let input =
+            "sequenceDiagram\n    Alice->>Bob: Hello\n    Note right of Bob: Line1<br/>Line2\n";
         let diagram = crate::parser::parse_diagram(input).unwrap();
         let layout = crate::layout::compute(&diagram).unwrap();
         let output = render(&layout);
@@ -561,7 +592,8 @@ mod tests {
 
     #[test]
     fn render_participant_name_with_br_tag() {
-        let input = "sequenceDiagram\n    participant A as PlaceInfo<br/>Details\n    A->>A: test\n";
+        let input =
+            "sequenceDiagram\n    participant A as PlaceInfo<br/>Details\n    A->>A: test\n";
         let diagram = crate::parser::parse_diagram(input).unwrap();
         let layout = crate::layout::compute(&diagram).unwrap();
         let output = render(&layout);
@@ -583,6 +615,9 @@ mod tests {
         let output = render(&layout);
         assert!(output.contains("self"), "should contain self-message text");
         assert!(output.contains("──┐"), "self-message should have loop out");
-        assert!(output.contains("┘"), "self-message should have return corner");
+        assert!(
+            output.contains("┘"),
+            "self-message should have return corner"
+        );
     }
 }

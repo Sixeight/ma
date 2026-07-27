@@ -110,10 +110,84 @@ fn draw_node(grid: &mut Grid, node: &NodeLayout) {
         NodeShape::Round | NodeShape::Circle => {
             draw_round(grid, node.x, node.y, node.width, node.height, &node.label)
         }
+        NodeShape::Stadium => {
+            draw_stadium(grid, node.x, node.y, node.width, node.height, &node.label)
+        }
+        NodeShape::Subroutine => {
+            draw_subroutine(grid, node.x, node.y, node.width, node.height, &node.label)
+        }
+        NodeShape::Cylinder => {
+            draw_cylinder(grid, node.x, node.y, node.width, node.height, &node.label)
+        }
+        NodeShape::Hexagon => {
+            draw_hexagon(grid, node.x, node.y, node.width, node.height, &node.label)
+        }
         NodeShape::Diamond => {
             draw_diamond(grid, node.x, node.y, node.width, node.height, &node.label)
         }
     }
+}
+
+fn draw_stadium(grid: &mut Grid, x: usize, y: usize, width: usize, height: usize, label: &str) {
+    draw_round(grid, x, y, width, height, label);
+    for row in (y + 1)..(y + height - 1) {
+        grid.set(row, x, '(');
+        grid.set(row, x + width - 1, ')');
+    }
+}
+
+fn draw_subroutine(grid: &mut Grid, x: usize, y: usize, width: usize, height: usize, label: &str) {
+    draw_box(grid, x, y, width, height, label);
+    for row in (y + 1)..(y + height - 1) {
+        grid.set(row, x + 1, '║');
+        grid.set(row, x + width - 2, '║');
+    }
+}
+
+fn draw_cylinder(grid: &mut Grid, x: usize, y: usize, width: usize, height: usize, label: &str) {
+    grid.set(y, x, '╭');
+    for col in (x + 1)..(x + width - 1) {
+        grid.set(y, col, '─');
+    }
+    grid.set(y, x + width - 1, '╮');
+    grid.set(y + 1, x, '╰');
+    for col in (x + 1)..(x + width - 1) {
+        grid.set(y + 1, col, '─');
+    }
+    grid.set(y + 1, x + width - 1, '╯');
+
+    for (i, line) in split_br(label).iter().enumerate() {
+        let row = y + 2 + i;
+        grid.set(row, x, '│');
+        grid.write_str(row, x + 2, line);
+        grid.set(row, x + width - 1, '│');
+    }
+    let bottom = y + height - 1;
+    grid.set(bottom, x, '╰');
+    for col in (x + 1)..(x + width - 1) {
+        grid.set(bottom, col, '─');
+    }
+    grid.set(bottom, x + width - 1, '╯');
+}
+
+fn draw_hexagon(grid: &mut Grid, x: usize, y: usize, width: usize, height: usize, label: &str) {
+    grid.set(y, x + 1, '╱');
+    for col in (x + 2)..(x + width - 2) {
+        grid.set(y, col, '─');
+    }
+    grid.set(y, x + width - 2, '╲');
+    for (i, line) in split_br(label).iter().enumerate() {
+        let row = y + 1 + i;
+        grid.set(row, x, '│');
+        grid.write_str(row, x + 2, line);
+        grid.set(row, x + width - 1, '│');
+    }
+    let bottom = y + height - 1;
+    grid.set(bottom, x + 1, '╲');
+    for col in (x + 2)..(x + width - 2) {
+        grid.set(bottom, col, '─');
+    }
+    grid.set(bottom, x + width - 2, '╱');
 }
 
 fn draw_subgraph(grid: &mut Grid, sg: &SubgraphLayout) {
@@ -554,9 +628,7 @@ fn draw_td_edge(
                 grid.set(to_above, to_cx, td_vertical_connector(edge_type));
             }
         } else {
-            draw_td_single_edge_route(
-                grid, from_cx, to_cx, from_below, to_above, edge, layout,
-            );
+            draw_td_single_edge_route(grid, from_cx, to_cx, from_below, to_above, edge, layout);
         }
     } else {
         draw_td_single_edge_route(grid, from_cx, to_cx, from_below, to_above, edge, layout);
@@ -941,7 +1013,7 @@ fn draw_lr_edge(
 
         // Label on the source-side horizontal segment
         if let Some(ref label) = edge.label {
-            let gap = mid_col.saturating_sub(from_right);
+            let gap = to_left.saturating_sub(from_right);
             if gap > 0 {
                 let label_col = from_right + (gap.saturating_sub(display_width(label))) / 2;
                 if from.center_y > 0 {
@@ -1217,9 +1289,8 @@ mod tests {
 
     #[test]
     fn render_td_subgraph_with_edge() {
-        let output = render_input(
-            "graph TD\n    subgraph Backend\n        A[API] --> B[DB]\n    end\n",
-        );
+        let output =
+            render_input("graph TD\n    subgraph Backend\n        A[API] --> B[DB]\n    end\n");
         assert!(output.contains("┌─ Backend"), "top border with title");
         assert!(output.contains("│ API │"), "node A");
         assert!(output.contains("│ DB │"), "node B");
@@ -1237,19 +1308,28 @@ mod tests {
     #[test]
     fn render_lr_fan_out_edges_reach_targets() {
         let output = render_input("graph LR\n    A --> B\n    A --> C\n");
-        assert!(
-            output.contains('>'),
-            "should have at least one arrow head"
-        );
+        assert!(output.contains('>'), "should have at least one arrow head");
         let lines: Vec<&str> = output.lines().collect();
         // B and C should both appear
         assert!(output.contains("B"), "B should be rendered");
         assert!(output.contains("C"), "C should be rendered");
         // Both B and C should have an incoming '>' on their line
-        let b_line = lines.iter().find(|l| l.contains("│ B │")).expect("B node line");
-        let c_line = lines.iter().find(|l| l.contains("│ C │")).expect("C node line");
-        assert!(b_line.contains('>'), "B should have incoming arrow: {b_line}");
-        assert!(c_line.contains('>'), "C should have incoming arrow: {c_line}");
+        let b_line = lines
+            .iter()
+            .find(|l| l.contains("│ B │"))
+            .expect("B node line");
+        let c_line = lines
+            .iter()
+            .find(|l| l.contains("│ C │"))
+            .expect("C node line");
+        assert!(
+            b_line.contains('>'),
+            "B should have incoming arrow: {b_line}"
+        );
+        assert!(
+            c_line.contains('>'),
+            "C should have incoming arrow: {c_line}"
+        );
     }
 
     #[test]
@@ -1279,9 +1359,7 @@ mod tests {
     fn render_td_offset_edge_connects_properly() {
         // When fan-out puts child to the right, the edge from child to grandchild
         // should still visually connect (no gap between │ and ▼)
-        let output = render_input(
-            "graph TD\n    A --> B\n    A --> C\n    C --> D\n",
-        );
+        let output = render_input("graph TD\n    A --> B\n    A --> C\n    C --> D\n");
         // Find the ▼ above D and check there's a │ or corner above it
         let lines: Vec<&str> = output.lines().collect();
         let arrow_line = lines.iter().position(|l| {
@@ -1305,9 +1383,8 @@ mod tests {
     fn render_td_cross_rank_fan_in_routes_when_clear() {
         // D(rank 0, right column) → E(rank 3, center column)
         // D's column doesn't overlap with intermediate nodes B, C → routing is drawn
-        let output = render_input(
-            "graph TD\n    A -->|x| B\n    B -->|y| C\n    C --> E\n    D -->|z| E\n",
-        );
+        let output =
+            render_input("graph TD\n    A -->|x| B\n    B -->|y| C\n    C --> E\n    D -->|z| E\n");
         // D's edge should have label "z" and visible routing
         assert!(output.contains("z"), "label z rendered");
         // Intermediate nodes must remain intact
@@ -1333,6 +1410,9 @@ mod tests {
             || output.contains('┘')
             || output.contains('└')
             || output.contains('┌');
-        assert!(has_corner, "L-shaped routing should have corners:\n{output}");
+        assert!(
+            has_corner,
+            "L-shaped routing should have corners:\n{output}"
+        );
     }
 }

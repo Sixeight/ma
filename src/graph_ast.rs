@@ -25,6 +25,10 @@ pub enum NodeShape {
     Round,
     Diamond,
     Circle,
+    Stadium,
+    Subroutine,
+    Cylinder,
+    Hexagon,
 }
 
 #[derive(Debug, Clone, PartialEq)]

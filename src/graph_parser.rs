@@ -1,6 +1,6 @@
-use winnow::prelude::*;
 use winnow::ascii::{line_ending, space0, space1};
 use winnow::combinator::{alt, opt, repeat};
+use winnow::prelude::*;
 use winnow::token::{take_until, take_while};
 
 use crate::graph_ast::*;
@@ -64,7 +64,7 @@ fn collect_line(
         GraphLine::Node(decl) => {
             add_node(nodes, decl);
         }
-        GraphLine::SubgraphBlock(label, inner_lines) => {
+        GraphLine::SubgraphBlock(id, label, inner_lines) => {
             let mut sg_node_ids: Vec<String> = Vec::new();
             for inner in inner_lines {
                 match &inner {
@@ -91,11 +91,10 @@ fn collect_line(
                             sg_node_ids.push(decl.id.clone());
                         }
                     }
-                    GraphLine::SubgraphBlock(_, _) => {}
+                    GraphLine::SubgraphBlock(_, _, _) => {}
                 }
                 collect_line(inner, nodes, edges, subgraphs);
             }
-            let id = label.replace(' ', "_").to_lowercase();
             subgraphs.push(Subgraph {
                 id,
                 label,
@@ -116,7 +115,7 @@ enum GraphLine {
     Edge(Edge, NodeDecl, NodeDecl),
     Edges(Vec<(Edge, NodeDecl, NodeDecl)>),
     Node(NodeDecl),
-    SubgraphBlock(String, Vec<GraphLine>),
+    SubgraphBlock(String, String, Vec<GraphLine>),
 }
 
 fn graph_line(input: &mut &str) -> winnow::Result<Option<GraphLine>> {
@@ -128,9 +127,10 @@ fn graph_line(input: &mut &str) -> winnow::Result<Option<GraphLine>> {
 
     let result = alt((
         blank_line.map(|_| None),
-        style_line.map(|_| None),
+        directive_line.map(|_| None),
         subgraph_block.map(Some),
         edge_line.map(Some),
+        dotted_labeled_edge_line.map(Some),
         alt_edge_line.map(Some),
         node_line.map(Some),
     ))
@@ -142,9 +142,8 @@ fn graph_line(input: &mut &str) -> winnow::Result<Option<GraphLine>> {
 fn subgraph_block(input: &mut &str) -> winnow::Result<GraphLine> {
     "subgraph".parse_next(input)?;
     space1.parse_next(input)?;
-    let label = take_while(1.., |c: char| c != '\n' && c != '\r')
-        .parse_next(input)?;
-    let label = label.trim_end().to_string();
+    let header = take_while(1.., |c: char| c != '\n' && c != '\r').parse_next(input)?;
+    let (id, label) = parse_subgraph_header(header.trim_end());
     opt(line_ending).parse_next(input)?;
 
     let mut inner_lines: Vec<GraphLine> = Vec::new();
@@ -163,15 +162,31 @@ fn subgraph_block(input: &mut &str) -> winnow::Result<GraphLine> {
         }
     }
 
-    Ok(GraphLine::SubgraphBlock(label, inner_lines))
+    Ok(GraphLine::SubgraphBlock(id, label, inner_lines))
+}
+
+fn parse_subgraph_header(header: &str) -> (String, String) {
+    if let Some((id, title)) = header.strip_suffix(']').and_then(|s| s.split_once(" [")) {
+        return (id.to_string(), title.trim_matches('"').to_string());
+    }
+    (header.replace(' ', "_").to_lowercase(), header.to_string())
 }
 
 fn blank_line(input: &mut &str) -> winnow::Result<()> {
     line_ending.void().parse_next(input)
 }
 
-fn style_line(input: &mut &str) -> winnow::Result<()> {
-    alt(("classDef", "linkStyle", "style", "class")).parse_next(input)?;
+fn directive_line(input: &mut &str) -> winnow::Result<()> {
+    alt((
+        "classDef",
+        "linkStyle",
+        "direction",
+        "click",
+        "style",
+        "class",
+        "link",
+    ))
+    .parse_next(input)?;
     space1.parse_next(input)?;
     let _ = take_while(0.., |c: char| c != '\n' && c != '\r').parse_next(input)?;
     opt(line_ending).parse_next(input)?;
@@ -205,11 +220,42 @@ fn node_ref(input: &mut &str) -> winnow::Result<NodeDecl> {
 fn shape_label(input: &mut &str) -> winnow::Result<(NodeShape, String)> {
     alt((
         circle_label.map(|l| (NodeShape::Circle, l)),
+        stadium_label.map(|l| (NodeShape::Stadium, l)),
+        subroutine_label.map(|l| (NodeShape::Subroutine, l)),
+        cylinder_label.map(|l| (NodeShape::Cylinder, l)),
+        hexagon_label.map(|l| (NodeShape::Hexagon, l)),
         round_label.map(|l| (NodeShape::Round, l)),
         diamond_label.map(|l| (NodeShape::Diamond, l)),
         bracketed_label.map(|l| (NodeShape::Box, l)),
     ))
     .parse_next(input)
+}
+
+fn delimited_label(
+    input: &mut &str,
+    mut opening: &str,
+    mut closing: &str,
+) -> winnow::Result<String> {
+    opening.parse_next(input)?;
+    let text = take_until(1.., closing).parse_next(input)?;
+    closing.parse_next(input)?;
+    Ok(text.trim_matches('"').to_string())
+}
+
+fn stadium_label(input: &mut &str) -> winnow::Result<String> {
+    delimited_label(input, "([", "])")
+}
+
+fn subroutine_label(input: &mut &str) -> winnow::Result<String> {
+    delimited_label(input, "[[", "]]")
+}
+
+fn cylinder_label(input: &mut &str) -> winnow::Result<String> {
+    delimited_label(input, "[(", ")]")
+}
+
+fn hexagon_label(input: &mut &str) -> winnow::Result<String> {
+    delimited_label(input, "{{", "}}")
 }
 
 fn quoted_inner(quote: char, closer: char) -> impl FnMut(&mut &str) -> winnow::Result<String> {
@@ -276,56 +322,78 @@ fn edge_label(input: &mut &str) -> winnow::Result<String> {
 
 fn edge_line(input: &mut &str) -> winnow::Result<GraphLine> {
     let from = node_ref.parse_next(input)?;
-    space0.parse_next(input)?;
-    let et = edge_type.parse_next(input)?;
-    let label = opt(edge_label).parse_next(input)?;
-    space0.parse_next(input)?;
-    let first_to = node_ref.parse_next(input)?;
-
-    let mut extra_targets: Vec<NodeDecl> = Vec::new();
+    let mut segment_froms = vec![from];
+    let mut items = Vec::new();
     loop {
         space0.parse_next(input)?;
-        if opt("&").parse_next(input)?.is_none() {
+        let Some(et) = opt(edge_type).parse_next(input)? else {
             break;
-        }
+        };
+        let label = opt(edge_label).parse_next(input)?;
         space0.parse_next(input)?;
-        extra_targets.push(node_ref.parse_next(input)?);
+        let first_to = node_ref.parse_next(input)?;
+        let mut targets = vec![first_to];
+
+        loop {
+            space0.parse_next(input)?;
+            if opt("&").parse_next(input)?.is_none() {
+                break;
+            }
+            space0.parse_next(input)?;
+            let target = node_ref.parse_next(input)?;
+            targets.push(target);
+        }
+        for segment_from in &segment_froms {
+            for target in &targets {
+                items.push((
+                    Edge {
+                        from: segment_from.id.clone(),
+                        to: target.id.clone(),
+                        edge_type: et,
+                        label: label.clone(),
+                    },
+                    segment_from.clone(),
+                    target.clone(),
+                ));
+            }
+        }
+        segment_froms = targets;
+    }
+    if items.is_empty() {
+        return Err(winnow::error::ParserError::from_input(input));
     }
     opt(line_ending).parse_next(input)?;
 
-    if extra_targets.is_empty() {
-        let edge = Edge {
-            from: from.id.clone(),
-            to: first_to.id.clone(),
-            edge_type: et,
-            label,
-        };
-        Ok(GraphLine::Edge(edge, from, first_to))
+    if items.len() == 1 {
+        let (edge, from, to) = items.pop().unwrap();
+        Ok(GraphLine::Edge(edge, from, to))
     } else {
-        let mut items = vec![(
-            Edge {
-                from: from.id.clone(),
-                to: first_to.id.clone(),
-                edge_type: et,
-                label: label.clone(),
-            },
-            from.clone(),
-            first_to,
-        )];
-        for target in extra_targets {
-            items.push((
-                Edge {
-                    from: from.id.clone(),
-                    to: target.id.clone(),
-                    edge_type: et,
-                    label: label.clone(),
-                },
-                from.clone(),
-                target,
-            ));
-        }
         Ok(GraphLine::Edges(items))
     }
+}
+
+fn dotted_labeled_edge_line(input: &mut &str) -> winnow::Result<GraphLine> {
+    let from = node_ref.parse_next(input)?;
+    space0.parse_next(input)?;
+    "-. ".parse_next(input)?;
+    let label = take_until(1.., " .->")
+        .parse_next(input)?
+        .trim()
+        .to_string();
+    " .->".parse_next(input)?;
+    space0.parse_next(input)?;
+    let to = node_ref.parse_next(input)?;
+    opt(line_ending).parse_next(input)?;
+    Ok(GraphLine::Edge(
+        Edge {
+            from: from.id.clone(),
+            to: to.id.clone(),
+            edge_type: EdgeType::DottedArrow,
+            label: Some(label),
+        },
+        from,
+        to,
+    ))
 }
 
 fn alt_edge_line(input: &mut &str) -> winnow::Result<GraphLine> {
@@ -509,10 +577,7 @@ mod tests {
     fn parse_alt_label_with_spaces() {
         let input = "graph TD\n    A -- hello world --> B\n";
         let diagram = parse_graph(input).unwrap();
-        assert_eq!(
-            diagram.edges[0].label,
-            Some("hello world".to_string())
-        );
+        assert_eq!(diagram.edges[0].label, Some("hello world".to_string()));
     }
 
     #[test]
@@ -610,6 +675,20 @@ mod tests {
     }
 
     #[test]
+    fn parse_additional_node_shapes() {
+        let cases = [
+            ("A([Stadium])", NodeShape::Stadium),
+            ("A[[Subroutine]]", NodeShape::Subroutine),
+            ("A[(Database)]", NodeShape::Cylinder),
+            ("A{{Hexagon}}", NodeShape::Hexagon),
+        ];
+        for (mut input, expected) in cases {
+            let node = node_ref(&mut input).unwrap();
+            assert_eq!(node.shape, expected, "input: {input}");
+        }
+    }
+
+    #[test]
     fn parse_deduplicates_nodes() {
         let input = "graph TD\n    A[Start] --> B\n    A --> C\n";
         let diagram = parse_graph(input).unwrap();
@@ -676,11 +755,63 @@ mod tests {
 
     #[test]
     fn parse_subgraph_mixed_with_outer_nodes() {
-        let input = "graph TD\n    C\n    subgraph Backend\n        A --> B\n    end\n    C --> A\n";
+        let input =
+            "graph TD\n    C\n    subgraph Backend\n        A --> B\n    end\n    C --> A\n";
         let diagram = parse_graph(input).unwrap();
         assert_eq!(diagram.subgraphs.len(), 1);
         assert_eq!(diagram.subgraphs[0].node_ids, vec!["A", "B"]);
         assert_eq!(diagram.nodes.len(), 3);
         assert_eq!(diagram.edges.len(), 2);
+    }
+
+    #[test]
+    fn parse_chained_edges() {
+        let diagram = parse_graph("graph LR\n    A --> B --> C\n").unwrap();
+        assert_eq!(diagram.edges.len(), 2);
+        assert_eq!(
+            (&diagram.edges[0].from, &diagram.edges[0].to),
+            (&"A".into(), &"B".into())
+        );
+        assert_eq!(
+            (&diagram.edges[1].from, &diagram.edges[1].to),
+            (&"B".into(), &"C".into())
+        );
+    }
+
+    #[test]
+    fn parse_chained_edges_after_fan_out() {
+        let diagram = parse_graph("graph LR\n    A --> B & C --> D\n").unwrap();
+        let pairs: Vec<_> = diagram
+            .edges
+            .iter()
+            .map(|edge| (edge.from.as_str(), edge.to.as_str()))
+            .collect();
+        assert_eq!(
+            pairs,
+            vec![("A", "B"), ("A", "C"), ("B", "D"), ("C", "D")]
+        );
+    }
+
+    #[test]
+    fn parse_dotted_edge_label_syntax() {
+        let diagram = parse_graph("graph LR\n    A -. retry .-> B\n").unwrap();
+        assert_eq!(diagram.edges[0].edge_type, EdgeType::DottedArrow);
+        assert_eq!(diagram.edges[0].label.as_deref(), Some("retry"));
+    }
+
+    #[test]
+    fn parse_subgraph_id_and_title() {
+        let diagram =
+            parse_graph("graph TD\n    subgraph api [Public API]\n        A\n    end\n").unwrap();
+        assert_eq!(diagram.subgraphs[0].id, "api");
+        assert_eq!(diagram.subgraphs[0].label, "Public API");
+    }
+
+    #[test]
+    fn ignore_non_rendering_directives() {
+        let input = "graph TD\n    click A href \"https://example.com\"\n    link A \"https://example.com\"\n    subgraph S\n        direction LR\n        A --> B\n    end\n";
+        let diagram = parse_graph(input).unwrap();
+        assert_eq!(diagram.nodes.len(), 2);
+        assert_eq!(diagram.edges.len(), 1);
     }
 }

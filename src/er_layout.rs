@@ -14,6 +14,7 @@ pub struct ErLayout {
 #[derive(Debug, Clone, PartialEq)]
 pub struct ErNodeLayout {
     pub name: String,
+    pub alias: Option<String>,
     pub attributes: Vec<EntityAttribute>,
     pub x: usize,
     pub y: usize,
@@ -28,11 +29,22 @@ pub struct ErEdgeLayout {
     pub to: String,
     pub left_card: Cardinality,
     pub right_card: Cardinality,
+    pub line_style: RelationshipLineStyle,
     pub label: String,
 }
 
 const BOX_HEIGHT: usize = 3;
 const MIN_GAP: usize = 6;
+
+fn entity_width(entity: &Entity) -> usize {
+    let attr_width = entity
+        .attributes
+        .iter()
+        .map(|attribute| display_width(&attribute.display_text()))
+        .max()
+        .unwrap_or(0);
+    display_width(entity.alias.as_deref().unwrap_or(&entity.name)).max(attr_width) + 4
+}
 
 pub fn compute(diagram: &ErDiagram) -> Result<ErLayout, String> {
     compute_with_gap(diagram, MIN_GAP)
@@ -74,15 +86,7 @@ fn compute_with_gap(diagram: &ErDiagram, min_gap: usize) -> Result<ErLayout, Str
     for (rank, rank_entities) in ranks_entities.iter().enumerate() {
         let mut y = 0;
         for entity in rank_entities {
-            let attr_width = entity.attributes.iter().map(|a| {
-                let mut w = display_width(&a.attr_type) + 1 + display_width(&a.name);
-                if let Some(ref k) = a.key {
-                    w += 1 + display_width(k);
-                }
-                w
-            }).max().unwrap_or(0);
-            let content_width = display_width(&entity.name).max(attr_width);
-            let w = content_width + 4;
+            let w = entity_width(entity);
             let h = if entity.attributes.is_empty() {
                 BOX_HEIGHT
             } else {
@@ -90,6 +94,7 @@ fn compute_with_gap(diagram: &ErDiagram, min_gap: usize) -> Result<ErLayout, Str
             };
             nodes.push(ErNodeLayout {
                 name: entity.name.to_string(),
+                alias: entity.alias.clone(),
                 attributes: entity.attributes.clone(),
                 x,
                 y,
@@ -101,16 +106,11 @@ fn compute_with_gap(diagram: &ErDiagram, min_gap: usize) -> Result<ErLayout, Str
         }
 
         if rank < max_rank {
-            let rank_max_width = rank_entities.iter().map(|e| {
-                let attr_width = e.attributes.iter().map(|a| {
-                    let mut w = display_width(&a.attr_type) + 1 + display_width(&a.name);
-                    if let Some(ref k) = a.key {
-                        w += 1 + display_width(k);
-                    }
-                    w
-                }).max().unwrap_or(0);
-                display_width(&e.name).max(attr_width) + 4
-            }).max().unwrap_or(0);
+            let rank_max_width = rank_entities
+                .iter()
+                .map(|entity| entity_width(entity))
+                .max()
+                .unwrap_or(0);
             let label_gap = diagram
                 .relationships
                 .iter()
@@ -137,6 +137,7 @@ fn compute_with_gap(diagram: &ErDiagram, min_gap: usize) -> Result<ErLayout, Str
             to: r.to.clone(),
             left_card: r.left_card,
             right_card: r.right_card,
+            line_style: r.line_style,
             label: r.label.clone(),
         })
         .collect();
@@ -203,10 +204,13 @@ fn compute_rank<'a>(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::er_ast::*;
 
     fn entity(name: &str) -> Entity {
-        Entity { name: name.to_string(), attributes: Vec::new() }
+        Entity {
+            name: name.to_string(),
+            alias: None,
+            attributes: Vec::new(),
+        }
     }
 
     #[test]
@@ -218,6 +222,7 @@ mod tests {
                 to: "B".into(),
                 left_card: Cardinality::ExactlyOne,
                 right_card: Cardinality::ExactlyOne,
+                line_style: RelationshipLineStyle::Identifying,
                 label: "r1".into(),
             }],
         };
@@ -233,8 +238,22 @@ mod tests {
         let diagram = ErDiagram {
             entities: vec![entity("A"), entity("B"), entity("C")],
             relationships: vec![
-                Relationship { from: "A".into(), to: "B".into(), left_card: Cardinality::ExactlyOne, right_card: Cardinality::ExactlyOne, label: "r1".into() },
-                Relationship { from: "B".into(), to: "C".into(), left_card: Cardinality::ExactlyOne, right_card: Cardinality::ExactlyOne, label: "r2".into() },
+                Relationship {
+                    from: "A".into(),
+                    to: "B".into(),
+                    left_card: Cardinality::ExactlyOne,
+                    right_card: Cardinality::ExactlyOne,
+                    line_style: RelationshipLineStyle::Identifying,
+                    label: "r1".into(),
+                },
+                Relationship {
+                    from: "B".into(),
+                    to: "C".into(),
+                    left_card: Cardinality::ExactlyOne,
+                    right_card: Cardinality::ExactlyOne,
+                    line_style: RelationshipLineStyle::Identifying,
+                    label: "r2".into(),
+                },
             ],
         };
         let layout = compute(&diagram).unwrap();
@@ -254,6 +273,7 @@ mod tests {
                 to: "B".into(),
                 left_card: Cardinality::ExactlyOne,
                 right_card: Cardinality::ExactlyOne,
+                line_style: RelationshipLineStyle::Identifying,
                 label: "long label here".into(),
             }],
         };
