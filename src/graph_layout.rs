@@ -41,9 +41,33 @@ pub struct EdgeLayout {
     pub to_id: String,
     pub edge_type: EdgeType,
     pub label: Option<String>,
+    pub route: EdgeRoute,
+}
+
+/// How an edge reaches its target, decided once the nodes are placed. Space is
+/// reserved and the route is drawn from this, so both agree by construction.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum EdgeRoute {
+    Forward,
+    SelfLoop,
+    /// Runs backwards around the nodes, through gutter lane `lane`.
+    Back {
+        lane: usize,
+    },
 }
 
 const SUBGRAPH_GAP: usize = 3;
+
+/// Extent of the drawing before any routing space is reserved.
+fn base_extents(nodes: &[NodeLayout], subgraphs: &[SubgraphLayout]) -> (usize, usize) {
+    let mut width = nodes.iter().map(|n| n.x + n.width).max().unwrap_or(0);
+    let mut height = nodes.iter().map(|n| n.y + n.height).max().unwrap_or(0);
+    for sg in subgraphs {
+        width = width.max(sg.x + sg.width);
+        height = height.max(sg.y + sg.height);
+    }
+    (width, height)
+}
 
 /// Row/column kept free between the nodes and the back-edge gutter lanes.
 const BACK_EDGE_CLEARANCE: usize = 1;
@@ -58,58 +82,63 @@ pub fn is_back_edge(direction: &Direction, from: &NodeLayout, to: &NodeLayout) -
     }
 }
 
-/// Indices into `edges` of the edges routed backwards, in declaration order.
-/// A back edge's position in this list is its lane in the gutter; the values
-/// themselves are edge indices, not lane numbers.
-pub fn back_edge_lanes(
-    direction: &Direction,
-    nodes: &[NodeLayout],
-    edges: &[EdgeLayout],
-) -> Vec<usize> {
-    edges
-        .iter()
-        .enumerate()
-        .filter(|(_, edge)| edge.from_id != edge.to_id)
-        .filter(|(_, edge)| {
+/// Decides each edge's route now that the nodes are placed, handing every back
+/// edge its own gutter lane in declaration order.
+fn assign_edge_routes(direction: &Direction, nodes: &[NodeLayout], edges: &mut [EdgeLayout]) {
+    let mut lane = 0;
+    for edge in edges.iter_mut() {
+        edge.route = if edge.from_id == edge.to_id {
+            EdgeRoute::SelfLoop
+        } else {
             let from = nodes.iter().find(|n| n.id == edge.from_id);
             let to = nodes.iter().find(|n| n.id == edge.to_id);
             match (from, to) {
-                (Some(from), Some(to)) => is_back_edge(direction, from, to),
-                _ => false,
+                (Some(from), Some(to)) if is_back_edge(direction, from, to) => {
+                    lane += 1;
+                    EdgeRoute::Back { lane: lane - 1 }
+                }
+                _ => EdgeRoute::Forward,
             }
-        })
-        .map(|(index, _)| index)
-        .collect()
+        };
+    }
+}
+
+/// Number of gutter lanes the back edges occupy.
+pub fn back_edge_lane_count(edges: &[EdgeLayout]) -> usize {
+    edges
+        .iter()
+        .filter(|edge| matches!(edge.route, EdgeRoute::Back { .. }))
+        .count()
 }
 
 fn reserve_back_edge_space(
     direction: &Direction,
-    nodes: &[NodeLayout],
     edges: &[EdgeLayout],
     width: &mut usize,
     height: &mut usize,
 ) {
-    let lanes = back_edge_lanes(direction, nodes, edges);
-    if lanes.is_empty() {
+    let lane_count = back_edge_lane_count(edges);
+    if lane_count == 0 {
         return;
     }
 
-    let label_width = lanes
+    let label_width = edges
         .iter()
-        .filter_map(|index| edges[*index].label.as_ref())
+        .filter(|edge| matches!(edge.route, EdgeRoute::Back { .. }))
+        .filter_map(|edge| edge.label.as_ref())
         .map(|label| display_width(label) + 1)
         .max()
         .unwrap_or(0);
 
     // Invariant the renderer depends on: the gutter dimension grows by exactly
-    // BACK_EDGE_CLEARANCE + lanes.len(), so lane i lives at `size - lanes + i`
-    // and never collides with a node.
+    // BACK_EDGE_CLEARANCE + lane_count, so lane i lives at
+    // `size - lane_count + i` and never collides with a node.
     match direction {
         // TD routes through gutter columns right of everything, reached over
         // the free row below the source's rank. The label rides on that row.
         Direction::TopDown => {
-            *width += BACK_EDGE_CLEARANCE + label_width + lanes.len();
-            *height += BACK_EDGE_CLEARANCE + lanes.len();
+            *width += BACK_EDGE_CLEARANCE + label_width + lane_count;
+            *height += BACK_EDGE_CLEARANCE + lane_count;
         }
         // LR routes through gutter rows below everything, reached over the
         // free column right of the source's rank — the last rank needs one
@@ -117,7 +146,7 @@ fn reserve_back_edge_space(
         // too short to hold it.
         Direction::LeftRight => {
             *width += BACK_EDGE_CLEARANCE + label_width + 1;
-            *height += BACK_EDGE_CLEARANCE + lanes.len();
+            *height += BACK_EDGE_CLEARANCE + lane_count;
         }
     }
 }
@@ -145,7 +174,7 @@ pub fn compute(diagram: &GraphDiagram) -> Result<GraphLayout, String> {
         Direction::LeftRight => layout_lr(&ranks_nodes, &ranks, &diagram.edges),
     };
 
-    let edges: Vec<EdgeLayout> = diagram
+    let mut edges: Vec<EdgeLayout> = diagram
         .edges
         .iter()
         .map(|e| EdgeLayout {
@@ -153,17 +182,14 @@ pub fn compute(diagram: &GraphDiagram) -> Result<GraphLayout, String> {
             to_id: e.to.clone(),
             edge_type: e.edge_type,
             label: e.label.clone(),
+            route: EdgeRoute::Forward,
         })
         .collect();
 
     let subgraphs = compute_subgraph_layouts(&diagram.subgraphs, &mut node_layouts);
+    assign_edge_routes(&diagram.direction, &node_layouts, &mut edges);
 
-    let mut width = node_layouts.iter().map(|n| n.x + n.width).max().unwrap_or(0);
-    let mut height = node_layouts.iter().map(|n| n.y + n.height).max().unwrap_or(0);
-    for sg in &subgraphs {
-        width = width.max(sg.x + sg.width);
-        height = height.max(sg.y + sg.height);
-    }
+    let (mut width, mut height) = base_extents(&node_layouts, &subgraphs);
 
     // Self-loop nodes need extra space: arm (2 cols) + label width to the right,
     // and 1 row below the node for the return arrow
@@ -201,13 +227,7 @@ pub fn compute(diagram: &GraphDiagram) -> Result<GraphLayout, String> {
         width = width.max(max_right + 2);
     }
 
-    reserve_back_edge_space(
-        &diagram.direction,
-        &node_layouts,
-        &edges,
-        &mut width,
-        &mut height,
-    );
+    reserve_back_edge_space(&diagram.direction, &edges, &mut width, &mut height);
 
     Ok(GraphLayout {
         nodes: node_layouts,
@@ -353,7 +373,7 @@ fn layout_with_subgraphs(diagram: &GraphDiagram) -> Result<GraphLayout, String> 
         all_nodes.extend(node_layouts);
     }
 
-    let edges: Vec<EdgeLayout> = diagram
+    let mut edges: Vec<EdgeLayout> = diagram
         .edges
         .iter()
         .map(|e| EdgeLayout {
@@ -361,23 +381,13 @@ fn layout_with_subgraphs(diagram: &GraphDiagram) -> Result<GraphLayout, String> 
             to_id: e.to.clone(),
             edge_type: e.edge_type,
             label: e.label.clone(),
+            route: EdgeRoute::Forward,
         })
         .collect();
 
-    let mut width = all_nodes.iter().map(|n| n.x + n.width).max().unwrap_or(0);
-    let mut height = all_nodes.iter().map(|n| n.y + n.height).max().unwrap_or(0);
-    for sg in &sg_layouts {
-        width = width.max(sg.x + sg.width);
-        height = height.max(sg.y + sg.height);
-    }
-
-    reserve_back_edge_space(
-        &diagram.direction,
-        &all_nodes,
-        &edges,
-        &mut width,
-        &mut height,
-    );
+    assign_edge_routes(&diagram.direction, &all_nodes, &mut edges);
+    let (mut width, mut height) = base_extents(&all_nodes, &sg_layouts);
+    reserve_back_edge_space(&diagram.direction, &edges, &mut width, &mut height);
 
     Ok(GraphLayout {
         nodes: all_nodes,
@@ -430,7 +440,8 @@ fn assign_ranks(diagram: &GraphDiagram) -> HashMap<String, usize> {
         let id = queue[head];
         head += 1;
         let rank = ranks[id];
-        for target in out_edges.get(id).cloned().unwrap_or_default() {
+        let targets: &[&str] = out_edges.get(id).map(Vec::as_slice).unwrap_or(&[]);
+        for target in targets.iter().copied() {
             let entry = ranks.entry(target.to_string()).or_insert(0);
             *entry = (*entry).max(rank + 1);
             if let Some(degree) = in_degree.get_mut(target) {
@@ -538,7 +549,7 @@ pub fn compute_with_max_width(
                 }
             };
 
-            let edges: Vec<EdgeLayout> = diagram
+            let mut edges: Vec<EdgeLayout> = diagram
                 .edges
                 .iter()
                 .map(|e| EdgeLayout {
@@ -546,25 +557,15 @@ pub fn compute_with_max_width(
                     to_id: e.to.clone(),
                     edge_type: e.edge_type,
                     label: e.label.clone(),
+                    route: EdgeRoute::Forward,
                 })
                 .collect();
 
             let subgraphs = compute_subgraph_layouts(&diagram.subgraphs, &mut node_layouts);
 
-            let mut width = node_layouts.iter().map(|n| n.x + n.width).max().unwrap_or(0);
-            let mut height = node_layouts.iter().map(|n| n.y + n.height).max().unwrap_or(0);
-            for sg in &subgraphs {
-                width = width.max(sg.x + sg.width);
-                height = height.max(sg.y + sg.height);
-            }
-
-            reserve_back_edge_space(
-                &diagram.direction,
-                &node_layouts,
-                &edges,
-                &mut width,
-                &mut height,
-            );
+            assign_edge_routes(&diagram.direction, &node_layouts, &mut edges);
+            let (mut width, mut height) = base_extents(&node_layouts, &subgraphs);
+            reserve_back_edge_space(&diagram.direction, &edges, &mut width, &mut height);
 
             if width <= max_width {
                 return Ok(GraphLayout {
@@ -883,8 +884,17 @@ mod tests {
         let diagram =
             parse_graph("graph TD\n    A --> B\n    B --> C\n    C --> A\n    C --> B\n").unwrap();
         let layout = compute(&diagram).unwrap();
-        let lanes = back_edge_lanes(&layout.direction, &layout.nodes, &layout.edges);
-        assert_eq!(lanes, vec![2, 3], "both back edges get their own lane");
+        let routes: Vec<EdgeRoute> = layout.edges.iter().map(|e| e.route).collect();
+        assert_eq!(
+            routes,
+            vec![
+                EdgeRoute::Forward,
+                EdgeRoute::Forward,
+                EdgeRoute::Back { lane: 0 },
+                EdgeRoute::Back { lane: 1 },
+            ],
+            "both back edges get their own lane"
+        );
     }
 
     #[test]

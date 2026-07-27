@@ -79,11 +79,13 @@ echo 'graph TD
 ```
 
 ```
-    ╱──────────╲
+      ────────
+     ╱        ╲
     │ Decision │
-    ╲─────┬────╱
-    ┌─────┴─────┐
-    ▼           ▼
+     ╲        ╱
+      ────┬───
+     ┌────┴──────┐
+     ▼           ▼
 ┌────────┐   ╭──────╮
 │ Action │   │ Skip │
 └────────┘   ╰──────╯
@@ -95,6 +97,8 @@ Features:
 - Edge types: arrow `-->`, open `---`, dotted `-.->`, thick `==>` (and link variants)
 - Edge labels (`-->|label|` or `-- label -->`)
 - Fan-out / fan-in with L-shaped edge routing
+- Cycles: edges that point backwards are routed around the nodes
+- Self-loops (`A --> A`)
 - Subgraphs (`subgraph`...`end`)
 - Multi-target edges (`A --> B & C`)
 
