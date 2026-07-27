@@ -591,6 +591,45 @@ fn enclosing_subgraph(layout: &GraphLayout, node: &NodeLayout) -> Option<usize> 
     })
 }
 
+/// Column a back edge enters its target through: one in from the right border,
+/// clear of the outgoing stem at the centre and of a self-loop's return arrow.
+fn back_edge_entry_col(layout: &GraphLayout, to: &NodeLayout) -> usize {
+    let self_looped = layout
+        .edges
+        .iter()
+        .any(|e| e.from_id == e.to_id && e.to_id == to.id);
+    // A node that also sends a back edge sweeps everything right of its centre
+    // with that route, so the arrow head has to sit on the other side.
+    let sends_back_edge = back_edge_lanes(&layout.direction, &layout.nodes, &layout.edges)
+        .iter()
+        .any(|index| layout.edges[*index].from_id == to.id);
+    let right = to.x + to.width - 2;
+    if right > to.center_x && !sends_back_edge && !(self_looped && right == to.center_x + 1) {
+        right
+    } else {
+        to.x + 1
+    }
+}
+
+/// Row a back edge may turn on: `clearance` when the leg down to it is free,
+/// otherwise `base` — reaching clear of the frame is not worth drawing the leg
+/// through a box that sits below inside the same frame.
+fn reachable_turn_row(
+    layout: &GraphLayout,
+    col: usize,
+    base: usize,
+    clearance: usize,
+    edge: &EdgeLayout,
+) -> usize {
+    if clearance <= base
+        || route_crosses_node(layout, col, base, clearance, &edge.from_id, &edge.to_id)
+    {
+        base
+    } else {
+        clearance
+    }
+}
+
 /// Row each end of a back edge has to reach before it may turn sideways: below
 /// its subgraph frame, so the route crosses the border instead of running along
 /// it. Two ends inside the same frame turn inside it — leaving would mean
@@ -655,8 +694,14 @@ fn draw_lr_back_edge(
     let from_below = from.y + from.height;
     let to_below = to.y + to.height;
     let (from_clear, to_clear) = back_edge_turn_rows(layout, from, to);
-    let from_turn = from_below.max(from_clear);
-    let to_turn = to_below.max(to_clear);
+    let from_turn = reachable_turn_row(layout, from.center_x, from_below, from_clear, edge);
+    let to_turn = reachable_turn_row(
+        layout,
+        back_edge_entry_col(layout, to),
+        to_below,
+        to_clear,
+        edge,
+    );
     let lane_from = lr_lane_col(layout, from, lane);
     let lane_to = lr_lane_col(layout, to, lane);
     if lane_to >= lane_from || route_row <= from_turn.max(to_turn) {
@@ -689,22 +734,24 @@ fn draw_lr_back_edge(
     grid.set_merged(route_row, lane_to, '└', merge_box_drawing);
 
     // Target: up the rank gap, left under the target, arrow up into the box
+    let entry_col = back_edge_entry_col(layout, to);
     for row in (to_turn + 1)..route_row {
         grid.set_merged(row, lane_to, vert, merge_box_drawing);
     }
     grid.set_merged(to_turn, lane_to, '┐', merge_box_drawing);
-    for col in (to.center_x + 1)..lane_to {
+    for col in (entry_col + 1)..lane_to {
         grid.set_merged(to_turn, col, horiz, merge_box_drawing);
     }
     if to_turn > to_below {
-        grid.set_merged(to_turn, to.center_x, '└', merge_box_drawing);
+        grid.set_merged(to_turn, entry_col, '└', merge_box_drawing);
         for row in (to_below + 1)..to_turn {
-            grid.set_merged(row, to.center_x, vert, merge_box_drawing);
+            grid.set_merged(row, entry_col, vert, merge_box_drawing);
         }
     }
+    grid.set_merged(to_below - 1, entry_col, '┬', merge_box_drawing);
     grid.set(
         to_below,
-        to.center_x,
+        entry_col,
         if has_arrow_head(edge.edge_type) {
             '▲'
         } else {
@@ -740,11 +787,26 @@ fn draw_td_back_edge(
 ) {
     let from_below = from.y + from.height;
     let (from_clear, to_clear) = back_edge_turn_rows(layout, from, to);
-    let lane_row = td_lane_row(layout, from, lane).max(from_clear);
+    let entry_col = back_edge_entry_col(layout, to);
     // Enter through the gap row below the target's rank, never through the row
     // the target sits on: that row belongs to its rank and crosses siblings.
-    let to_gap = td_rank_gutter(layout, to).max(to_clear);
-    let entry_col = to.center_x.max(to.x + to.width - 2);
+    let to_gap = reachable_turn_row(
+        layout,
+        entry_col,
+        td_rank_gutter(layout, to),
+        to_clear,
+        edge,
+    );
+    // Frames of equal height would put both ends on one row, which would leave
+    // no room to turn; the reserved rows below everything absorb the source.
+    let lane_row = reachable_turn_row(
+        layout,
+        from.center_x,
+        td_lane_row(layout, from, lane),
+        from_clear,
+        edge,
+    )
+    .max(to_gap + 1);
     if route_col <= entry_col || lane_row <= to_gap {
         // Same rank, or the target's frame pushed both ends onto one row.
         return;
@@ -776,12 +838,12 @@ fn draw_td_back_edge(
     }
     let to_below = to.y + to.height;
     if to_below < to_gap {
-        grid.set_merged(to_gap, entry_col, '┘', merge_box_drawing);
+        grid.set_merged(to_gap, entry_col, '└', merge_box_drawing);
         for row in (to_below + 1)..to_gap {
             grid.set_merged(row, entry_col, vert, merge_box_drawing);
         }
     }
-    grid.set_merged(to_below - 1, entry_col, '┴', merge_box_drawing);
+    grid.set_merged(to_below - 1, entry_col, '┬', merge_box_drawing);
     grid.set(
         to_below,
         entry_col,

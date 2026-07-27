@@ -109,7 +109,7 @@ fn reserve_back_edge_space(
         // the free row below the source's rank. The label rides on that row.
         Direction::TopDown => {
             *width += BACK_EDGE_CLEARANCE + label_width + lanes.len();
-            *height += BACK_EDGE_CLEARANCE;
+            *height += BACK_EDGE_CLEARANCE + lanes.len();
         }
         // LR routes through gutter rows below everything, reached over the
         // free column right of the source's rank — the last rank needs one
@@ -834,6 +834,44 @@ mod tests {
     #[test]
     fn rank_cycle_entry_node_first() {
         let diagram = parse_graph("graph TD\n    A --> B\n    B --> C\n    C --> A\n").unwrap();
+        let ranks = assign_ranks(&diagram);
+        assert_eq!(ranks["A"], 0);
+        assert_eq!(ranks["B"], 1);
+        assert_eq!(ranks["C"], 2);
+    }
+
+    #[test]
+    fn rank_every_kept_edge_points_forward() {
+        // Two interlocking cycles, a parallel edge and a node entered only
+        // through a cycle: whatever the DFS drops, every edge it keeps has to
+        // point at a strictly higher rank, or the renderer draws backwards.
+        let diagram = parse_graph(
+            "graph TD\n    A --> B\n    A --> B\n    B --> C\n    C --> A\n    C --> D\n    D --> B\n    D --> E\n    E --> D\n",
+        )
+        .unwrap();
+        let back_edges = find_back_edges(&diagram);
+        let ranks = assign_ranks(&diagram);
+
+        for (index, edge) in diagram.edges.iter().enumerate() {
+            if back_edges.contains(&index) || edge.from == edge.to {
+                continue;
+            }
+            assert!(
+                ranks[&edge.from] < ranks[&edge.to],
+                "{} --> {} kept but ranked {} --> {}",
+                edge.from,
+                edge.to,
+                ranks[&edge.from],
+                ranks[&edge.to]
+            );
+        }
+        assert!(ranks.values().any(|r| *r == 0), "rank 0 is never empty");
+    }
+
+    #[test]
+    fn rank_node_reached_only_through_a_cycle_is_ranked() {
+        let diagram =
+            parse_graph("graph TD\n    A --> B\n    B --> A\n    B --> C\n    C --> B\n").unwrap();
         let ranks = assign_ranks(&diagram);
         assert_eq!(ranks["A"], 0);
         assert_eq!(ranks["B"], 1);

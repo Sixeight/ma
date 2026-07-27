@@ -760,8 +760,8 @@ fn spec_cycle_lr_back_edge_visual() {
     let expected = concat!(
         "┌───┐     ┌───┐\n",
         "│ A │────>│ B │\n",
-        "└───┘     └─┬─┘\n",
-        "  ▲──┐      └──┐\n",
+        "└──┬┘     └─┬─┘\n",
+        "   ▲─┐      └──┐\n",
         "     └─────────┘",
     );
     assert_eq!(output, expected);
@@ -774,7 +774,7 @@ fn spec_cycle_td_back_edge_visual() {
     let expected = concat!(
         "┌───┐\n",
         "│ A │\n",
-        "└─┬┴┘\n",
+        "└─┬┬┘\n",
         "  │▲──┐\n",
         "  ▼   │\n",
         "┌───┐ │\n",
@@ -1032,4 +1032,124 @@ graph LR
     assert!(output.contains("│ A │"), "A rendered");
     assert!(output.contains("│ B │"), "B rendered");
     assert!(!output.contains("linkStyle"), "linkStyle not rendered as node");
+}
+
+// =============================================================================
+// Cycles — back edge routing under stress
+// =============================================================================
+
+#[test]
+fn spec_cycle_lr_back_edge_arrow_survives_a_second_back_edge_leaving_the_target() {
+    // B receives the back edge C --> B and is the source of the back edge
+    // B --> A. Both routes touch B's bottom centre, so the outgoing route must
+    // not take the cell the incoming arrow head sits in.
+    let input = "graph LR\n    A --> B\n    B --> C\n    C --> B\n    B --> A\n";
+    let output = ma::render(input).unwrap();
+    assert_eq!(
+        output.matches('▲').count(),
+        2,
+        "both back edges keep their arrow head:\n{output}"
+    );
+}
+
+#[test]
+fn spec_cycle_td_back_edge_arrow_survives_a_self_loop_on_the_target() {
+    // A is the target of the back edge B --> A and carries a self-loop. The
+    // self-loop is drawn last and must not take the back edge's arrow head.
+    let input = "graph TD\n    A --> B\n    B --> A\n    A --> A\n";
+    let output = ma::render(input).unwrap();
+    assert_eq!(
+        output.matches('▲').count(),
+        1,
+        "back edge keeps its arrow head next to the self-loop:\n{output}"
+    );
+    assert_eq!(
+        output.matches('◄').count(),
+        1,
+        "self-loop keeps its own arrow head:\n{output}"
+    );
+}
+
+#[test]
+fn spec_cycle_td_back_edge_clears_a_taller_node_in_the_target_rank() {
+    // A shares its rank with a diamond, which is two rows taller. The back edge
+    // B --> A enters through the gap below the whole rank, so the diamond's
+    // body has to stay untouched.
+    let input = "graph TD\n    S --> A\n    S --> D{Decide}\n    A --> B\n    B --> A\n";
+    let output = ma::render(input).unwrap();
+    assert!(output.contains("│ Decide │"), "diamond body intact:\n{output}");
+    assert!(output.contains(" ╲      ╱"), "diamond lower slant intact:\n{output}");
+    assert!(output.contains("│ A │"), "A intact:\n{output}");
+    assert_eq!(output.matches('▲').count(), 1, "back edge arrives:\n{output}");
+}
+
+#[test]
+fn spec_cycle_disconnected_components_each_draw_their_own_back_edge() {
+    let input = "graph TD\n    A --> B\n    B --> A\n    C --> D\n    D --> C\n";
+    let output = ma::render(input).unwrap();
+    for id in ["A", "B", "C", "D"] {
+        assert!(output.contains(&format!("│ {id} │")), "{id} intact:\n{output}");
+    }
+    assert_eq!(output.matches('▲').count(), 2, "both cycles close:\n{output}");
+}
+
+#[test]
+fn spec_cycle_duplicate_edges_keep_ranks_forward() {
+    let input = "graph LR\n    A --> B\n    A --> B\n    B --> A\n    B --> A\n";
+    let output = ma::render(input).unwrap();
+    let a = output.find("│ A │").unwrap();
+    let b = output.find("│ B │").unwrap();
+    assert!(a < b, "parallel edges do not push B ahead of A:\n{output}");
+    assert!(output.contains('▲'), "back edge drawn:\n{output}");
+}
+
+#[test]
+fn spec_cycle_lr_back_edges_from_the_last_rank_all_arrive() {
+    // Three back edges leave the same node, so they share one rank gap and the
+    // lanes have to wrap without eating each other's arrow heads.
+    let input =
+        "graph LR\n    A --> B\n    B --> C\n    C --> D\n    D --> A\n    D --> B\n    D --> C\n";
+    let output = ma::render(input).unwrap();
+    for id in ["A", "B", "C", "D"] {
+        assert!(output.contains(&format!("│ {id} │")), "{id} intact:\n{output}");
+    }
+    assert_eq!(output.matches('▲').count(), 3, "three back edges arrive:\n{output}");
+}
+
+#[test]
+fn spec_cycle_long_chain_renders_every_node() {
+    let mut input = String::from("graph TD\n");
+    for i in 1..=60 {
+        input.push_str(&format!("    N{i} --> N{}\n", i + 1));
+    }
+    input.push_str("    N61 --> N1\n");
+    let output = ma::render(&input).unwrap();
+    for i in 1..=61 {
+        assert!(output.contains(&format!("│ N{i} │")), "N{i} rendered");
+    }
+    assert_eq!(output.matches('▲').count(), 1, "the back edge closes the chain");
+}
+
+#[test]
+fn spec_fan_in_diamond_unchanged_by_back_edge_filtering() {
+    // The fan-out and fan-in bars now count forward children and parents only.
+    // With no back edge present the drawing must be exactly what it was.
+    let input = "graph TD\n    A --> B\n    A --> C\n    B --> D\n    C --> D\n";
+    let output = ma::render(input).unwrap();
+    let expected = concat!(
+        "    ┌───┐\n",
+        "    │ A │\n",
+        "    └─┬─┘\n",
+        "  ┌───┴───┐\n",
+        "  ▼       ▼\n",
+        "┌───┐   ┌───┐\n",
+        "│ B │   │ C │\n",
+        "└─┬─┘   └─┬─┘\n",
+        "  └───┬───┘\n",
+        "      ▼\n",
+        "    ┌───┐\n",
+        "    │ D │\n",
+        "    └───┘",
+    );
+    assert_eq!(output, expected);
 }

@@ -55,7 +55,17 @@ impl Canvas {
     pub(crate) fn render(&self) -> String {
         let mut output = String::with_capacity(self.cells.len() + self.height.saturating_sub(1));
 
-        for row in 0..self.height {
+        // Reserved space the drawing did not need renders as blank rows; they
+        // carry no meaning at the end of the output.
+        let last_row = (0..self.height)
+            .rposition(|row| {
+                self.cells[row * self.width..(row + 1) * self.width]
+                    .iter()
+                    .any(|ch| *ch != ' ')
+            })
+            .map_or(0, |row| row + 1);
+
+        for row in 0..last_row {
             if row > 0 {
                 output.push('\n');
             }
