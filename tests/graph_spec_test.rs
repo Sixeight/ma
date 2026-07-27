@@ -705,6 +705,104 @@ fn spec_self_loop_lr_visual() {
 }
 
 // =============================================================================
+// Cycles — back edges
+// =============================================================================
+
+#[test]
+fn spec_cycle_lr_diamond_terminates() {
+    let input = "graph LR\n    A --> B\n    A --> C\n    B --> D\n    C --> D\n    D --> A\n";
+    let output = ma::render(input).unwrap();
+    for id in ["A", "B", "C", "D"] {
+        assert!(output.contains(&format!("│ {id} ")), "{id} rendered");
+    }
+}
+
+#[test]
+fn spec_cycle_lr_two_nodes_ranks_forward() {
+    let input = "graph LR\n    A --> B\n    B --> A\n";
+    let output = ma::render(input).unwrap();
+    let first = output.lines().next().unwrap();
+    assert!(!first.trim().is_empty(), "first rank is not empty: {output:?}");
+    let a = output.find("│ A ").unwrap();
+    let b = output.find("│ B ").unwrap();
+    assert!(a < b, "A left of B, back edge B --> A goes backwards:\n{output}");
+}
+
+#[test]
+fn spec_cycle_td_two_nodes_ranks_forward() {
+    let input = "graph TD\n    A --> B\n    B --> A\n";
+    let output = ma::render(input).unwrap();
+    let first = output.lines().next().unwrap();
+    assert!(!first.trim().is_empty(), "first rank is not empty: {output:?}");
+    let a = output.find("│ A ").unwrap();
+    let b = output.find("│ B ").unwrap();
+    assert!(a < b, "A above B, back edge B --> A goes backwards:\n{output}");
+}
+
+#[test]
+fn spec_cycle_three_nodes_keeps_entry_node_first() {
+    for input in [
+        "graph LR\n    A --> B\n    B --> C\n    C --> A\n",
+        "graph TD\n    A --> B\n    B --> C\n    C --> A\n",
+    ] {
+        let output = ma::render(input).unwrap();
+        let a = output.find("│ A ").unwrap();
+        let b = output.find("│ B ").unwrap();
+        let c = output.find("│ C ").unwrap();
+        assert!(a < b && b < c, "A, B, C in declaration order:\n{output}");
+    }
+}
+
+#[test]
+fn spec_cycle_lr_back_edge_visual() {
+    let input = "graph LR\n    A --> B\n    B --> A\n";
+    let output = ma::render(input).unwrap();
+    let expected = concat!(
+        "┌───┐     ┌───┐\n",
+        "│ A │────>│ B │\n",
+        "└───┘     └─┬─┘\n",
+        "  ▲──┐      └──┐\n",
+        "     └─────────┘",
+    );
+    assert_eq!(output, expected);
+}
+
+#[test]
+fn spec_cycle_td_back_edge_visual() {
+    let input = "graph TD\n    A --> B\n    B --> A\n";
+    let output = ma::render(input).unwrap();
+    let expected = concat!(
+        "┌───┐\n",
+        "│ A │◄┐\n",
+        "└─┬─┘ │\n",
+        "  │   │\n",
+        "  ▼   │\n",
+        "┌───┐ │\n",
+        "│ B │ │\n",
+        "└─┬─┘ │\n",
+        "  └───┘",
+    );
+    assert_eq!(output, expected);
+}
+
+#[test]
+fn spec_cycle_back_edge_label_rendered() {
+    let lr = ma::render("graph LR\n    A --> B\n    B -->|retry| A\n").unwrap();
+    assert!(lr.contains("retry"), "LR back edge label rendered:\n{lr}");
+    let td = ma::render("graph TD\n    A --> B\n    B -->|retry| A\n").unwrap();
+    assert!(td.contains("retry"), "TD back edge label rendered:\n{td}");
+}
+
+#[test]
+fn spec_cycle_back_edge_does_not_cross_nodes() {
+    let input = "graph LR\n    A --> B\n    B --> C\n    C --> A\n    C --> B\n";
+    let output = ma::render(input).unwrap();
+    assert!(output.contains("│ B │"), "B rendered intact:\n{output}");
+    assert!(output.contains("│ C │"), "C rendered intact:\n{output}");
+    assert_eq!(output.matches('▲').count(), 2, "both back edges arrive");
+}
+
+// =============================================================================
 // Dispatch — graph input does not break sequence diagrams
 // =============================================================================
 

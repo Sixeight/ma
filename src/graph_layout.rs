@@ -45,6 +45,78 @@ pub struct EdgeLayout {
 
 const SUBGRAPH_GAP: usize = 3;
 
+/// Row/column kept free between the nodes and the back-edge gutter lanes.
+const BACK_EDGE_CLEARANCE: usize = 1;
+
+/// True when the target does not sit ahead of the source in the flow direction,
+/// so the edge has to be routed backwards around the nodes. Self-loops are the
+/// caller's business.
+pub fn is_back_edge(direction: &Direction, from: &NodeLayout, to: &NodeLayout) -> bool {
+    match direction {
+        Direction::TopDown => to.y < from.y + from.height,
+        Direction::LeftRight => to.x < from.x + from.width,
+    }
+}
+
+/// Indices into `edges` of the edges routed backwards, in declaration order.
+/// Each one gets its own lane in the gutter, so the index is also the lane.
+pub fn back_edge_lanes(
+    direction: &Direction,
+    nodes: &[NodeLayout],
+    edges: &[EdgeLayout],
+) -> Vec<usize> {
+    edges
+        .iter()
+        .enumerate()
+        .filter(|(_, edge)| edge.from_id != edge.to_id)
+        .filter(|(_, edge)| {
+            let from = nodes.iter().find(|n| n.id == edge.from_id);
+            let to = nodes.iter().find(|n| n.id == edge.to_id);
+            match (from, to) {
+                (Some(from), Some(to)) => is_back_edge(direction, from, to),
+                _ => false,
+            }
+        })
+        .map(|(index, _)| index)
+        .collect()
+}
+
+fn reserve_back_edge_space(
+    direction: &Direction,
+    nodes: &[NodeLayout],
+    edges: &[EdgeLayout],
+    width: &mut usize,
+    height: &mut usize,
+) {
+    let lanes = back_edge_lanes(direction, nodes, edges);
+    if lanes.is_empty() {
+        return;
+    }
+
+    let label_width = lanes
+        .iter()
+        .filter_map(|index| edges[*index].label.as_ref())
+        .map(|label| display_width(label) + 1)
+        .max()
+        .unwrap_or(0);
+
+    match direction {
+        // TD routes through gutter columns right of everything, reached over
+        // the free row below the source's rank. The label rides on that row.
+        Direction::TopDown => {
+            *width += BACK_EDGE_CLEARANCE + label_width + lanes.len();
+            *height += BACK_EDGE_CLEARANCE;
+        }
+        // LR routes through gutter rows below everything, reached over the
+        // free column right of the source's rank — the last rank needs one
+        // column added for that.
+        Direction::LeftRight => {
+            *width += BACK_EDGE_CLEARANCE;
+            *height += BACK_EDGE_CLEARANCE + lanes.len();
+        }
+    }
+}
+
 pub fn compute(diagram: &GraphDiagram) -> Result<GraphLayout, String> {
     if diagram.nodes.is_empty() {
         return Err("no nodes found".to_string());
@@ -123,6 +195,14 @@ pub fn compute(diagram: &GraphDiagram) -> Result<GraphLayout, String> {
     if has_cross_rank_fan_in {
         width = width.max(max_right + 2);
     }
+
+    reserve_back_edge_space(
+        &diagram.direction,
+        &node_layouts,
+        &edges,
+        &mut width,
+        &mut height,
+    );
 
     Ok(GraphLayout {
         nodes: node_layouts,
@@ -286,6 +366,14 @@ fn layout_with_subgraphs(diagram: &GraphDiagram) -> Result<GraphLayout, String> 
         height = height.max(sg.y + sg.height);
     }
 
+    reserve_back_edge_space(
+        &diagram.direction,
+        &all_nodes,
+        &edges,
+        &mut width,
+        &mut height,
+    );
+
     Ok(GraphLayout {
         nodes: all_nodes,
         edges,
@@ -296,64 +384,114 @@ fn layout_with_subgraphs(diagram: &GraphDiagram) -> Result<GraphLayout, String> 
     })
 }
 
+/// Ranks every node so that each forward edge points from a lower rank to a
+/// higher one. Edges that close a cycle are dropped from the ranking (they are
+/// drawn as back edges) — keeping them would produce ranks that contradict the
+/// edge direction the renderer draws from.
 fn assign_ranks(diagram: &GraphDiagram) -> HashMap<String, usize> {
-    let mut in_edges: HashMap<String, Vec<String>> = HashMap::new();
+    let back_edges = find_back_edges(diagram);
+
+    let mut out_edges: HashMap<&str, Vec<&str>> = HashMap::new();
+    let mut in_degree: HashMap<&str, usize> = HashMap::new();
     for node in &diagram.nodes {
-        in_edges.entry(node.id.clone()).or_default();
+        out_edges.entry(node.id.as_str()).or_default();
+        in_degree.entry(node.id.as_str()).or_insert(0);
     }
-    for edge in &diagram.edges {
-        if edge.from == edge.to {
+    for (index, edge) in diagram.edges.iter().enumerate() {
+        if edge.from == edge.to || back_edges.contains(&index) {
             continue;
         }
-        in_edges
-            .entry(edge.to.clone())
+        out_edges
+            .entry(edge.from.as_str())
             .or_default()
-            .push(edge.from.clone());
+            .push(edge.to.as_str());
+        *in_degree.entry(edge.to.as_str()).or_insert(0) += 1;
     }
 
+    // Longest path from the sources, in declaration order (Kahn).
     let mut ranks: HashMap<String, usize> = HashMap::new();
-    let mut visiting: HashSet<String> = HashSet::new();
+    let mut queue: Vec<&str> = diagram
+        .nodes
+        .iter()
+        .map(|n| n.id.as_str())
+        .filter(|id| in_degree[id] == 0)
+        .collect();
+    for id in &queue {
+        ranks.insert((*id).to_string(), 0);
+    }
 
-    for node in &diagram.nodes {
-        if !ranks.contains_key(&node.id) {
-            compute_rank(&node.id, &in_edges, &mut ranks, &mut visiting);
+    let mut head = 0;
+    while head < queue.len() {
+        let id = queue[head];
+        head += 1;
+        let rank = ranks[id];
+        for target in out_edges.get(id).cloned().unwrap_or_default() {
+            let entry = ranks.entry(target.to_string()).or_insert(0);
+            *entry = (*entry).max(rank + 1);
+            let degree = in_degree.get_mut(target).expect("target has in-degree");
+            *degree -= 1;
+            if *degree == 0 {
+                queue.push(target);
+            }
         }
+    }
+
+    // Every node is reachable once back edges are removed, but stay total.
+    for node in &diagram.nodes {
+        ranks.entry(node.id.clone()).or_insert(0);
     }
 
     ranks
 }
 
-fn compute_rank(
-    id: &str,
-    in_edges: &HashMap<String, Vec<String>>,
-    ranks: &mut HashMap<String, usize>,
-    visiting: &mut HashSet<String>,
-) -> usize {
-    if let Some(&r) = ranks.get(id) {
-        return r;
+/// Indices of the edges that point back to a node already on the DFS stack.
+fn find_back_edges(diagram: &GraphDiagram) -> HashSet<usize> {
+    let mut out_edges: HashMap<&str, Vec<(usize, &str)>> = HashMap::new();
+    for node in &diagram.nodes {
+        out_edges.entry(node.id.as_str()).or_default();
+    }
+    for (index, edge) in diagram.edges.iter().enumerate() {
+        if edge.from == edge.to {
+            continue;
+        }
+        out_edges
+            .entry(edge.from.as_str())
+            .or_default()
+            .push((index, edge.to.as_str()));
     }
 
-    if !visiting.insert(id.to_string()) {
-        // Cycle detected — treat back-edge as rank 0
-        return 0;
+    let mut back_edges = HashSet::new();
+    let mut done: HashSet<&str> = HashSet::new();
+    let mut on_stack: HashSet<&str> = HashSet::new();
+
+    for node in &diagram.nodes {
+        let root = node.id.as_str();
+        if done.contains(root) {
+            continue;
+        }
+        // (node, index of the next outgoing edge to visit)
+        let mut stack: Vec<(&str, usize)> = vec![(root, 0)];
+        on_stack.insert(root);
+
+        while let Some((id, cursor)) = stack.pop() {
+            let targets = out_edges.get(id).map(Vec::as_slice).unwrap_or(&[]);
+            if cursor < targets.len() {
+                let (edge_index, target) = targets[cursor];
+                stack.push((id, cursor + 1));
+                if on_stack.contains(target) {
+                    back_edges.insert(edge_index);
+                } else if !done.contains(target) {
+                    on_stack.insert(target);
+                    stack.push((target, 0));
+                }
+            } else {
+                on_stack.remove(id);
+                done.insert(id);
+            }
+        }
     }
 
-    let predecessors = in_edges.get(id).cloned().unwrap_or_default();
-    if predecessors.is_empty() {
-        visiting.remove(id);
-        ranks.insert(id.to_string(), 0);
-        return 0;
-    }
-
-    let max_pred = predecessors
-        .iter()
-        .map(|p| compute_rank(p, in_edges, ranks, visiting))
-        .max()
-        .unwrap_or(0);
-    let rank = max_pred + 1;
-    visiting.remove(id);
-    ranks.insert(id.to_string(), rank);
-    rank
+    back_edges
 }
 
 const BOX_HEIGHT: usize = 3;
@@ -413,6 +551,14 @@ pub fn compute_with_max_width(
                 width = width.max(sg.x + sg.width);
                 height = height.max(sg.y + sg.height);
             }
+
+            reserve_back_edge_space(
+                &diagram.direction,
+                &node_layouts,
+                &edges,
+                &mut width,
+                &mut height,
+            );
 
             if width <= max_width {
                 return Ok(GraphLayout {
@@ -664,6 +810,37 @@ mod tests {
         assert_eq!(ranks["A"], 0);
         assert_eq!(ranks["B"], 0);
         assert_eq!(ranks["C"], 1);
+    }
+
+    #[test]
+    fn rank_cycle_keeps_forward_edges_forward() {
+        let diagram = parse_graph(
+            "graph LR\n    A --> B\n    A --> C\n    B --> D\n    C --> D\n    D --> A\n",
+        )
+        .unwrap();
+        let ranks = assign_ranks(&diagram);
+        assert_eq!(ranks["A"], 0);
+        assert_eq!(ranks["B"], 1);
+        assert_eq!(ranks["C"], 1);
+        assert_eq!(ranks["D"], 2);
+    }
+
+    #[test]
+    fn rank_cycle_entry_node_first() {
+        let diagram = parse_graph("graph TD\n    A --> B\n    B --> C\n    C --> A\n").unwrap();
+        let ranks = assign_ranks(&diagram);
+        assert_eq!(ranks["A"], 0);
+        assert_eq!(ranks["B"], 1);
+        assert_eq!(ranks["C"], 2);
+    }
+
+    #[test]
+    fn back_edge_lane_per_edge() {
+        let diagram =
+            parse_graph("graph TD\n    A --> B\n    B --> C\n    C --> A\n    C --> B\n").unwrap();
+        let layout = compute(&diagram).unwrap();
+        let lanes = back_edge_lanes(&layout.direction, &layout.nodes, &layout.edges);
+        assert_eq!(lanes, vec![2, 3], "both back edges get their own lane");
     }
 
     #[test]
