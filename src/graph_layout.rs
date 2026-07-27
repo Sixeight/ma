@@ -59,7 +59,8 @@ pub fn is_back_edge(direction: &Direction, from: &NodeLayout, to: &NodeLayout) -
 }
 
 /// Indices into `edges` of the edges routed backwards, in declaration order.
-/// Each one gets its own lane in the gutter, so the index is also the lane.
+/// A back edge's position in this list is its lane in the gutter; the values
+/// themselves are edge indices, not lane numbers.
 pub fn back_edge_lanes(
     direction: &Direction,
     nodes: &[NodeLayout],
@@ -100,6 +101,9 @@ fn reserve_back_edge_space(
         .max()
         .unwrap_or(0);
 
+    // Invariant the renderer depends on: the gutter dimension grows by exactly
+    // BACK_EDGE_CLEARANCE + lanes.len(), so lane i lives at `size - lanes + i`
+    // and never collides with a node.
     match direction {
         // TD routes through gutter columns right of everything, reached over
         // the free row below the source's rank. The label rides on that row.
@@ -109,9 +113,10 @@ fn reserve_back_edge_space(
         }
         // LR routes through gutter rows below everything, reached over the
         // free column right of the source's rank — the last rank needs one
-        // column added for that.
+        // column added for that, plus room for a label parked right of a route
+        // too short to hold it.
         Direction::LeftRight => {
-            *width += BACK_EDGE_CLEARANCE;
+            *width += BACK_EDGE_CLEARANCE + label_width + 1;
             *height += BACK_EDGE_CLEARANCE + lanes.len();
         }
     }
@@ -428,10 +433,11 @@ fn assign_ranks(diagram: &GraphDiagram) -> HashMap<String, usize> {
         for target in out_edges.get(id).cloned().unwrap_or_default() {
             let entry = ranks.entry(target.to_string()).or_insert(0);
             *entry = (*entry).max(rank + 1);
-            let degree = in_degree.get_mut(target).expect("target has in-degree");
-            *degree -= 1;
-            if *degree == 0 {
-                queue.push(target);
+            if let Some(degree) = in_degree.get_mut(target) {
+                *degree -= 1;
+                if *degree == 0 {
+                    queue.push(target);
+                }
             }
         }
     }

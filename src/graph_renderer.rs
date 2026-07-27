@@ -27,21 +27,23 @@ fn render_td(layout: &GraphLayout) -> String {
 
     let lanes = back_edge_lanes(&layout.direction, &layout.nodes, &layout.edges);
 
-    // Draw non-self-loop edges first, then self-loops on top
-    // so self-loop labels aren't overwritten by cross-rank routing
+    // Forward edges first, then back edges, then self-loops on top: each pass
+    // may cross the previous one, and the later route is the one that must stay
+    // readable (a fan-in bar would otherwise swallow a back edge's arrow head).
     for (index, edge) in layout.edges.iter().enumerate() {
-        if edge.from_id == edge.to_id {
+        if edge.from_id == edge.to_id || lanes.contains(&index) {
             continue;
         }
         let from = node_map[edge.from_id.as_str()];
         let to = node_map[edge.to_id.as_str()];
-        match lanes.iter().position(|lane| *lane == index) {
-            Some(lane) => {
-                let route_col = layout.width + lane - lanes.len();
-                draw_td_back_edge(&mut grid, from, to, edge, layout, lane, route_col);
-            }
-            None => draw_td_edge(&mut grid, from, to, edge, layout),
-        }
+        draw_td_edge(&mut grid, from, to, edge, layout);
+    }
+    for (lane, index) in lanes.iter().enumerate() {
+        let edge = &layout.edges[*index];
+        let from = node_map[edge.from_id.as_str()];
+        let to = node_map[edge.to_id.as_str()];
+        let route_col = layout.width + lane - lanes.len();
+        draw_td_back_edge(&mut grid, from, to, edge, layout, lane, route_col);
     }
     for edge in &layout.edges {
         if edge.from_id != edge.to_id {
@@ -70,18 +72,19 @@ fn render_lr(layout: &GraphLayout) -> String {
     let lanes = back_edge_lanes(&layout.direction, &layout.nodes, &layout.edges);
 
     for (index, edge) in layout.edges.iter().enumerate() {
-        if edge.from_id == edge.to_id {
+        if edge.from_id == edge.to_id || lanes.contains(&index) {
             continue;
         }
         let from = node_map[edge.from_id.as_str()];
         let to = node_map[edge.to_id.as_str()];
-        match lanes.iter().position(|lane| *lane == index) {
-            Some(lane) => {
-                let route_row = layout.height + lane - lanes.len();
-                draw_lr_back_edge(&mut grid, from, to, edge, layout, lane, route_row);
-            }
-            None => draw_lr_edge(&mut grid, from, to, edge, layout),
-        }
+        draw_lr_edge(&mut grid, from, to, edge, layout);
+    }
+    for (lane, index) in lanes.iter().enumerate() {
+        let edge = &layout.edges[*index];
+        let from = node_map[edge.from_id.as_str()];
+        let to = node_map[edge.to_id.as_str()];
+        let route_row = layout.height + lane - lanes.len();
+        draw_lr_back_edge(&mut grid, from, to, edge, layout, lane, route_row);
     }
     for edge in &layout.edges {
         if edge.from_id != edge.to_id {
@@ -488,25 +491,27 @@ fn draw_td_edge(
 
     grid.set(bottom_row, from_cx, '┬');
 
-    let sibling_count = layout
+    // Back edges are routed through the gutter, so they take no part in the
+    // fan-out bar or the fan-in bar drawn for the forward edges.
+    let forward_children: Vec<&NodeLayout> = layout
         .edges
         .iter()
         .filter(|e| e.from_id == from.id && e.from_id != e.to_id)
-        .count();
-    let parent_count = layout
+        .filter_map(|e| layout.nodes.iter().find(|n| n.id == e.to_id))
+        .filter(|n| !is_back_edge(&layout.direction, from, n))
+        .collect();
+    let forward_parents: Vec<&NodeLayout> = layout
         .edges
         .iter()
         .filter(|e| e.to_id == to.id && e.from_id != e.to_id)
-        .count();
+        .filter_map(|e| layout.nodes.iter().find(|n| n.id == e.from_id))
+        .filter(|n| !is_back_edge(&layout.direction, n, to))
+        .collect();
+    let sibling_count = forward_children.len();
+    let parent_count = forward_parents.len();
 
     if sibling_count > 1 {
-        let child_centers: Vec<usize> = layout
-            .edges
-            .iter()
-            .filter(|e| e.from_id == from.id && e.from_id != e.to_id)
-            .filter_map(|e| layout.nodes.iter().find(|n| n.id == e.to_id))
-            .map(|n| n.center_x)
-            .collect();
+        let child_centers: Vec<usize> = forward_children.iter().map(|n| n.center_x).collect();
         let min_cx = *child_centers.iter().min().unwrap();
         let max_cx = *child_centers.iter().max().unwrap();
 
@@ -523,12 +528,7 @@ fn draw_td_edge(
             grid.set(to_above, to_cx, td_vertical_connector(edge_type));
         }
     } else if parent_count > 1 {
-        let parents: Vec<&NodeLayout> = layout
-            .edges
-            .iter()
-            .filter(|e| e.to_id == to.id && e.from_id != e.to_id)
-            .filter_map(|e| layout.nodes.iter().find(|n| n.id == e.from_id))
-            .collect();
+        let parents = &forward_parents;
         let all_same_y = parents.windows(2).all(|w| w[0].y == w[1].y);
 
         if all_same_y {
@@ -582,6 +582,34 @@ fn td_rank_gutter(layout: &GraphLayout, node: &NodeLayout) -> usize {
         .unwrap_or(node.y + node.height)
 }
 
+fn enclosing_subgraph(layout: &GraphLayout, node: &NodeLayout) -> Option<usize> {
+    layout.subgraphs.iter().position(|sg| {
+        node.x >= sg.x
+            && node.x + node.width <= sg.x + sg.width
+            && node.y >= sg.y
+            && node.y + node.height <= sg.y + sg.height
+    })
+}
+
+/// Row each end of a back edge has to reach before it may turn sideways: below
+/// its subgraph frame, so the route crosses the border instead of running along
+/// it. Two ends inside the same frame turn inside it — leaving would mean
+/// crossing the same border twice for nothing.
+fn back_edge_turn_rows(layout: &GraphLayout, from: &NodeLayout, to: &NodeLayout) -> (usize, usize) {
+    let (sg_from, sg_to) = (
+        enclosing_subgraph(layout, from),
+        enclosing_subgraph(layout, to),
+    );
+    if sg_from == sg_to {
+        return (0, 0);
+    }
+    let below = |sg: Option<usize>| {
+        sg.map(|i| layout.subgraphs[i].y + layout.subgraphs[i].height)
+            .unwrap_or(0)
+    };
+    (below(sg_from), below(sg_to))
+}
+
 /// Column the vertical part of a back edge runs down, inside the gap right of
 /// the node's rank. Lanes past the gap's width wrap and share a column.
 fn lr_lane_col(layout: &GraphLayout, node: &NodeLayout, lane: usize) -> usize {
@@ -626,9 +654,12 @@ fn draw_lr_back_edge(
 ) {
     let from_below = from.y + from.height;
     let to_below = to.y + to.height;
+    let (from_clear, to_clear) = back_edge_turn_rows(layout, from, to);
+    let from_turn = from_below.max(from_clear);
+    let to_turn = to_below.max(to_clear);
     let lane_from = lr_lane_col(layout, from, lane);
     let lane_to = lr_lane_col(layout, to, lane);
-    if lane_to >= lane_from || route_row <= from_below.max(to_below) {
+    if lane_to >= lane_from || route_row <= from_turn.max(to_turn) {
         // Same rank, or no gutter reserved: skip rather than draw junk.
         return;
     }
@@ -638,12 +669,15 @@ fn draw_lr_back_edge(
 
     // Source: down out of the box, right along the rank gap, down to the lane
     grid.set_merged(from_below - 1, from.center_x, '┬', merge_box_drawing);
-    grid.set_merged(from_below, from.center_x, '└', merge_box_drawing);
-    for col in (from.center_x + 1)..lane_from {
-        grid.set_merged(from_below, col, horiz, merge_box_drawing);
+    for row in from_below..from_turn {
+        grid.set_merged(row, from.center_x, vert, merge_box_drawing);
     }
-    grid.set_merged(from_below, lane_from, '┐', merge_box_drawing);
-    for row in (from_below + 1)..route_row {
+    grid.set_merged(from_turn, from.center_x, '└', merge_box_drawing);
+    for col in (from.center_x + 1)..lane_from {
+        grid.set_merged(from_turn, col, horiz, merge_box_drawing);
+    }
+    grid.set_merged(from_turn, lane_from, '┐', merge_box_drawing);
+    for row in (from_turn + 1)..route_row {
         grid.set_merged(row, lane_from, vert, merge_box_drawing);
     }
     grid.set_merged(route_row, lane_from, '┘', merge_box_drawing);
@@ -655,12 +689,18 @@ fn draw_lr_back_edge(
     grid.set_merged(route_row, lane_to, '└', merge_box_drawing);
 
     // Target: up the rank gap, left under the target, arrow up into the box
-    for row in (to_below + 1)..route_row {
+    for row in (to_turn + 1)..route_row {
         grid.set_merged(row, lane_to, vert, merge_box_drawing);
     }
-    grid.set_merged(to_below, lane_to, '┐', merge_box_drawing);
+    grid.set_merged(to_turn, lane_to, '┐', merge_box_drawing);
     for col in (to.center_x + 1)..lane_to {
-        grid.set_merged(to_below, col, horiz, merge_box_drawing);
+        grid.set_merged(to_turn, col, horiz, merge_box_drawing);
+    }
+    if to_turn > to_below {
+        grid.set_merged(to_turn, to.center_x, '└', merge_box_drawing);
+        for row in (to_below + 1)..to_turn {
+            grid.set_merged(row, to.center_x, vert, merge_box_drawing);
+        }
     }
     grid.set(
         to_below,
@@ -673,8 +713,15 @@ fn draw_lr_back_edge(
     );
 
     if let Some(ref label) = edge.label {
+        // Centred on the route when it fits, parked right of the route when it
+        // does not — writing it over the corner would break the line.
         let span = lane_from - lane_to - 1;
-        let label_col = lane_to + 1 + span.saturating_sub(display_width(label)) / 2;
+        let width = display_width(label);
+        let label_col = if width <= span {
+            lane_to + 1 + (span - width) / 2
+        } else {
+            lane_from + 2
+        };
         grid.write_str(route_row, label_col, label);
     }
 }
@@ -692,10 +739,14 @@ fn draw_td_back_edge(
     route_col: usize,
 ) {
     let from_below = from.y + from.height;
-    let lane_row = td_lane_row(layout, from, lane);
-    let to_row = to.y + to.height / 2;
-    let to_right = to.x + to.width;
-    if route_col <= to_right || lane_row <= to_row || route_col >= layout.width {
+    let (from_clear, to_clear) = back_edge_turn_rows(layout, from, to);
+    let lane_row = td_lane_row(layout, from, lane).max(from_clear);
+    // Enter through the gap row below the target's rank, never through the row
+    // the target sits on: that row belongs to its rank and crosses siblings.
+    let to_gap = td_rank_gutter(layout, to).max(to_clear);
+    let entry_col = to.center_x.max(to.x + to.width - 2);
+    if route_col <= entry_col || lane_row <= to_gap {
+        // Same rank, or the target's frame pushed both ends onto one row.
         return;
     }
 
@@ -714,22 +765,30 @@ fn draw_td_back_edge(
     grid.set_merged(lane_row, route_col, '┘', merge_box_drawing);
 
     // Gutter column, bottom to top
-    for row in (to_row + 1)..lane_row {
+    for row in (to_gap + 1)..lane_row {
         grid.set_merged(row, route_col, vert, merge_box_drawing);
     }
-    grid.set_merged(to_row, route_col, '┐', merge_box_drawing);
+    grid.set_merged(to_gap, route_col, '┐', merge_box_drawing);
 
-    // Target: left into its right border
-    for col in (to_right + 1)..route_col {
-        grid.set_merged(to_row, col, horiz, merge_box_drawing);
+    // Target: left along the gap row, then up into the box
+    for col in (entry_col + 1)..route_col {
+        grid.set_merged(to_gap, col, horiz, merge_box_drawing);
     }
+    let to_below = to.y + to.height;
+    if to_below < to_gap {
+        grid.set_merged(to_gap, entry_col, '┘', merge_box_drawing);
+        for row in (to_below + 1)..to_gap {
+            grid.set_merged(row, entry_col, vert, merge_box_drawing);
+        }
+    }
+    grid.set_merged(to_below - 1, entry_col, '┴', merge_box_drawing);
     grid.set(
-        to_row,
-        to_right,
+        to_below,
+        entry_col,
         if has_arrow_head(edge.edge_type) {
-            '◄'
+            '▲'
         } else {
-            horiz
+            vert
         },
     );
 

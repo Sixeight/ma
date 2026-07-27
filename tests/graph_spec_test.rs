@@ -773,9 +773,9 @@ fn spec_cycle_td_back_edge_visual() {
     let output = ma::render(input).unwrap();
     let expected = concat!(
         "┌───┐\n",
-        "│ A │◄┐\n",
-        "└─┬─┘ │\n",
-        "  │   │\n",
+        "│ A │\n",
+        "└─┬┴┘\n",
+        "  │▲──┐\n",
         "  ▼   │\n",
         "┌───┐ │\n",
         "│ B │ │\n",
@@ -800,6 +800,83 @@ fn spec_cycle_back_edge_does_not_cross_nodes() {
     assert!(output.contains("│ B │"), "B rendered intact:\n{output}");
     assert!(output.contains("│ C │"), "C rendered intact:\n{output}");
     assert_eq!(output.matches('▲').count(), 2, "both back edges arrive");
+}
+
+#[test]
+fn spec_cycle_back_edge_does_not_overwrite_sibling_nodes() {
+    // The back edge B --> A must reach A without crossing C, which shares A's rank
+    let input = "graph TD\n    A --> B\n    B --> A\n    C --> B\n";
+    let output = ma::render(input).unwrap();
+    assert!(output.contains("│ A │"), "A rendered intact:\n{output}");
+    assert!(output.contains("│ C │"), "C rendered intact:\n{output}");
+    assert!(output.contains('▲'), "back edge arrives:\n{output}");
+}
+
+#[test]
+fn spec_cycle_back_edge_excluded_from_fan_out_bar() {
+    // C has one forward child (D) and one back edge (A); the fan-out bar is for
+    // forward children only, so a single forward child means no bar
+    let input = "graph TD\n    A --> B\n    B --> C\n    C --> D\n    C --> A\n";
+    let output = ma::render(input).unwrap();
+    for id in ["A", "B", "C", "D"] {
+        assert!(output.contains(&format!("│ {id} │")), "{id} intact:\n{output}");
+    }
+    assert!(output.contains('▲'), "back edge arrives:\n{output}");
+}
+
+#[test]
+fn spec_cycle_back_edge_long_label_keeps_route_intact() {
+    let input = "graph LR\n    A --> B\n    B -->|averyverylonglabel| A\n";
+    let output = ma::render(input).unwrap();
+    assert!(output.contains("averyverylonglabel"), "label not truncated:\n{output}");
+    let route = output.lines().last().unwrap();
+    assert!(route.contains('└') && route.contains('┘'), "route corners intact:\n{output}");
+}
+
+#[test]
+fn spec_cycle_inside_subgraph_keeps_frame() {
+    for input in [
+        "graph TD\n    subgraph S\n        A --> B\n        B --> A\n    end\n",
+        "graph LR\n    subgraph S\n        A --> B\n        B --> A\n    end\n",
+    ] {
+        let output = ma::render(input).unwrap();
+        assert!(output.contains("┌─ S "), "subgraph title intact:\n{output}");
+        assert!(output.contains("│ A │"), "A intact:\n{output}");
+        assert!(output.contains("│ B │"), "B intact:\n{output}");
+        assert!(output.contains('▲'), "back edge arrives:\n{output}");
+    }
+}
+
+#[test]
+fn spec_cycle_back_edge_across_subgraphs_keeps_frames() {
+    let input = "graph LR\n    subgraph One\n        A --> B\n    end\n    subgraph Two\n        C --> D\n    end\n    B --> C\n    D --> A\n";
+    let output = ma::render(input).unwrap();
+    assert!(output.contains("┌─ One "), "One title intact:\n{output}");
+    assert!(output.contains("┌─ Two "), "Two title intact:\n{output}");
+    for id in ["A", "B", "C", "D"] {
+        assert!(output.contains(&format!("│ {id} │")), "{id} intact:\n{output}");
+    }
+}
+
+#[test]
+fn spec_cycle_back_edge_types() {
+    let dotted = ma::render("graph LR\n    A --> B\n    B -.-> A\n").unwrap();
+    assert!(dotted.contains('╌') || dotted.contains('┊'), "dotted glyphs:\n{dotted}");
+    let thick = ma::render("graph LR\n    A --> B\n    B ==> A\n").unwrap();
+    assert!(thick.contains('═') || thick.contains('║'), "thick glyphs:\n{thick}");
+    let open = ma::render("graph LR\n    A --> B\n    B --- A\n").unwrap();
+    assert!(!open.contains('▲'), "open link has no arrow head:\n{open}");
+}
+
+#[test]
+fn spec_cycle_respects_max_width() {
+    let input = "graph LR\n    A --> B\n    A --> C\n    B --> D\n    C --> D\n    D --> A\n";
+    for max in [80, 30, 20] {
+        let output = ma::render_with_options(input, Some(max)).unwrap();
+        let widest = output.lines().map(ma::display_width::display_width).max().unwrap_or(0);
+        assert!(widest <= max, "output fits {max} columns, got {widest}:\n{output}");
+        assert!(output.contains('▲'), "back edge still drawn at {max}:\n{output}");
+    }
 }
 
 // =============================================================================
