@@ -124,6 +124,51 @@ Features:
 - Identifying (`--`) and non-identifying (`..`) relationships
 - Relationship labels
 
+### State Diagram
+
+`stateDiagram-v2` and `stateDiagram` cover workflow descriptions commonly used in pull requests.
+
+```mermaid
+stateDiagram-v2
+    direction LR
+    [*] --> Draft
+    state "In review" as Review
+    Draft --> Review : open PR
+    Review --> Merged : approve
+    Merged --> [*]
+```
+
+Features:
+- TD/TB and LR directions
+- Simple states, aliases (`state "Label" as id`), and inline descriptions (`id : Label`)
+- Labeled transitions and start/end markers (`[*]`)
+
+Composite states, forks, joins, choices, and concurrency are not supported yet.
+
+### Class Diagram
+
+```mermaid
+classDiagram
+    direction LR
+    class PullRequest {
+        +String title
+        +merge()
+    }
+    class Review {
+        +String status
+        +approve()
+    }
+    PullRequest "1" *-- "many" Review : contains
+```
+
+Features:
+- Class declarations, aliases, annotations, attributes, and methods
+- Block members and `Class : member` syntax
+- Inheritance, realization, dependency, association, aggregation, and composition relations
+- Relationship labels; aggregation/composition semantics are included in the ASCII label
+
+Namespaces, nested class groups, and bidirectional relations are not supported yet. Multiplicities are accepted for endpoint parsing but are not drawn.
+
 ## Unicode Support
 
 Full-width characters (CJK, emoji) are handled correctly in layout calculations.
