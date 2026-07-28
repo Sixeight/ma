@@ -3,7 +3,10 @@ use std::io::Read;
 use clap::Parser;
 
 #[derive(Parser)]
-#[command(name = "ma", about = "Render Mermaid diagrams as ASCII art (sequence, flowchart, ER)")]
+#[command(
+    name = "ma",
+    about = "Render Mermaid diagrams as ASCII art (sequence, flowchart, ER, state)"
+)]
 struct Cli {
     /// Input file (reads from stdin if not provided)
     file: Option<std::path::PathBuf>,
@@ -23,10 +26,12 @@ fn main() {
         }),
         None => {
             let mut buf = String::new();
-            std::io::stdin().read_to_string(&mut buf).unwrap_or_else(|e| {
-                eprintln!("ERROR: failed to read stdin: {e}");
-                std::process::exit(1);
-            });
+            std::io::stdin()
+                .read_to_string(&mut buf)
+                .unwrap_or_else(|e| {
+                    eprintln!("ERROR: failed to read stdin: {e}");
+                    std::process::exit(1);
+                });
             buf
         }
     };

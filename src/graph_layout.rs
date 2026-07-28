@@ -191,17 +191,27 @@ pub fn compute(diagram: &GraphDiagram) -> Result<GraphLayout, String> {
 
     let (mut width, mut height) = base_extents(&node_layouts, &subgraphs);
 
+    if diagram.direction == Direction::TopDown {
+        for edge in &edges {
+            let Some(label) = edge.label.as_ref() else {
+                continue;
+            };
+            let Some(from) = node_layouts.iter().find(|node| node.id == edge.from_id) else {
+                continue;
+            };
+            let label_width = display_width(label);
+            let label_col = from.center_x.saturating_sub(label_width / 2);
+            width = width.max(label_col + label_width);
+        }
+    }
+
     // Self-loop nodes need extra space: arm (2 cols) + label width to the right,
     // and 1 row below the node for the return arrow
     for edge in &diagram.edges {
         if edge.from == edge.to
             && let Some(nl) = node_layouts.iter().find(|n| n.id == edge.from)
         {
-            let label_w = edge
-                .label
-                .as_ref()
-                .map(|l| display_width(l))
-                .unwrap_or(0);
+            let label_w = edge.label.as_ref().map(|l| display_width(l)).unwrap_or(0);
             let needed_right = nl.x + nl.width + 2 + label_w;
             width = width.max(needed_right);
             let needed_bottom = nl.y + nl.height + 1;
@@ -210,7 +220,11 @@ pub fn compute(diagram: &GraphDiagram) -> Result<GraphLayout, String> {
     }
 
     // Cross-rank fan-in edges: reserve gutter column width.
-    let max_right = node_layouts.iter().map(|n| n.x + n.width).max().unwrap_or(0);
+    let max_right = node_layouts
+        .iter()
+        .map(|n| n.x + n.width)
+        .max()
+        .unwrap_or(0);
     let has_cross_rank_fan_in = diagram.edges.iter().any(|edge| {
         if edge.from == edge.to {
             return false;
@@ -695,8 +709,7 @@ fn layout_lr_with_gap(
             let label_gap = edges
                 .iter()
                 .filter(|e| {
-                    ranks.get(&e.from) == Some(&rank)
-                        && ranks.get(&e.to) == Some(&(rank + 1))
+                    ranks.get(&e.from) == Some(&rank) && ranks.get(&e.to) == Some(&(rank + 1))
                 })
                 .filter_map(|e| e.label.as_ref().map(|l| display_width(l) + 2))
                 .max()
@@ -978,8 +991,16 @@ mod tests {
         let layout = compute(&diagram).unwrap();
 
         assert_eq!(layout.subgraphs.len(), 2);
-        let sg_a = layout.subgraphs.iter().find(|s| s.label == "GroupA").unwrap();
-        let sg_b = layout.subgraphs.iter().find(|s| s.label == "GroupB").unwrap();
+        let sg_a = layout
+            .subgraphs
+            .iter()
+            .find(|s| s.label == "GroupA")
+            .unwrap();
+        let sg_b = layout
+            .subgraphs
+            .iter()
+            .find(|s| s.label == "GroupB")
+            .unwrap();
 
         // Subgraph x-ranges must not overlap
         let a_right = sg_a.x + sg_a.width;
@@ -987,23 +1008,38 @@ mod tests {
         assert!(
             a_right <= sg_b.x || b_right <= sg_a.x,
             "subgraphs overlap: GroupA({}-{}), GroupB({}-{})",
-            sg_a.x, a_right, sg_b.x, b_right
+            sg_a.x,
+            a_right,
+            sg_b.x,
+            b_right
         );
 
         // Each node must be within its subgraph bounds
         for node_id in &["A", "B", "C"] {
             let n = layout.nodes.iter().find(|n| n.id == *node_id).unwrap();
             assert!(n.x >= sg_a.x, "{node_id} x < sg_a.x");
-            assert!(n.x + n.width <= sg_a.x + sg_a.width, "{node_id} right > sg_a right");
+            assert!(
+                n.x + n.width <= sg_a.x + sg_a.width,
+                "{node_id} right > sg_a right"
+            );
             assert!(n.y >= sg_a.y, "{node_id} y < sg_a.y");
-            assert!(n.y + n.height <= sg_a.y + sg_a.height, "{node_id} bottom > sg_a bottom");
+            assert!(
+                n.y + n.height <= sg_a.y + sg_a.height,
+                "{node_id} bottom > sg_a bottom"
+            );
         }
         for node_id in &["D", "E"] {
             let n = layout.nodes.iter().find(|n| n.id == *node_id).unwrap();
             assert!(n.x >= sg_b.x, "{node_id} x < sg_b.x");
-            assert!(n.x + n.width <= sg_b.x + sg_b.width, "{node_id} right > sg_b right");
+            assert!(
+                n.x + n.width <= sg_b.x + sg_b.width,
+                "{node_id} right > sg_b right"
+            );
             assert!(n.y >= sg_b.y, "{node_id} y < sg_b.y");
-            assert!(n.y + n.height <= sg_b.y + sg_b.height, "{node_id} bottom > sg_b bottom");
+            assert!(
+                n.y + n.height <= sg_b.y + sg_b.height,
+                "{node_id} bottom > sg_b bottom"
+            );
         }
     }
 
@@ -1036,13 +1072,17 @@ mod tests {
         assert!(
             c_right <= sg.x || c.x >= sg_right,
             "bare node C overlaps subgraph: C({}-{}), sg({}-{})",
-            c.x, c_right, sg.x, sg_right
+            c.x,
+            c_right,
+            sg.x,
+            sg_right
         );
     }
 
     #[test]
     fn rank_self_loop() {
-        let diagram = parse_graph("graph TD\n    A --> B\n    B -->|fallback| B\n    B --> C\n").unwrap();
+        let diagram =
+            parse_graph("graph TD\n    A --> B\n    B -->|fallback| B\n    B --> C\n").unwrap();
         let ranks = assign_ranks(&diagram);
         assert_eq!(ranks["A"], 0);
         assert_eq!(ranks["B"], 1);
@@ -1065,8 +1105,14 @@ mod tests {
         // Subgraph bounding box must contain all its nodes
         assert!(sg.x <= a.x, "subgraph left <= node A x");
         assert!(sg.y <= a.y, "subgraph top <= node A y");
-        assert!(sg.x + sg.width >= b.x + b.width, "subgraph right >= node B right");
-        assert!(sg.y + sg.height >= b.y + b.height, "subgraph bottom >= node B bottom");
+        assert!(
+            sg.x + sg.width >= b.x + b.width,
+            "subgraph right >= node B right"
+        );
+        assert!(
+            sg.y + sg.height >= b.y + b.height,
+            "subgraph bottom >= node B bottom"
+        );
     }
 
     #[test]

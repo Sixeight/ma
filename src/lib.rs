@@ -12,6 +12,7 @@ pub mod graph_renderer;
 pub mod layout;
 pub mod parser;
 pub mod renderer;
+pub mod state_parser;
 
 pub fn render(input: &str) -> Result<String, String> {
     render_with_options(input, None)
@@ -21,12 +22,7 @@ pub fn render_with_options(input: &str, max_width: Option<usize>) -> Result<Stri
     let input = strip_init_directives(input);
     let trimmed = input.trim_start();
     if trimmed.starts_with("graph") || trimmed.starts_with("flowchart") {
-        let diagram = graph_parser::parse_graph(input)?;
-        let computed = match max_width {
-            Some(w) => graph_layout::compute_with_max_width(&diagram, w)?,
-            None => graph_layout::compute(&diagram)?,
-        };
-        Ok(graph_renderer::render(&computed))
+        render_graph(graph_parser::parse_graph(input)?, max_width)
     } else if trimmed.starts_with("erDiagram") {
         let diagram = er_parser::parse_er(input)?;
         let computed = match max_width {
@@ -41,10 +37,23 @@ pub fn render_with_options(input: &str, max_width: Option<usize>) -> Result<Stri
             None => layout::compute(&diagram)?,
         };
         Ok(renderer::render(&computed))
+    } else if trimmed.starts_with("stateDiagram-v2") || trimmed.starts_with("stateDiagram") {
+        render_graph(state_parser::parse_state(input)?, max_width)
     } else {
         let first_word = trimmed.split_whitespace().next().unwrap_or("(empty)");
         Err(format!("unknown diagram type: {first_word}"))
     }
+}
+
+fn render_graph(
+    diagram: graph_ast::GraphDiagram,
+    max_width: Option<usize>,
+) -> Result<String, String> {
+    let computed = match max_width {
+        Some(width) => graph_layout::compute_with_max_width(&diagram, width)?,
+        None => graph_layout::compute(&diagram)?,
+    };
+    Ok(graph_renderer::render(&computed))
 }
 
 fn strip_init_directives(mut input: &str) -> &str {
