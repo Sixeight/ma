@@ -1,5 +1,6 @@
 pub mod ast;
 mod canvas;
+pub mod class_parser;
 pub mod display_width;
 pub mod er_ast;
 pub mod er_layout;
@@ -39,6 +40,8 @@ pub fn render_with_options(input: &str, max_width: Option<usize>) -> Result<Stri
         Ok(renderer::render(&computed))
     } else if trimmed.starts_with("stateDiagram-v2") || trimmed.starts_with("stateDiagram") {
         render_graph(state_parser::parse_state(input)?, max_width)
+    } else if trimmed.starts_with("classDiagram") {
+        render_graph(class_parser::parse_class(input)?, max_width)
     } else {
         let first_word = trimmed.split_whitespace().next().unwrap_or("(empty)");
         Err(format!("unknown diagram type: {first_word}"))
@@ -75,13 +78,13 @@ mod tests {
 
     #[test]
     fn render_unknown_diagram_type_returns_error() {
-        let err = render("classDiagram\n  Foo\n").unwrap_err();
+        let err = render("gantt\n  title Work\n").unwrap_err();
         assert!(
             err.contains("unknown diagram type"),
             "error should mention unknown diagram type, got: {err}"
         );
         assert!(
-            err.contains("classDiagram"),
+            err.contains("gantt"),
             "error should include the type, got: {err}"
         );
     }

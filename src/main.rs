@@ -5,7 +5,7 @@ use clap::Parser;
 #[derive(Parser)]
 #[command(
     name = "ma",
-    about = "Render Mermaid diagrams as ASCII art (sequence, flowchart, ER, state)"
+    about = "Render Mermaid diagrams as ASCII art (sequence, flowchart, ER, state, class)"
 )]
 struct Cli {
     /// Input file (reads from stdin if not provided)
