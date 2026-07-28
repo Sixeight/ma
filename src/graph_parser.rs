@@ -786,10 +786,7 @@ mod tests {
             .iter()
             .map(|edge| (edge.from.as_str(), edge.to.as_str()))
             .collect();
-        assert_eq!(
-            pairs,
-            vec![("A", "B"), ("A", "C"), ("B", "D"), ("C", "D")]
-        );
+        assert_eq!(pairs, vec![("A", "B"), ("A", "C"), ("B", "D"), ("C", "D")]);
     }
 
     #[test]

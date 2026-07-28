@@ -131,7 +131,10 @@ pub fn compute_with_max_width(diagram: &Diagram, max_width: usize) -> Result<Lay
         }
 
         let name = names.get(&longest_id).unwrap().clone();
-        names.insert(longest_id, truncate_to_display_width(&name, longest_width - 1));
+        names.insert(
+            longest_id,
+            truncate_to_display_width(&name, longest_width - 1),
+        );
     }
 }
 
@@ -163,10 +166,7 @@ fn finish_layout(
 }
 
 fn required_width(participants: &[ParticipantLayout], rows: &[Row]) -> usize {
-    let mut total_width = participants
-        .last()
-        .map(|p| p.box_right + 1)
-        .unwrap_or(0);
+    let mut total_width = participants.last().map(|p| p.box_right + 1).unwrap_or(0);
 
     for row in rows {
         match row {
@@ -291,8 +291,15 @@ fn collect_participants(
                     }
                 }
             }
-            Statement::Note(_) | Statement::Activate(_) | Statement::Deactivate(_) | Statement::Destroy(_) | Statement::AutoNumber => {}
-            Statement::Loop(lb) | Statement::Opt(lb) | Statement::Break(lb) | Statement::Rect(lb) => {
+            Statement::Note(_)
+            | Statement::Activate(_)
+            | Statement::Deactivate(_)
+            | Statement::Destroy(_)
+            | Statement::AutoNumber => {}
+            Statement::Loop(lb)
+            | Statement::Opt(lb)
+            | Statement::Break(lb)
+            | Statement::Rect(lb) => {
                 collect_participants_inner(&lb.body, &mut order, &mut display_names);
             }
             Statement::Alt(ab) | Statement::Par(ab) | Statement::Critical(ab) => {
@@ -359,8 +366,7 @@ fn compute_gaps_inner(statements: &[Statement], order: &[String], gaps: &mut [us
                 if let (Some(fi), Some(ti)) = (from_idx, to_idx) {
                     if fi == ti {
                         // Self-message: need space to the right for text + loop arm
-                        let required =
-                            (multiline_width(&m.text) + 3).max(SELF_LOOP_ARM + 2);
+                        let required = (multiline_width(&m.text) + 3).max(SELF_LOOP_ARM + 2);
                         if fi < gaps.len() {
                             gaps[fi] = gaps[fi].max(required);
                         }
@@ -422,7 +428,10 @@ fn compute_gaps_inner(statements: &[Statement], order: &[String], gaps: &mut [us
                     }
                 }
             }
-            Statement::Loop(lb) | Statement::Opt(lb) | Statement::Break(lb) | Statement::Rect(lb) => {
+            Statement::Loop(lb)
+            | Statement::Opt(lb)
+            | Statement::Break(lb)
+            | Statement::Rect(lb) => {
                 compute_gaps_inner(&lb.body, order, gaps);
             }
             Statement::Alt(ab) | Statement::Par(ab) | Statement::Critical(ab) => {
@@ -479,9 +488,18 @@ fn compute_rows(
     participants: &[ParticipantLayout],
 ) -> Vec<Row> {
     let mut rows = Vec::new();
-    let autonumber = diagram.statements.iter().any(|s| matches!(s, Statement::AutoNumber));
+    let autonumber = diagram
+        .statements
+        .iter()
+        .any(|s| matches!(s, Statement::AutoNumber));
     let mut msg_counter = if autonumber { Some(1usize) } else { None };
-    flatten_statements(&diagram.statements, order, participants, &mut rows, &mut msg_counter);
+    flatten_statements(
+        &diagram.statements,
+        order,
+        participants,
+        &mut rows,
+        &mut msg_counter,
+    );
     rows
 }
 
@@ -578,7 +596,15 @@ fn flatten_statements(
                 push_divided_block("par", "and", ab, participants, order, rows, msg_counter);
             }
             Statement::Critical(ab) => {
-                push_divided_block("critical", "option", ab, participants, order, rows, msg_counter);
+                push_divided_block(
+                    "critical",
+                    "option",
+                    ab,
+                    participants,
+                    order,
+                    rows,
+                    msg_counter,
+                );
             }
             Statement::Rect(lb) => {
                 push_simple_block("rect", lb, participants, order, rows, msg_counter);
@@ -660,16 +686,15 @@ fn push_divided_block(
 }
 
 fn compute_frame_bounds(participants: &[ParticipantLayout]) -> (usize, usize) {
-    let frame_left = participants.first().map(|p| p.center_col.saturating_sub(2)).unwrap_or(0);
+    let frame_left = participants
+        .first()
+        .map(|p| p.center_col.saturating_sub(2))
+        .unwrap_or(0);
     let frame_right = participants.last().map(|p| p.center_col + 2).unwrap_or(0);
     (frame_left, frame_right)
 }
 
-fn compute_activations(
-    diagram: &Diagram,
-    order: &[String],
-    row_count: usize,
-) -> Vec<Vec<bool>> {
+fn compute_activations(diagram: &Diagram, order: &[String], row_count: usize) -> Vec<Vec<bool>> {
     let participant_count = order.len();
     let mut depths: Vec<i32> = vec![0; participant_count];
     let mut activations = Vec::with_capacity(row_count);
@@ -718,7 +743,10 @@ fn compute_activations_inner(
                 let row_active: Vec<bool> = depths.iter().map(|&d| d > 0).collect();
                 activations.push(row_active);
             }
-            Statement::Loop(lb) | Statement::Opt(lb) | Statement::Break(lb) | Statement::Rect(lb) => {
+            Statement::Loop(lb)
+            | Statement::Opt(lb)
+            | Statement::Break(lb)
+            | Statement::Rect(lb) => {
                 let row_active: Vec<bool> = depths.iter().map(|&d| d > 0).collect();
                 activations.push(row_active.clone());
                 compute_activations_inner(&lb.body, order, depths, activations);
@@ -819,7 +847,9 @@ sequenceDiagram
 
     #[test]
     fn layout_message_direction_right_to_left() {
-        let diagram = parse_diagram("sequenceDiagram\n    Alice->>Bob: Hi\n    Bob-->>Alice: Hello\n").unwrap();
+        let diagram =
+            parse_diagram("sequenceDiagram\n    Alice->>Bob: Hi\n    Bob-->>Alice: Hello\n")
+                .unwrap();
         let layout = compute(&diagram).unwrap();
 
         assert_eq!(layout.rows.len(), 2);
@@ -884,7 +914,10 @@ sequenceDiagram
         assert!(!layout.activations[0][0], "Alice not active at row 0");
         assert!(layout.activations[0][1], "Bob active at row 0");
         assert!(!layout.activations[1][0], "Alice not active at row 1");
-        assert!(layout.activations[1][1], "Bob still active at row 1 (deactivated after)");
+        assert!(
+            layout.activations[1][1],
+            "Bob still active at row 1 (deactivated after)"
+        );
     }
 
     #[test]
@@ -966,7 +999,11 @@ sequenceDiagram
         let diagram = parse_diagram(input).unwrap();
         let layout = compute(&diagram).unwrap();
 
-        assert_eq!(layout.rows.len(), 5, "Hello + BlockStart + Ping + BlockEnd + Bye");
+        assert_eq!(
+            layout.rows.len(),
+            5,
+            "Hello + BlockStart + Ping + BlockEnd + Bye"
+        );
     }
 
     #[test]
@@ -1096,7 +1133,10 @@ sequenceDiagram
             constrained.total_width,
         );
         assert!(
-            constrained.participants.iter().any(|p| p.name.contains('…')),
+            constrained
+                .participants
+                .iter()
+                .any(|p| p.name.contains('…')),
             "at least one name should be truncated",
         );
     }
@@ -1118,7 +1158,8 @@ sequenceDiagram
         assert!(
             layout.total_width >= required,
             "total_width {} should be >= {} for self-message",
-            layout.total_width, required,
+            layout.total_width,
+            required,
         );
     }
 
@@ -1133,7 +1174,8 @@ sequenceDiagram
         assert!(
             b.center_col > text_end,
             "B center {} should be beyond self-message text end {}",
-            b.center_col, text_end,
+            b.center_col,
+            text_end,
         );
     }
 
