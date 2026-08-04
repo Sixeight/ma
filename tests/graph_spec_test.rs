@@ -906,6 +906,26 @@ fn spec_cycle_respects_max_width() {
     }
 }
 
+#[test]
+fn spec_left_right_reflows_when_max_width_requires_it() {
+    let input = "flowchart LR\n    A -->|abcdefghij| B\n    B --> C\n";
+    let output = ma::render_with_options(input, Some(27)).unwrap();
+    let widest = output
+        .lines()
+        .map(ma::display_width::display_width)
+        .max()
+        .unwrap_or(0);
+
+    assert!(
+        widest <= 27,
+        "output fits 27 columns, got {widest}:\n{output}"
+    );
+    assert!(
+        output.contains('▼'),
+        "narrow LR graph should reflow vertically:\n{output}"
+    );
+}
+
 // =============================================================================
 // Dispatch — graph input does not break sequence diagrams
 // =============================================================================

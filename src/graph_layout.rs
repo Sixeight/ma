@@ -594,6 +594,16 @@ pub fn compute_with_max_width(
         }
     }
 
+    // Preserve max_width without hiding a valid graph: narrow LR graphs can be
+    // reflowed vertically while keeping the same topology.
+    if diagram.direction == Direction::LeftRight {
+        let mut vertical = diagram.clone();
+        vertical.direction = Direction::TopDown;
+        if let Ok(layout) = compute_with_max_width(&vertical, max_width) {
+            return Ok(layout);
+        }
+    }
+
     Err(format!("graph diagram too wide for {max_width} columns"))
 }
 
