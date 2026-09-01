@@ -4,17 +4,24 @@ pub fn display_width(s: &str) -> usize {
     UnicodeWidthStr::width(s)
 }
 
-/// Split text on `<br/>`, `<br>`, `<br />` (case-insensitive).
+/// Split text on a literal `\n` or `<br/>`, `<br>`, `<br />` (case-insensitive).
 pub fn split_br(s: &str) -> Vec<&str> {
+    let bytes = s.as_bytes();
     let lower = s.to_ascii_lowercase();
     let lower_bytes = lower.as_bytes();
     let mut result = Vec::new();
     let mut start = 0;
     let mut i = 0;
 
-    while i + 3 < lower_bytes.len() {
-        if lower_bytes[i] == b'<' && lower_bytes[i + 1] == b'b' && lower_bytes[i + 2] == b'r' {
-            let tag_len = if i + 5 <= lower_bytes.len()
+    while i < lower_bytes.len() {
+        let tag_len = if i + 2 <= lower_bytes.len() && bytes[i] == b'\\' && bytes[i + 1] == b'n' {
+            2
+        } else if i + 4 <= lower_bytes.len()
+            && lower_bytes[i] == b'<'
+            && lower_bytes[i + 1] == b'b'
+            && lower_bytes[i + 2] == b'r'
+        {
+            if i + 5 <= lower_bytes.len()
                 && lower_bytes[i + 3] == b'/'
                 && lower_bytes[i + 4] == b'>'
             {
@@ -29,14 +36,16 @@ pub fn split_br(s: &str) -> Vec<&str> {
                 4 // <br>
             } else {
                 0
-            };
-
-            if tag_len > 0 {
-                result.push(&s[start..i]);
-                start = i + tag_len;
-                i = start;
-                continue;
             }
+        } else {
+            0
+        };
+
+        if tag_len > 0 {
+            result.push(&s[start..i]);
+            start = i + tag_len;
+            i = start;
+            continue;
         }
         i += 1;
     }
@@ -44,7 +53,7 @@ pub fn split_br(s: &str) -> Vec<&str> {
     result
 }
 
-/// Maximum display width among lines split by `<br/>`.
+/// Maximum display width among lines split by a supported line break marker.
 pub fn multiline_width(s: &str) -> usize {
     split_br(s)
         .iter()
@@ -53,7 +62,7 @@ pub fn multiline_width(s: &str) -> usize {
         .unwrap_or(0)
 }
 
-/// Number of lines after splitting by `<br/>`.
+/// Number of lines after splitting by a supported line break marker.
 pub fn line_count(s: &str) -> usize {
     split_br(s).len()
 }
@@ -91,6 +100,16 @@ mod tests {
     #[test]
     fn split_br_multiple() {
         assert_eq!(split_br("A<br/>B<br/>C"), vec!["A", "B", "C"]);
+    }
+
+    #[test]
+    fn split_br_literal_newline_escape() {
+        assert_eq!(split_br(r"A\nB"), vec!["A", "B"]);
+    }
+
+    #[test]
+    fn split_br_literal_newline_escape_is_case_sensitive() {
+        assert_eq!(split_br(r"C:\Node"), vec![r"C:\Node"]);
     }
 
     #[test]

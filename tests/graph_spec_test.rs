@@ -926,6 +926,38 @@ fn spec_left_right_reflows_when_max_width_requires_it() {
     );
 }
 
+#[test]
+fn spec_subgraphs_stack_when_max_width_requires_it() {
+    let input = "graph LR\n    subgraph One\n        A --> B\n    end\n    subgraph Two\n        C --> D\n    end\n    B --> C\n";
+    let output = ma::render_with_options(input, Some(19)).unwrap();
+    let widest = output
+        .lines()
+        .map(ma::display_width::display_width)
+        .max()
+        .unwrap_or(0);
+    let one_row = output
+        .lines()
+        .position(|line| line.contains("One"))
+        .unwrap();
+    let two_row = output
+        .lines()
+        .position(|line| line.contains("Two"))
+        .unwrap();
+
+    assert!(
+        widest <= 19,
+        "output fits 19 columns, got {widest}:\n{output}"
+    );
+    assert!(
+        two_row > one_row,
+        "subgraphs should stack vertically:\n{output}"
+    );
+    assert!(
+        output.contains('▼'),
+        "cross-subgraph edge should be routed vertically:\n{output}"
+    );
+}
+
 // =============================================================================
 // Dispatch — graph input does not break sequence diagrams
 // =============================================================================

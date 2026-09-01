@@ -540,9 +540,11 @@ pub fn compute_with_max_width(
         return Ok(layout);
     }
 
-    // Subgraph case: no gap reduction fallback (already laid out independently)
     if !diagram.subgraphs.is_empty() {
-        return Err(format!("graph diagram too wide for {max_width} columns"));
+        let mut vertical = diagram.clone();
+        vertical.direction = Direction::TopDown;
+        let layout = layout_with_subgraphs(&vertical)?;
+        return stack_subgraphs(&vertical, layout, max_width);
     }
 
     // Try with progressively smaller gaps
@@ -605,6 +607,83 @@ pub fn compute_with_max_width(
     }
 
     Err(format!("graph diagram too wide for {max_width} columns"))
+}
+
+fn stack_subgraphs(
+    diagram: &GraphDiagram,
+    mut layout: GraphLayout,
+    max_width: usize,
+) -> Result<GraphLayout, String> {
+    let node_to_subgraph: HashMap<&str, usize> = diagram
+        .subgraphs
+        .iter()
+        .enumerate()
+        .flat_map(|(index, sg)| sg.node_ids.iter().map(move |id| (id.as_str(), index)))
+        .collect();
+    let nonempty_subgraphs: Vec<(usize, &Subgraph)> = diagram
+        .subgraphs
+        .iter()
+        .enumerate()
+        .filter(|(_, sg)| !sg.node_ids.is_empty())
+        .collect();
+    let mut y_offset = 0;
+
+    for ((index, _), sg_layout) in nonempty_subgraphs.iter().zip(&mut layout.subgraphs) {
+        if sg_layout.width > max_width {
+            return Err(format!("graph diagram too wide for {max_width} columns"));
+        }
+
+        let old_x = sg_layout.x;
+        let old_y = sg_layout.y;
+        for node in layout
+            .nodes
+            .iter_mut()
+            .filter(|node| node_to_subgraph.get(node.id.as_str()) == Some(index))
+        {
+            node.x -= old_x;
+            node.y = node.y - old_y + y_offset;
+            node.center_x -= old_x;
+            node.center_y = node.center_y - old_y + y_offset;
+        }
+        sg_layout.x = 0;
+        sg_layout.y = y_offset;
+        y_offset += sg_layout.height + SUBGRAPH_GAP;
+    }
+
+    let bare_nodes: Vec<&mut NodeLayout> = layout
+        .nodes
+        .iter_mut()
+        .filter(|node| !node_to_subgraph.contains_key(node.id.as_str()))
+        .collect();
+    if !bare_nodes.is_empty() {
+        let min_x = bare_nodes.iter().map(|node| node.x).min().unwrap_or(0);
+        let min_y = bare_nodes.iter().map(|node| node.y).min().unwrap_or(0);
+        let bare_width = bare_nodes
+            .iter()
+            .map(|node| node.x + node.width - min_x)
+            .max()
+            .unwrap_or(0);
+        if bare_width > max_width {
+            return Err(format!("graph diagram too wide for {max_width} columns"));
+        }
+        for node in bare_nodes {
+            node.x -= min_x;
+            node.y = node.y - min_y + y_offset;
+            node.center_x -= min_x;
+            node.center_y = node.center_y - min_y + y_offset;
+        }
+    }
+
+    layout.direction = Direction::TopDown;
+    assign_edge_routes(&layout.direction, &layout.nodes, &mut layout.edges);
+    let (mut width, mut height) = base_extents(&layout.nodes, &layout.subgraphs);
+    reserve_back_edge_space(&layout.direction, &layout.edges, &mut width, &mut height);
+    if width > max_width {
+        return Err(format!("graph diagram too wide for {max_width} columns"));
+    }
+    layout.width = width;
+    layout.height = height;
+    Ok(layout)
 }
 
 fn layout_td(ranks_nodes: &[Vec<&NodeDecl>]) -> Vec<NodeLayout> {
@@ -1051,6 +1130,33 @@ mod tests {
                 "{node_id} bottom > sg_b bottom"
             );
         }
+    }
+
+    #[test]
+    fn max_width_stacks_subgraphs_vertically() {
+        let diagram = parse_graph(
+            "graph LR\n    subgraph One\n        A --> B\n    end\n    subgraph Two\n        C --> D\n    end\n    B --> C\n",
+        )
+        .unwrap();
+        let natural = compute(&diagram).unwrap();
+        let first_width = natural.subgraphs[0].width;
+        let second_width = natural.subgraphs[1].width;
+        let max_width = first_width.max(second_width);
+
+        assert!(natural.width > max_width, "fixture must require reflow");
+        assert_eq!(
+            compute_with_max_width(&diagram, natural.width).unwrap(),
+            natural,
+            "wide layouts keep the horizontal arrangement"
+        );
+
+        let layout = compute_with_max_width(&diagram, max_width).unwrap();
+        let one = &layout.subgraphs[0];
+        let two = &layout.subgraphs[1];
+
+        assert!(layout.width <= max_width);
+        assert_eq!(layout.direction, Direction::TopDown);
+        assert!(two.y >= one.y + one.height + SUBGRAPH_GAP);
     }
 
     #[test]
