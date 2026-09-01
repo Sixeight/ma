@@ -177,6 +177,7 @@ pub fn compute(diagram: &GraphDiagram) -> Result<GraphLayout, String> {
     let mut edges: Vec<EdgeLayout> = diagram
         .edges
         .iter()
+        .filter(|e| e.edge_type != EdgeType::Invisible)
         .map(|e| EdgeLayout {
             from_id: e.from.clone(),
             to_id: e.to.clone(),
@@ -390,6 +391,7 @@ fn layout_with_subgraphs(diagram: &GraphDiagram) -> Result<GraphLayout, String> 
     let mut edges: Vec<EdgeLayout> = diagram
         .edges
         .iter()
+        .filter(|e| e.edge_type != EdgeType::Invisible)
         .map(|e| EdgeLayout {
             from_id: e.from.clone(),
             to_id: e.to.clone(),
@@ -403,14 +405,30 @@ fn layout_with_subgraphs(diagram: &GraphDiagram) -> Result<GraphLayout, String> 
     let (mut width, mut height) = base_extents(&all_nodes, &sg_layouts);
     reserve_back_edge_space(&diagram.direction, &edges, &mut width, &mut height);
 
-    Ok(GraphLayout {
+    let layout = GraphLayout {
         nodes: all_nodes,
         edges,
         subgraphs: sg_layouts,
         width,
         height,
         direction: diagram.direction.clone(),
-    })
+    };
+
+    let subgraph_ids: HashSet<&str> = diagram
+        .subgraphs
+        .iter()
+        .map(|subgraph| subgraph.id.as_str())
+        .collect();
+    let has_invisible_subgraph_constraint = diagram.edges.iter().any(|edge| {
+        edge.edge_type == EdgeType::Invisible
+            && subgraph_ids.contains(edge.from.as_str())
+            && subgraph_ids.contains(edge.to.as_str())
+    });
+    if diagram.direction == Direction::TopDown && has_invisible_subgraph_constraint {
+        stack_subgraphs(diagram, layout, usize::MAX)
+    } else {
+        Ok(layout)
+    }
 }
 
 /// Ranks every node so that each forward edge points from a lower rank to a
@@ -568,6 +586,7 @@ pub fn compute_with_max_width(
             let mut edges: Vec<EdgeLayout> = diagram
                 .edges
                 .iter()
+                .filter(|e| e.edge_type != EdgeType::Invisible)
                 .map(|e| EdgeLayout {
                     from_id: e.from.clone(),
                     to_id: e.to.clone(),

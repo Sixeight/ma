@@ -34,6 +34,10 @@ fn graph_diagram(input: &mut &str) -> winnow::Result<GraphDiagram> {
         collect_line(line, &mut nodes, &mut edges, &mut subgraphs);
     }
 
+    // Mermaid permits edges to target a subgraph ID. Those endpoints constrain
+    // layout, but they are not ordinary nodes in the rendered diagram.
+    nodes.retain(|node| !subgraphs.iter().any(|subgraph| subgraph.id == node.id));
+
     Ok(GraphDiagram {
         direction,
         nodes,
@@ -303,6 +307,7 @@ fn bracketed_label(input: &mut &str) -> winnow::Result<String> {
 
 fn edge_type(input: &mut &str) -> winnow::Result<EdgeType> {
     alt((
+        "~~~".value(EdgeType::Invisible),
         "-.->".value(EdgeType::DottedArrow),
         "-.-".value(EdgeType::DottedLink),
         "==>".value(EdgeType::ThickArrow),

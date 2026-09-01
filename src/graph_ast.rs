@@ -48,6 +48,7 @@ pub struct Edge {
 
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub enum EdgeType {
+    Invisible,
     Arrow,
     OpenLink,
     DottedArrow,

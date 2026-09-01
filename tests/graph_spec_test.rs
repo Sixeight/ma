@@ -640,6 +640,36 @@ graph TD
     );
 }
 
+#[test]
+fn spec_invisible_edge_between_subgraphs_constrains_layout_without_rendering() {
+    let input = "\
+flowchart TB
+  subgraph left
+    A
+  end
+  subgraph right
+    B
+  end
+  left ~~~ right
+";
+    let output = ma::render(input).unwrap();
+    let expected = "\
+┌─ left ─┐
+│ ┌───┐  │
+│ │ A │  │
+│ └───┘  │
+└────────┘
+
+
+
+┌─ right ─┐
+│ ┌───┐   │
+│ │ B │   │
+│ └───┘   │
+└─────────┘";
+    assert_eq!(output, expected);
+}
+
 // =============================================================================
 // Self-loop
 // =============================================================================
