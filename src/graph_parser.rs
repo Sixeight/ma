@@ -170,8 +170,14 @@ fn subgraph_block(input: &mut &str) -> winnow::Result<GraphLine> {
 }
 
 fn parse_subgraph_header(header: &str) -> (String, String) {
-    if let Some((id, title)) = header.strip_suffix(']').and_then(|s| s.split_once(" [")) {
-        return (id.to_string(), title.trim_matches('"').to_string());
+    if let Some((id, title)) = header
+        .strip_suffix(']')
+        .and_then(|header| header.split_once('['))
+    {
+        return (
+            id.trim_end().to_string(),
+            title.trim_matches('"').to_string(),
+        );
     }
     (header.replace(' ', "_").to_lowercase(), header.to_string())
 }

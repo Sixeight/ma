@@ -644,29 +644,29 @@ graph TD
 fn spec_invisible_edge_between_subgraphs_constrains_layout_without_rendering() {
     let input = "\
 flowchart TB
-  subgraph left
+  subgraph left[\"Group A\"]
     A
   end
-  subgraph right
+  subgraph right[\"Group B\"]
     B
   end
   left ~~~ right
 ";
     let output = ma::render(input).unwrap();
     let expected = "\
-┌─ left ─┐
-│ ┌───┐  │
-│ │ A │  │
-│ └───┘  │
-└────────┘
+┌─ Group A ─┐
+│ ┌───┐     │
+│ │ A │     │
+│ └───┘     │
+└───────────┘
 
 
 
-┌─ right ─┐
-│ ┌───┐   │
-│ │ B │   │
-│ └───┘   │
-└─────────┘";
+┌─ Group B ─┐
+│ ┌───┐     │
+│ │ B │     │
+│ └───┘     │
+└───────────┘";
     assert_eq!(output, expected);
 }
 
