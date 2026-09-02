@@ -73,27 +73,17 @@ fn collect_line(
             for inner in inner_lines {
                 match &inner {
                     GraphLine::Edge(_, from_decl, to_decl) => {
-                        if !sg_node_ids.contains(&from_decl.id) {
-                            sg_node_ids.push(from_decl.id.clone());
-                        }
-                        if !sg_node_ids.contains(&to_decl.id) {
-                            sg_node_ids.push(to_decl.id.clone());
-                        }
+                        add_subgraph_node_id(&mut sg_node_ids, subgraphs, from_decl);
+                        add_subgraph_node_id(&mut sg_node_ids, subgraphs, to_decl);
                     }
                     GraphLine::Edges(items) => {
                         for (_, from_decl, to_decl) in items {
-                            if !sg_node_ids.contains(&from_decl.id) {
-                                sg_node_ids.push(from_decl.id.clone());
-                            }
-                            if !sg_node_ids.contains(&to_decl.id) {
-                                sg_node_ids.push(to_decl.id.clone());
-                            }
+                            add_subgraph_node_id(&mut sg_node_ids, subgraphs, from_decl);
+                            add_subgraph_node_id(&mut sg_node_ids, subgraphs, to_decl);
                         }
                     }
                     GraphLine::Node(decl) => {
-                        if !sg_node_ids.contains(&decl.id) {
-                            sg_node_ids.push(decl.id.clone());
-                        }
+                        add_subgraph_node_id(&mut sg_node_ids, subgraphs, decl);
                     }
                     GraphLine::SubgraphBlock(_, _, _) => {}
                 }
@@ -105,6 +95,20 @@ fn collect_line(
                 node_ids: sg_node_ids,
             });
         }
+    }
+}
+
+fn add_subgraph_node_id(
+    subgraph_node_ids: &mut Vec<String>,
+    subgraphs: &[Subgraph],
+    decl: &NodeDecl,
+) {
+    let belongs_to_current = subgraph_node_ids.contains(&decl.id);
+    let owned_by_earlier_subgraph = subgraphs
+        .iter()
+        .any(|subgraph| subgraph.node_ids.contains(&decl.id));
+    if !belongs_to_current && !owned_by_earlier_subgraph {
+        subgraph_node_ids.push(decl.id.clone());
     }
 }
 
@@ -213,7 +217,28 @@ fn direction(input: &mut &str) -> winnow::Result<Direction> {
 }
 
 fn identifier<'s>(input: &mut &'s str) -> winnow::Result<&'s str> {
-    take_while(1.., |c: char| c.is_alphanumeric() || c == '_').parse_next(input)
+    let original = *input;
+    take_while(1.., |c: char| c.is_alphanumeric() || c == '_').parse_next(input)?;
+
+    loop {
+        let checkpoint = *input;
+        let Some(after_hyphen) = input.strip_prefix('-') else {
+            break;
+        };
+        let segment_len = after_hyphen
+            .char_indices()
+            .find(|(_, c)| !c.is_alphanumeric() && *c != '_')
+            .map(|(index, _)| index)
+            .unwrap_or(after_hyphen.len());
+        if segment_len == 0 {
+            *input = checkpoint;
+            break;
+        }
+        *input = &after_hyphen[segment_len..];
+    }
+
+    let consumed = original.len() - input.len();
+    Ok(&original[..consumed])
 }
 
 fn node_ref(input: &mut &str) -> winnow::Result<NodeDecl> {
@@ -473,6 +498,57 @@ mod tests {
         let n = node_ref(&mut input).unwrap();
         assert_eq!(n.id, "A");
         assert_eq!(n.label, "A");
+    }
+
+    #[test]
+    fn parse_hyphenated_node_ids() {
+        let diagram =
+            parse_graph("flowchart LR\n    alpha-step --> beta-step --> gamma-step\n").unwrap();
+
+        assert_eq!(
+            diagram
+                .nodes
+                .iter()
+                .map(|node| node.id.as_str())
+                .collect::<Vec<_>>(),
+            vec!["alpha-step", "beta-step", "gamma-step"]
+        );
+        assert_eq!(diagram.edges.len(), 2);
+        assert_eq!(diagram.edges[0].from, "alpha-step");
+        assert_eq!(diagram.edges[0].to, "beta-step");
+        assert_eq!(diagram.edges[1].from, "beta-step");
+        assert_eq!(diagram.edges[1].to, "gamma-step");
+    }
+
+    #[test]
+    fn referenced_node_keeps_its_original_subgraph_membership() {
+        let diagram = parse_graph(
+            "flowchart LR\n\
+             subgraph first\n\
+               source --> shared\n\
+             end\n\
+             subgraph second\n\
+               shared --> target\n\
+             end\n",
+        )
+        .unwrap();
+
+        assert_eq!(diagram.subgraphs[0].node_ids, vec!["source", "shared"]);
+        assert_eq!(diagram.subgraphs[1].node_ids, vec!["target"]);
+    }
+
+    #[test]
+    fn bare_node_can_become_owned_by_a_later_subgraph() {
+        let diagram = parse_graph(
+            "flowchart LR\n\
+             outside --> shared\n\
+             subgraph group\n\
+               shared --> target\n\
+             end\n",
+        )
+        .unwrap();
+
+        assert_eq!(diagram.subgraphs[0].node_ids, vec!["shared", "target"]);
     }
 
     #[test]

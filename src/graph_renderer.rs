@@ -980,7 +980,27 @@ fn draw_lr_edge(
         }
     } else {
         // L-shaped routing: horizontal → corner → vertical → corner → horizontal
-        let mid_col = from_right + (to_left - from_right) / 2;
+        let from_subgraph = layout.subgraphs.iter().find(|subgraph| {
+            from.x >= subgraph.x
+                && from.x + from.width <= subgraph.x + subgraph.width
+                && from.y >= subgraph.y
+                && from.y + from.height <= subgraph.y + subgraph.height
+        });
+        let to_subgraph = layout.subgraphs.iter().find(|subgraph| {
+            to.x >= subgraph.x
+                && to.x + to.width <= subgraph.x + subgraph.width
+                && to.y >= subgraph.y
+                && to.y + to.height <= subgraph.y + subgraph.height
+        });
+        let crosses_subgraphs = from_subgraph
+            .zip(to_subgraph)
+            .filter(|(from_sg, to_sg)| from_sg.x != to_sg.x || from_sg.y != to_sg.y);
+        let mid_col = crosses_subgraphs
+            .map(|(from_sg, to_sg)| {
+                let gap_start = from_sg.x + from_sg.width;
+                gap_start + (to_sg.x.saturating_sub(gap_start)) / 2
+            })
+            .unwrap_or_else(|| from_right + (to_left - from_right) / 2);
         let vert = td_vertical_connector(edge.edge_type);
 
         // Horizontal from source to midpoint
@@ -1011,13 +1031,23 @@ fn draw_lr_edge(
             grid.set(to.center_y, to_left - 1, '>');
         }
 
-        // Label on the source-side horizontal segment
+        // Cross-subgraph labels use the clear target-side row; ordinary
+        // L-shaped edges keep the label near their source.
         if let Some(ref label) = edge.label {
-            let gap = to_left.saturating_sub(from_right);
+            let (label_start, gap) = if crosses_subgraphs.is_some() {
+                (mid_col + 1, to_left.saturating_sub(mid_col + 1))
+            } else {
+                (from_right, to_left.saturating_sub(from_right))
+            };
             if gap > 0 {
-                let label_col = from_right + (gap.saturating_sub(display_width(label))) / 2;
-                if from.center_y > 0 {
-                    grid.write_str(from.center_y - 1, label_col, label);
+                let label_col = label_start + (gap.saturating_sub(display_width(label))) / 2;
+                let label_row = if crosses_subgraphs.is_some() {
+                    to.center_y
+                } else {
+                    from.center_y
+                };
+                if label_row > 0 {
+                    grid.write_str(label_row - 1, label_col, label);
                 }
             }
         }
@@ -1086,6 +1116,31 @@ mod tests {
  │ End │
  └─────┘";
         assert_eq!(output, expected);
+    }
+
+    #[test]
+    fn cross_subgraph_edge_label_does_not_overwrite_unrelated_node() {
+        let output = render_input(
+            "graph LR\n\
+             subgraph First\n\
+               source -->|upload| shared\n\
+             end\n\
+             subgraph Second\n\
+               unrelated\n\
+               shared -->|download| target\n\
+             end\n",
+        );
+        assert!(output.contains("download"));
+        let unrelated_line = output
+            .lines()
+            .find(|line| line.contains("unrelated"))
+            .unwrap_or_else(|| panic!("unrelated node was overwritten:\n{output}"));
+        assert!(
+            !unrelated_line.contains("download"),
+            "edge label was drawn through the unrelated node:\n{output}"
+        );
+        assert_eq!(output.matches("shared").count(), 1, "{output}");
+        assert_eq!(output.matches("target").count(), 1, "{output}");
     }
 
     #[test]

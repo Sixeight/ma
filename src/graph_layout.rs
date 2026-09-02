@@ -303,13 +303,28 @@ fn layout_with_subgraphs(diagram: &GraphDiagram) -> Result<GraphLayout, String> 
     let mut all_nodes: Vec<NodeLayout> = Vec::new();
     let mut sg_layouts: Vec<SubgraphLayout> = Vec::new();
     let mut x_offset: usize = 0;
+    let diagram_ranks = assign_ranks(diagram);
 
     for (i, sg_diagram) in sg_groups.iter().enumerate() {
         if sg_diagram.nodes.is_empty() {
             continue;
         }
 
-        let ranks = assign_ranks(sg_diagram);
+        let mut used_ranks: Vec<usize> = sg_diagram
+            .nodes
+            .iter()
+            .map(|node| diagram_ranks[&node.id])
+            .collect();
+        used_ranks.sort_unstable();
+        used_ranks.dedup();
+        let ranks: HashMap<String, usize> = sg_diagram
+            .nodes
+            .iter()
+            .map(|node| {
+                let dense_rank = used_ranks.binary_search(&diagram_ranks[&node.id]).unwrap();
+                (node.id.clone(), dense_rank)
+            })
+            .collect();
         let max_rank = *ranks.values().max().unwrap_or(&0);
         let mut ranks_nodes: Vec<Vec<&NodeDecl>> = vec![Vec::new(); max_rank + 1];
         for node in &sg_diagram.nodes {
@@ -321,6 +336,33 @@ fn layout_with_subgraphs(diagram: &GraphDiagram) -> Result<GraphLayout, String> 
             Direction::TopDown => layout_td(&ranks_nodes),
             Direction::LeftRight => layout_lr(&ranks_nodes, &ranks, &sg_diagram.edges),
         };
+
+        if diagram.direction == Direction::LeftRight {
+            let external_targets: HashSet<&str> = diagram
+                .edges
+                .iter()
+                .filter(|edge| node_to_subgraph.get(&edge.to) == Some(&i))
+                .filter(|edge| node_to_subgraph.get(&edge.from) != Some(&i))
+                .map(|edge| edge.to.as_str())
+                .collect();
+            let mut next_y = node_layouts
+                .iter()
+                .filter(|node| !external_targets.contains(node.id.as_str()))
+                .map(|node| node.y + node.height)
+                .max()
+                .unwrap_or(0);
+            if next_y > 0 && !external_targets.is_empty() {
+                next_y += LR_NODE_VERTICAL_GAP;
+            }
+            for node in node_layouts
+                .iter_mut()
+                .filter(|node| external_targets.contains(node.id.as_str()))
+            {
+                node.y = next_y;
+                node.center_y = next_y + node.height / 2;
+                next_y += node.height + LR_NODE_VERTICAL_GAP;
+            }
+        }
 
         // Apply subgraph padding
         let sg = &diagram.subgraphs[i];
@@ -1149,6 +1191,69 @@ mod tests {
                 "{node_id} bottom > sg_b bottom"
             );
         }
+    }
+
+    #[test]
+    fn cross_subgraph_dependency_places_target_after_unrelated_nodes() {
+        let diagram = parse_graph(
+            "graph LR\n\
+             subgraph First\n\
+               source --> shared\n\
+             end\n\
+             subgraph Second\n\
+               unrelated\n\
+               shared --> target\n\
+             end\n",
+        )
+        .unwrap();
+        let layout = compute(&diagram).unwrap();
+        let unrelated = layout
+            .nodes
+            .iter()
+            .find(|node| node.id == "unrelated")
+            .unwrap();
+        let target = layout
+            .nodes
+            .iter()
+            .find(|node| node.id == "target")
+            .unwrap();
+
+        assert!(
+            target.x > unrelated.x + unrelated.width,
+            "cross-subgraph target must retain its later dependency rank"
+        );
+    }
+
+    #[test]
+    fn cross_subgraph_dependency_does_not_preserve_absent_rank_gaps() {
+        let diagram = parse_graph(
+            "graph LR\n\
+             subgraph First\n\
+               a --> b --> c --> d --> shared\n\
+             end\n\
+             subgraph Second\n\
+               unrelated\n\
+               shared --> target\n\
+             end\n",
+        )
+        .unwrap();
+        let layout = compute(&diagram).unwrap();
+        let unrelated = layout
+            .nodes
+            .iter()
+            .find(|node| node.id == "unrelated")
+            .unwrap();
+        let target = layout
+            .nodes
+            .iter()
+            .find(|node| node.id == "target")
+            .unwrap();
+
+        assert!(target.x > unrelated.x + unrelated.width);
+        assert!(
+            target.x - (unrelated.x + unrelated.width) <= LR_GAP,
+            "absent global ranks must not create empty columns"
+        );
     }
 
     #[test]
