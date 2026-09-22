@@ -353,6 +353,10 @@ fn edge_label(input: &mut &str) -> winnow::Result<String> {
     "|".parse_next(input)?;
     let text = take_while(1.., |c: char| c != '|').parse_next(input)?;
     "|".parse_next(input)?;
+    let text = text
+        .strip_prefix('"')
+        .and_then(|text| text.strip_suffix('"'))
+        .unwrap_or(text);
     Ok(text.to_string())
 }
 
@@ -624,6 +628,30 @@ mod tests {
         let input = "graph TD\n    A -->|yes| B\n";
         let diagram = parse_graph(input).unwrap();
         assert_eq!(diagram.edges[0].label, Some("yes".to_string()));
+    }
+
+    #[test]
+    fn parse_quoted_edge_label_preserves_text_and_breaks() {
+        let input = "flowchart LR\n    A -->|\"検査対象<br>長い説明を含む経路\"| B\n";
+        let diagram = parse_graph(input).unwrap();
+        assert_eq!(
+            diagram.edges[0].label.as_deref(),
+            Some("検査対象<br>長い説明を含む経路")
+        );
+    }
+
+    #[test]
+    fn parse_edge_label_preserves_quotes_within_text() {
+        for label in [
+            "say \"yes\"",
+            "\"unfinished",
+            "unfinished\"",
+            " spaced text ",
+        ] {
+            let input = format!("graph LR\n    A -->|{label}| B\n");
+            let diagram = parse_graph(&input).unwrap();
+            assert_eq!(diagram.edges[0].label.as_deref(), Some(label));
+        }
     }
 
     #[test]

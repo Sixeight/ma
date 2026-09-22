@@ -153,7 +153,7 @@ fn spec_chained_fan_out_preserves_each_edge_label() {
     let output = ma::render(input).unwrap();
     assert!(output.contains("first"), "{output}");
     assert!(!output.contains("firstt"), "{output}");
-    assert_eq!(output.matches("first").count(), 1, "{output}");
+    assert_eq!(output.matches("first").count(), 2, "{output}");
     assert_eq!(output.matches("second").count(), 2, "{output}");
 }
 

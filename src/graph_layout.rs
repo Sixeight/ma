@@ -170,7 +170,7 @@ pub fn compute(diagram: &GraphDiagram) -> Result<GraphLayout, String> {
     }
 
     let mut node_layouts = match diagram.direction {
-        Direction::TopDown => layout_td(&ranks_nodes),
+        Direction::TopDown => layout_td(&ranks_nodes, &diagram.edges),
         Direction::LeftRight => layout_lr(&ranks_nodes, &ranks, &diagram.edges),
     };
 
@@ -193,17 +193,7 @@ pub fn compute(diagram: &GraphDiagram) -> Result<GraphLayout, String> {
     let (mut width, mut height) = base_extents(&node_layouts, &subgraphs);
 
     if diagram.direction == Direction::TopDown {
-        for edge in &edges {
-            let Some(label) = edge.label.as_ref() else {
-                continue;
-            };
-            let Some(from) = node_layouts.iter().find(|node| node.id == edge.from_id) else {
-                continue;
-            };
-            let label_width = display_width(label);
-            let label_col = from.center_x.saturating_sub(label_width / 2);
-            width = width.max(label_col + label_width);
-        }
+        width = width.max(td_labels_right(&node_layouts, &diagram.edges));
     }
 
     // Self-loop nodes need extra space: arm (2 cols) + label width to the right,
@@ -333,7 +323,7 @@ fn layout_with_subgraphs(diagram: &GraphDiagram) -> Result<GraphLayout, String> 
         }
 
         let mut node_layouts = match diagram.direction {
-            Direction::TopDown => layout_td(&ranks_nodes),
+            Direction::TopDown => layout_td(&ranks_nodes, &sg_diagram.edges),
             Direction::LeftRight => layout_lr(&ranks_nodes, &ranks, &sg_diagram.edges),
         };
 
@@ -418,7 +408,7 @@ fn layout_with_subgraphs(diagram: &GraphDiagram) -> Result<GraphLayout, String> 
         }
 
         let mut node_layouts = match diagram.direction {
-            Direction::TopDown => layout_td(&ranks_nodes),
+            Direction::TopDown => layout_td(&ranks_nodes, &bare_diagram.edges),
             Direction::LeftRight => layout_lr(&ranks_nodes, &ranks, &bare_diagram.edges),
         };
 
@@ -619,7 +609,7 @@ pub fn compute_with_max_width(
     for node_gap in (0..TD_NODE_GAP).rev() {
         for lr_gap in (1..LR_GAP).rev() {
             let mut node_layouts = match diagram.direction {
-                Direction::TopDown => layout_td_with_gap(&ranks_nodes, node_gap),
+                Direction::TopDown => layout_td_with_gap(&ranks_nodes, &diagram.edges, node_gap),
                 Direction::LeftRight => {
                     layout_lr_with_gap(&ranks_nodes, &ranks, &diagram.edges, lr_gap)
                 }
@@ -642,6 +632,9 @@ pub fn compute_with_max_width(
 
             assign_edge_routes(&diagram.direction, &node_layouts, &mut edges);
             let (mut width, mut height) = base_extents(&node_layouts, &subgraphs);
+            if diagram.direction == Direction::TopDown {
+                width = width.max(td_labels_right(&node_layouts, &diagram.edges));
+            }
             reserve_back_edge_space(&diagram.direction, &edges, &mut width, &mut height);
 
             if width <= max_width {
@@ -747,18 +740,45 @@ fn stack_subgraphs(
     Ok(layout)
 }
 
-fn layout_td(ranks_nodes: &[Vec<&NodeDecl>]) -> Vec<NodeLayout> {
-    layout_td_with_gap(ranks_nodes, TD_NODE_GAP)
+fn td_label_width(node_id: &str, edges: &[Edge]) -> usize {
+    edges
+        .iter()
+        .filter(|edge| {
+            edge.edge_type != EdgeType::Invisible && (edge.from == node_id || edge.to == node_id)
+        })
+        .filter_map(|edge| edge.label.as_deref())
+        .map(multiline_width)
+        .max()
+        .unwrap_or(0)
 }
 
-fn layout_td_with_gap(ranks_nodes: &[Vec<&NodeDecl>], node_gap: usize) -> Vec<NodeLayout> {
+fn td_labels_right(nodes: &[NodeLayout], edges: &[Edge]) -> usize {
+    nodes
+        .iter()
+        .map(|node| {
+            let width = td_label_width(&node.id, edges);
+            node.center_x.saturating_sub(width / 2) + width
+        })
+        .max()
+        .unwrap_or(0)
+}
+
+fn layout_td(ranks_nodes: &[Vec<&NodeDecl>], edges: &[Edge]) -> Vec<NodeLayout> {
+    layout_td_with_gap(ranks_nodes, edges, TD_NODE_GAP)
+}
+
+fn layout_td_with_gap(
+    ranks_nodes: &[Vec<&NodeDecl>],
+    edges: &[Edge],
+    node_gap: usize,
+) -> Vec<NodeLayout> {
     let mut layouts = Vec::new();
 
     let mut rank_widths: Vec<usize> = Vec::new();
     for rank_nodes in ranks_nodes {
         let total: usize = rank_nodes
             .iter()
-            .map(|n| box_width(&n.label, n.shape))
+            .map(|n| box_width(&n.label, n.shape).max(td_label_width(&n.id, edges) + 2))
             .sum::<usize>()
             + if rank_nodes.len() > 1 {
                 (rank_nodes.len() - 1) * node_gap
@@ -793,21 +813,45 @@ fn layout_td_with_gap(ranks_nodes: &[Vec<&NodeDecl>], node_gap: usize) -> Vec<No
         for node in rank_nodes {
             let w = box_width(&node.label, node.shape);
             let h = box_height(&node.label, node.shape);
+            let footprint = w.max(td_label_width(&node.id, edges) + 2);
+            let node_x = x + (footprint - w) / 2;
             layouts.push(NodeLayout {
                 id: node.id.clone(),
                 label: node.label.clone(),
                 shape: node.shape,
-                x,
+                x: node_x,
                 y,
                 width: w,
                 height: h,
-                center_x: x + w / 2,
+                center_x: node_x + w / 2,
                 center_y: y + h / 2,
             });
-            x += w + node_gap;
+            x += footprint + node_gap;
         }
 
-        y += rank_heights[rank] + TD_RANK_SPACING;
+        let label_spacing = edges
+            .iter()
+            .filter(|edge| {
+                edge.edge_type != EdgeType::Invisible
+                    && edge.from != edge.to
+                    && rank_nodes.iter().any(|node| node.id == edge.from)
+            })
+            .filter_map(|edge| {
+                edge.label.as_deref().map(|label| {
+                    let branches = edges
+                        .iter()
+                        .filter(|other| {
+                            other.edge_type != EdgeType::Invisible
+                                && other.from != other.to
+                                && (other.from == edge.from || other.to == edge.to)
+                        })
+                        .count();
+                    line_count(label) + if branches > 1 { 2 } else { 1 }
+                })
+            })
+            .max()
+            .unwrap_or(0);
+        y += rank_heights[rank] + TD_RANK_SPACING.max(label_spacing);
     }
 
     layouts
@@ -829,6 +873,33 @@ fn layout_lr_with_gap(
 ) -> Vec<NodeLayout> {
     let mut layouts = Vec::new();
     let mut rank_x = 0;
+    let mut labeled_child_counts: HashMap<&str, usize> = HashMap::new();
+    for edge in edges.iter().filter(|edge| {
+        edge.edge_type != EdgeType::Invisible
+            && edge.label.is_some()
+            && ranks.get(&edge.from) < ranks.get(&edge.to)
+    }) {
+        *labeled_child_counts.entry(&edge.from).or_default() += 1;
+    }
+    let mut label_heights: HashMap<&str, usize> = HashMap::new();
+    for edge in edges.iter().filter(|edge| {
+        edge.edge_type != EdgeType::Invisible && ranks.get(&edge.from) < ranks.get(&edge.to)
+    }) {
+        if let Some(label) = &edge.label {
+            let anchor = if labeled_child_counts
+                .get(edge.from.as_str())
+                .copied()
+                .unwrap_or(0)
+                > 1
+            {
+                &edge.to
+            } else {
+                &edge.from
+            };
+            let height = label_heights.entry(anchor).or_default();
+            *height = (*height).max(line_count(label));
+        }
+    }
 
     for (rank, rank_nodes) in ranks_nodes.iter().enumerate() {
         let rank_max_width = rank_nodes
@@ -841,6 +912,11 @@ fn layout_lr_with_gap(
         for node in rank_nodes {
             let w = box_width(&node.label, node.shape);
             let h = box_height(&node.label, node.shape);
+            y += label_heights
+                .get(node.id.as_str())
+                .copied()
+                .unwrap_or(0)
+                .saturating_sub(h / 2);
             layouts.push(NodeLayout {
                 id: node.id.clone(),
                 label: node.label.clone(),
@@ -859,9 +935,13 @@ fn layout_lr_with_gap(
             let label_gap = edges
                 .iter()
                 .filter(|e| {
-                    ranks.get(&e.from) == Some(&rank) && ranks.get(&e.to) == Some(&(rank + 1))
+                    e.edge_type != EdgeType::Invisible
+                        && ranks
+                            .get(&e.from)
+                            .is_some_and(|from_rank| *from_rank <= rank)
+                        && ranks.get(&e.to).is_some_and(|to_rank| *to_rank > rank)
                 })
-                .filter_map(|e| e.label.as_ref().map(|l| display_width(l) + 2))
+                .filter_map(|e| e.label.as_ref().map(|l| multiline_width(l) + 2))
                 .max()
                 .unwrap_or(0);
             let gap = min_gap.max(label_gap);

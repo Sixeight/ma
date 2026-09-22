@@ -1,7 +1,7 @@
 use std::collections::HashMap;
 
 use crate::canvas::Canvas as Grid;
-use crate::display_width::{display_width, split_br};
+use crate::display_width::{display_width, multiline_width, split_br};
 use crate::graph_ast::{Direction, EdgeType, NodeShape};
 use crate::graph_layout::*;
 
@@ -75,6 +75,7 @@ fn render_lr(layout: &GraphLayout) -> String {
     }
 
     let lane_count = back_edge_lane_count(&layout.edges);
+    let mut labels = Vec::new();
 
     for edge in &layout.edges {
         if edge.route != EdgeRoute::Forward {
@@ -82,7 +83,11 @@ fn render_lr(layout: &GraphLayout) -> String {
         }
         let from = node_map[edge.from_id.as_str()];
         let to = node_map[edge.to_id.as_str()];
-        draw_lr_edge(&mut grid, from, to, edge, layout);
+        if let Some(placement) = draw_lr_edge(&mut grid, from, to, edge, layout)
+            && let Some(label) = edge.label.as_deref()
+        {
+            labels.push((label, placement));
+        }
     }
     for edge in &layout.edges {
         let EdgeRoute::Back { lane } = edge.route else {
@@ -99,6 +104,16 @@ fn render_lr(layout: &GraphLayout) -> String {
         }
         let from = node_map[edge.from_id.as_str()];
         draw_td_self_loop(&mut grid, from, edge);
+    }
+
+    for (label, (row, start, end)) in labels {
+        draw_lr_label(&mut grid, label, row, start, end);
+    }
+    for edge in &layout.edges {
+        if edge.route == EdgeRoute::Forward && has_arrow_head(edge.edge_type) {
+            let to = node_map[edge.to_id.as_str()];
+            grid.set(to.center_y, to.x - 1, '>');
+        }
     }
 
     grid.render()
@@ -401,9 +416,12 @@ fn draw_td_single_edge_route(
     let vert = td_vertical_connector(edge_type);
 
     let route_start = if let Some(ref label) = edge.label {
-        let label_col = from_cx.saturating_sub(display_width(label) / 2);
-        grid.write_str(from_below, label_col, label);
-        from_below + 1
+        let lines = split_br(label);
+        let label_col = from_cx.saturating_sub(multiline_width(label) / 2);
+        for (offset, line) in lines.iter().enumerate() {
+            grid.write_str(from_below + offset, label_col, line);
+        }
+        from_below + lines.len()
     } else {
         from_below
     };
@@ -601,6 +619,18 @@ fn draw_td_edge(
         grid.set(from_below, max_cx, '┐');
         grid.set(from_below, from_cx, '┴');
 
+        for row in (from_below + 1)..to_above {
+            grid.set(row, to_cx, td_vertical_connector(edge_type));
+        }
+        if let Some(label) = &edge.label {
+            let lines = split_br(label);
+            let col = to_cx.saturating_sub(multiline_width(label) / 2);
+            let top = to_above.saturating_sub(lines.len());
+            for (offset, line) in lines.iter().enumerate() {
+                grid.write_str(top + offset, col, line);
+            }
+        }
+
         if has_arrow_head(edge_type) {
             grid.set(to_above, to_cx, '▼');
         } else {
@@ -614,13 +644,31 @@ fn draw_td_edge(
             let parent_centers: Vec<usize> = parents.iter().map(|n| n.center_x).collect();
             let min_cx = *parent_centers.iter().min().unwrap();
             let max_cx = *parent_centers.iter().max().unwrap();
-
-            grid.set(from_below, min_cx, '└');
-            for col in (min_cx + 1)..max_cx {
-                grid.set(from_below, col, '─');
+            let label_height = layout
+                .edges
+                .iter()
+                .filter(|other| other.route == EdgeRoute::Forward && other.to_id == to.id)
+                .filter_map(|other| other.label.as_deref())
+                .map(|label| split_br(label).len())
+                .max()
+                .unwrap_or(0);
+            let bar_row = from_below + label_height;
+            for row in from_below..bar_row {
+                grid.set(row, from_cx, td_vertical_connector(edge_type));
             }
-            grid.set(from_below, max_cx, '┘');
-            grid.set(from_below, to_cx, '┬');
+            if let Some(label) = &edge.label {
+                let col = from_cx.saturating_sub(multiline_width(label) / 2);
+                for (offset, line) in split_br(label).iter().enumerate() {
+                    grid.write_str(from_below + offset, col, line);
+                }
+            }
+
+            grid.set(bar_row, min_cx, '└');
+            for col in (min_cx + 1)..max_cx {
+                grid.set(bar_row, col, '─');
+            }
+            grid.set(bar_row, max_cx, '┘');
+            grid.set(bar_row, to_cx, '┬');
 
             if has_arrow_head(edge_type) {
                 grid.set(to_above, to_cx, '▼');
@@ -942,16 +990,58 @@ fn lr_horizontal_connector(edge_type: EdgeType) -> char {
     }
 }
 
+fn lr_label_uses_source(layout: &GraphLayout, edge: &EdgeLayout) -> bool {
+    layout
+        .edges
+        .iter()
+        .filter(|other| {
+            other.route == EdgeRoute::Forward
+                && other.label.is_some()
+                && other.from_id == edge.from_id
+        })
+        .count()
+        <= 1
+}
+
+fn draw_lr_label(grid: &mut Grid, label: &str, row: usize, start: usize, end: usize) {
+    let lines = split_br(label);
+    let col = start + end.saturating_sub(start + multiline_width(label)) / 2;
+    let top = row.saturating_sub(lines.len());
+    for (offset, line) in lines.iter().enumerate() {
+        grid.write_str(top + offset, col, line);
+    }
+}
+
+fn lr_next_rank_x(layout: &GraphLayout, from: &NodeLayout, to: &NodeLayout) -> usize {
+    layout
+        .nodes
+        .iter()
+        .filter(|node| node.x > from.x)
+        .map(|node| node.x)
+        .min()
+        .unwrap_or(to.x)
+}
+
+fn lr_label_start(layout: &GraphLayout, to: &NodeLayout) -> usize {
+    layout
+        .nodes
+        .iter()
+        .filter(|node| node.x < to.x)
+        .map(|node| node.x + node.width + 1)
+        .max()
+        .unwrap_or(0)
+}
+
 fn draw_lr_edge(
     grid: &mut Grid,
     from: &NodeLayout,
     to: &NodeLayout,
     edge: &EdgeLayout,
     layout: &GraphLayout,
-) {
+) -> Option<(usize, usize, usize)> {
     if from.id == to.id {
         draw_td_self_loop(grid, from, edge);
-        return;
+        return None;
     }
 
     // The geometry below assumes the target sits ahead of the source, which is
@@ -971,13 +1061,15 @@ fn draw_lr_edge(
         if has_arrow_head(edge.edge_type) {
             grid.set(row, to_left - 1, '>');
         }
-        if let Some(ref label) = edge.label {
-            let gap = to_left - from_right;
-            let label_col = from_right + (gap.saturating_sub(display_width(label))) / 2;
-            if row > 0 {
-                grid.write_str(row - 1, label_col, label);
-            }
-        }
+        let (start, end) = if lr_label_uses_source(layout, edge) {
+            (
+                lr_rank_gutter(layout, from),
+                lr_next_rank_x(layout, from, to),
+            )
+        } else {
+            (lr_label_start(layout, to), to_left)
+        };
+        Some((row, start, end))
     } else {
         // L-shaped routing: horizontal → corner → vertical → corner → horizontal
         let from_subgraph = layout.subgraphs.iter().find(|subgraph| {
@@ -995,12 +1087,32 @@ fn draw_lr_edge(
         let crosses_subgraphs = from_subgraph
             .zip(to_subgraph)
             .filter(|(from_sg, to_sg)| from_sg.x != to_sg.x || from_sg.y != to_sg.y);
+        let label_uses_source = lr_label_uses_source(layout, edge);
+        let has_branch_label = layout.edges.iter().any(|other| {
+            other.route == EdgeRoute::Forward
+                && other.label.is_some()
+                && if label_uses_source {
+                    other.to_id == edge.to_id
+                } else {
+                    other.from_id == edge.from_id
+                }
+        });
         let mid_col = crosses_subgraphs
             .map(|(from_sg, to_sg)| {
                 let gap_start = from_sg.x + from_sg.width;
                 gap_start + (to_sg.x.saturating_sub(gap_start)) / 2
             })
-            .unwrap_or_else(|| from_right + (to_left - from_right) / 2);
+            .unwrap_or_else(|| {
+                if has_branch_label {
+                    if label_uses_source {
+                        lr_next_rank_x(layout, from, to) - 1
+                    } else {
+                        lr_rank_gutter(layout, from)
+                    }
+                } else {
+                    from_right + (to_left - from_right) / 2
+                }
+            });
         let vert = td_vertical_connector(edge.edge_type);
 
         // Horizontal from source to midpoint
@@ -1031,26 +1143,13 @@ fn draw_lr_edge(
             grid.set(to.center_y, to_left - 1, '>');
         }
 
-        // Cross-subgraph labels use the clear target-side row; ordinary
-        // L-shaped edges keep the label near their source.
-        if let Some(ref label) = edge.label {
-            let (label_start, gap) = if crosses_subgraphs.is_some() {
-                (mid_col + 1, to_left.saturating_sub(mid_col + 1))
-            } else {
-                (from_right, to_left.saturating_sub(from_right))
-            };
-            if gap > 0 {
-                let label_col = label_start + (gap.saturating_sub(display_width(label))) / 2;
-                let label_row = if crosses_subgraphs.is_some() {
-                    to.center_y
-                } else {
-                    from.center_y
-                };
-                if label_row > 0 {
-                    grid.write_str(label_row - 1, label_col, label);
-                }
-            }
-        }
+        let placement = if crosses_subgraphs.is_some() || !label_uses_source {
+            let label_start = lr_label_start(layout, to).max(mid_col + 1);
+            (to.center_y, label_start, to_left)
+        } else {
+            (from.center_y, lr_rank_gutter(layout, from), mid_col)
+        };
+        (placement.2 > placement.1).then_some(placement)
     }
 }
 
