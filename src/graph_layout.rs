@@ -932,24 +932,76 @@ fn layout_lr_with_gap(
         }
 
         if rank + 1 < ranks_nodes.len() {
-            let label_gap = edges
-                .iter()
-                .filter(|e| {
-                    e.edge_type != EdgeType::Invisible
-                        && ranks
-                            .get(&e.from)
-                            .is_some_and(|from_rank| *from_rank <= rank)
-                        && ranks.get(&e.to).is_some_and(|to_rank| *to_rank > rank)
-                })
-                .filter_map(|e| e.label.as_ref().map(|l| multiline_width(l) + 2))
-                .max()
-                .unwrap_or(0);
-            let gap = min_gap.max(label_gap);
+            let gap = min_gap.max(lr_rank_gap(edges, ranks, rank));
             rank_x += rank_max_width + gap;
         }
     }
 
+    // A diamond is taller than a box, so top-aligning ranks puts their text on
+    // different rows and the edge between them has to bend. Shift each rank so
+    // the top node's text row matches.
+    align_lr_baselines(&mut layouts);
     layouts
+}
+
+/// Columns between this rank and the next.
+///
+/// A labeled fan-out spends one column on the dash out of the source and the
+/// next on the vertical bar. Both are outside the label, so the longest label
+/// keeps a space after the bar.
+fn lr_rank_gap(edges: &[Edge], ranks: &HashMap<String, usize>, rank: usize) -> usize {
+    let crossing: Vec<&Edge> = edges
+        .iter()
+        .filter(|edge| {
+            edge.edge_type != EdgeType::Invisible
+                && ranks
+                    .get(&edge.from)
+                    .is_some_and(|from_rank| *from_rank <= rank)
+                && ranks.get(&edge.to).is_some_and(|to_rank| *to_rank > rank)
+        })
+        .collect();
+
+    let label_gap = crossing
+        .iter()
+        .filter_map(|edge| edge.label.as_ref().map(|label| multiline_width(label) + 2))
+        .max()
+        .unwrap_or(0);
+    let fan_out = crossing.iter().any(|edge| {
+        edge.label.is_some()
+            && crossing
+                .iter()
+                .filter(|other| other.from == edge.from && other.label.is_some())
+                .count()
+                > 1
+    });
+    if fan_out && label_gap > 0 {
+        label_gap + 2
+    } else {
+        label_gap
+    }
+}
+
+fn align_lr_baselines(nodes: &mut [NodeLayout]) {
+    let mut top_y: HashMap<usize, usize> = HashMap::new();
+    for node in nodes.iter() {
+        let top = top_y.entry(node.x).or_insert(usize::MAX);
+        *top = (*top).min(node.y);
+    }
+
+    let mut top_center: HashMap<usize, usize> = HashMap::new();
+    let mut baseline = 0;
+    for node in nodes.iter() {
+        if node.y == top_y[&node.x] {
+            top_center.insert(node.x, node.center_y);
+            baseline = baseline.max(node.center_y);
+        }
+    }
+
+    for node in nodes.iter_mut() {
+        let shift = baseline - top_center[&node.x];
+        node.y += shift;
+        node.center_y += shift;
+    }
 }
 
 fn box_width(label: &str, shape: NodeShape) -> usize {
@@ -1163,6 +1215,18 @@ mod tests {
         let b = &layout.nodes[1];
         assert!(b.x > a.x, "B should be right of A in LR");
         assert_eq!(a.y, b.y, "single row in LR");
+    }
+
+    #[test]
+    fn layout_lr_box_and_diamond_share_a_text_row() {
+        let diagram = parse_graph("graph LR\n    A[Start] --> B{Choice}\n").unwrap();
+        let layout = compute(&diagram).unwrap();
+        let a = layout.nodes.iter().find(|n| n.id == "A").unwrap();
+        let b = layout.nodes.iter().find(|n| n.id == "B").unwrap();
+        assert_eq!(
+            a.center_y, b.center_y,
+            "the edge between a box and a diamond stays straight"
+        );
     }
 
     #[test]

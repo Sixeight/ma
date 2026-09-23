@@ -403,6 +403,27 @@ fn route_crosses_node(
     })
 }
 
+fn horizontal_span_hits_node(
+    layout: &GraphLayout,
+    row: usize,
+    col_start: usize,
+    col_end: usize,
+    from_id: &str,
+    to_id: &str,
+) -> bool {
+    if col_start >= col_end {
+        return false;
+    }
+    layout.nodes.iter().any(|node| {
+        node.id != from_id
+            && node.id != to_id
+            && row >= node.y
+            && row < node.y + node.height
+            && col_start < node.x + node.width
+            && col_end > node.x
+    })
+}
+
 fn draw_td_single_edge_route(
     grid: &mut Grid,
     from_cx: usize,
@@ -1032,6 +1053,91 @@ fn lr_label_start(layout: &GraphLayout, to: &NodeLayout) -> usize {
         .unwrap_or(0)
 }
 
+/// Column shared by every bent edge into `to` from the same rank.
+///
+/// Each edge used to turn at its own midpoint, and a narrow node's midpoint
+/// lands inside a wider sibling. One column in the gap after the widest
+/// sibling keeps the vertical outside every box. The column before the target
+/// is the arrow head, so the junction sits one further left when the gap can
+/// still hold a dash between them.
+fn lr_fan_in_bus(
+    layout: &GraphLayout,
+    from: &NodeLayout,
+    to: &NodeLayout,
+    edge_type: EdgeType,
+) -> Option<usize> {
+    if from.center_y == to.center_y {
+        return None;
+    }
+
+    let parents: Vec<&NodeLayout> = layout
+        .edges
+        .iter()
+        .filter(|edge| {
+            edge.route == EdgeRoute::Forward && edge.to_id == to.id && edge.from_id != edge.to_id
+        })
+        .filter_map(|edge| layout.nodes.iter().find(|node| node.id == edge.from_id))
+        .collect();
+    if parents.len() < 2 || parents.iter().any(|parent| parent.x != from.x) {
+        return None;
+    }
+
+    let connector = lr_horizontal_connector(edge_type);
+    let same_connector = layout
+        .edges
+        .iter()
+        .filter(|edge| {
+            edge.route == EdgeRoute::Forward && edge.to_id == to.id && edge.from_id != edge.to_id
+        })
+        .all(|edge| lr_horizontal_connector(edge.edge_type) == connector);
+    if !same_connector {
+        return None;
+    }
+
+    let gutter = lr_rank_gutter(layout, from);
+    if gutter >= to.x {
+        return None;
+    }
+    let bus = if to.x >= gutter + 3 { to.x - 3 } else { gutter };
+
+    let bent: Vec<&NodeLayout> = parents
+        .iter()
+        .copied()
+        .filter(|parent| parent.center_y != to.center_y)
+        .collect();
+    let top = bent
+        .iter()
+        .map(|parent| parent.center_y)
+        .min()
+        .unwrap_or(to.center_y)
+        .min(to.center_y);
+    let bottom = bent
+        .iter()
+        .map(|parent| parent.center_y)
+        .max()
+        .unwrap_or(to.center_y)
+        .max(to.center_y);
+    if route_crosses_node(layout, bus, top, bottom + 1, &from.id, &to.id) {
+        return None;
+    }
+    if bent.iter().any(|parent| {
+        horizontal_span_hits_node(
+            layout,
+            parent.center_y,
+            parent.x + parent.width,
+            bus,
+            &parent.id,
+            &to.id,
+        )
+    }) {
+        return None;
+    }
+    if horizontal_span_hits_node(layout, to.center_y, bus + 1, to.x, &from.id, &to.id) {
+        return None;
+    }
+    Some(bus)
+}
+
 fn draw_lr_edge(
     grid: &mut Grid,
     from: &NodeLayout,
@@ -1107,10 +1213,19 @@ fn draw_lr_edge(
                     if label_uses_source {
                         lr_next_rank_x(layout, from, to) - 1
                     } else {
-                        lr_rank_gutter(layout, from)
+                        // Leave a dash between the source border and the bar.
+                        // A gap of one column has nowhere to put it.
+                        let gutter = lr_rank_gutter(layout, from);
+                        let next = lr_next_rank_x(layout, from, to);
+                        if gutter + 1 < next {
+                            gutter + 1
+                        } else {
+                            gutter
+                        }
                     }
                 } else {
-                    from_right + (to_left - from_right) / 2
+                    lr_fan_in_bus(layout, from, to, edge.edge_type)
+                        .unwrap_or(from_right + (to_left - from_right) / 2)
                 }
             });
         let vert = td_vertical_connector(edge.edge_type);
@@ -1568,5 +1683,107 @@ mod tests {
             has_corner,
             "L-shaped routing should have corners:\n{output}"
         );
+    }
+
+    #[test]
+    fn render_lr_fan_in_keeps_wider_node_intact() {
+        let output = render_input(
+            "flowchart LR\n    A[Short] --> T[End]\n    B[Syntax highlight] --> T\n    C[Tiny] --> T\n",
+        );
+        assert!(
+            output.contains("│ Syntax highlight │"),
+            "fan-in must not cut through the wider node:\n{output}"
+        );
+        assert!(
+            output.contains("┌──────────────────┐"),
+            "top border stays intact:\n{output}"
+        );
+        assert!(
+            output.contains("└──────────────────┘"),
+            "bottom border stays intact:\n{output}"
+        );
+        let end_line = output
+            .lines()
+            .find(|line| line.contains("│ End │"))
+            .unwrap();
+        assert_eq!(
+            end_line.matches('┬').count(),
+            1,
+            "the branches share one junction on the way into End:\n{output}"
+        );
+        assert!(
+            !output.contains('┼'),
+            "edges must not cross a node border:\n{output}"
+        );
+    }
+
+    #[test]
+    fn render_lr_fan_out_label_does_not_touch_the_bar() {
+        let output = render_input(
+            "flowchart LR\n    A{Choose} -->|no| B[Skip]\n    A -->|confirmed| C[Keep]\n",
+        );
+        let label_line = output
+            .lines()
+            .find(|line| line.contains("confirmed"))
+            .unwrap();
+        assert!(
+            !label_line.contains("│confirmed") && !label_line.contains("┤confirmed"),
+            "branch label needs space after the bar:\n{output}"
+        );
+    }
+
+    #[test]
+    fn render_lr_pipeline_keeps_a_straight_spine_and_clear_boxes() {
+        let output = render_input(
+            "flowchart LR\n\
+             A[Markdown file] --> B[Parser]\n\
+             B --> C{Block type}\n\
+             C -->|Text| D[Styled text]\n\
+             C -->|Code| E[Syntax highlight]\n\
+             C -->|Image| F[Terminal image]\n\
+             C -->|Mermaid| G[Diagram]\n\
+             D --> H[Terminal]\n\
+             E --> H\n\
+             F --> H\n\
+             G --> H\n",
+        );
+        let spine = output
+            .lines()
+            .find(|line| line.contains("Block type"))
+            .unwrap();
+        for label in ["Markdown file", "Parser", "Styled text", "Terminal"] {
+            assert!(
+                spine.contains(label),
+                "{label} left the straight spine:\n{output}"
+            );
+        }
+        assert!(
+            spine.contains("─┬"),
+            "fan-out should leave the diamond before it splits:\n{output}"
+        );
+        assert!(
+            output.contains("│ Syntax highlight │"),
+            "fan-in cut through the wider node:\n{output}"
+        );
+        assert!(!output.contains('┼'), "an edge crossed a border:\n{output}");
+        let mermaid = output
+            .lines()
+            .find(|line| line.contains("Mermaid"))
+            .unwrap();
+        assert!(
+            mermaid.contains("│ Mermaid"),
+            "branch label sits against the bar:\n{output}"
+        );
+    }
+
+    #[test]
+    fn render_lr_box_connects_straight_into_diamond() {
+        let output = render_input("graph LR\n    A[Start] --> B{Choice}\n");
+        let text = output.lines().find(|line| line.contains("Choice")).unwrap();
+        assert!(
+            text.contains("Start"),
+            "box and diamond share a text row:\n{output}"
+        );
+        assert!(text.contains('>'), "arrow stays on that row:\n{output}");
     }
 }
