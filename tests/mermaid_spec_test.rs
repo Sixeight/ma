@@ -178,7 +178,10 @@ sequenceDiagram
 ";
     let output = ma::render(input).unwrap();
 
-    assert!(!output.contains("comment"), "comments must not appear in output");
+    assert!(
+        !output.contains("comment"),
+        "comments must not appear in output"
+    );
     assert!(output.contains("Hello"));
 }
 
@@ -209,8 +212,14 @@ sequenceDiagram
     assert!(frame_top.contains('┌'), "frame top-left corner");
     assert!(frame_top.contains('┐'), "frame top-right corner");
 
-    let frame_bottom = lines[3..].iter().find(|l| l.contains('└') && l.contains('┘')).unwrap();
-    assert!(frame_bottom.contains('┼'), "frame bottom has lifeline intersection");
+    let frame_bottom = lines[3..]
+        .iter()
+        .find(|l| l.contains('└') && l.contains('┘'))
+        .unwrap();
+    assert!(
+        frame_bottom.contains('┼'),
+        "frame bottom has lifeline intersection"
+    );
 }
 
 #[test]
@@ -284,7 +293,10 @@ sequenceDiagram
         .rev()
         .find(|l| l.contains('└') && l.contains('┘'))
         .unwrap();
-    assert!(frame_bottom.contains('┼'), "frame bottom lifeline intersection");
+    assert!(
+        frame_bottom.contains('┼'),
+        "frame bottom lifeline intersection"
+    );
 }
 
 // --- opt ---
@@ -434,7 +446,9 @@ sequenceDiagram
     assert!(output.contains("Hello"), "message inside rect visible");
 
     let lines: Vec<&str> = output.lines().collect();
-    let frame_top = lines.iter().find(|l| l.contains('┌') && l.contains('┐') && l.contains("rect"));
+    let frame_top = lines
+        .iter()
+        .find(|l| l.contains('┌') && l.contains('┐') && l.contains("rect"));
     assert!(frame_top.is_some(), "rect frame top visible");
 }
 
@@ -514,7 +528,10 @@ sequenceDiagram
     let bottom_section = &lines[lines.len() - 3..];
     let bottom_text = bottom_section.join("\n");
     let b_count_bottom = bottom_text.matches("│ B │").count();
-    assert_eq!(b_count_bottom, 0, "destroyed participant should not have bottom box");
+    assert_eq!(
+        b_count_bottom, 0,
+        "destroyed participant should not have bottom box"
+    );
 }
 
 #[test]

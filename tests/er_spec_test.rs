@@ -38,24 +38,42 @@ fn spec_er_label_with_spaces() {
     let input = "erDiagram\n    CUSTOMER }o--|| ADDRESS : billing address\n";
     let output = ma::render(input).unwrap();
     assert!(output.contains("billing address"));
-    assert!(output.contains("}o"), "should contain left ZeroOrMany symbol");
-    assert!(output.contains("||"), "should contain right ExactlyOne symbol");
+    assert!(
+        output.contains("}o"),
+        "should contain left ZeroOrMany symbol"
+    );
+    assert!(
+        output.contains("||"),
+        "should contain right ExactlyOne symbol"
+    );
 }
 
 #[test]
 fn spec_er_cardinality_symbols_all_variants() {
     let input = "erDiagram\n    A o|--|o B : rel\n";
     let output = ma::render(input).unwrap();
-    assert!(output.contains("o|"), "should contain left ZeroOrOne symbol");
-    assert!(output.contains("|o"), "should contain right ZeroOrOne symbol");
+    assert!(
+        output.contains("o|"),
+        "should contain left ZeroOrOne symbol"
+    );
+    assert!(
+        output.contains("|o"),
+        "should contain right ZeroOrOne symbol"
+    );
 }
 
 #[test]
 fn spec_er_cardinality_one_or_many() {
     let input = "erDiagram\n    A }|--|{ B : rel\n";
     let output = ma::render(input).unwrap();
-    assert!(output.contains("}|"), "should contain left OneOrMany symbol");
-    assert!(output.contains("|{"), "should contain right OneOrMany symbol");
+    assert!(
+        output.contains("}|"),
+        "should contain left OneOrMany symbol"
+    );
+    assert!(
+        output.contains("|{"),
+        "should contain right OneOrMany symbol"
+    );
 }
 
 #[test]
@@ -122,9 +140,13 @@ erDiagram
     assert!(separator.is_some(), "separator between name and attributes");
 
     // Attributes below separator
-    let name_line = lines.iter().find(|l| l.contains("string") && l.contains("name"));
+    let name_line = lines
+        .iter()
+        .find(|l| l.contains("string") && l.contains("name"));
     assert!(name_line.is_some(), "attribute 'string name' visible");
-    let age_line = lines.iter().find(|l| l.contains("int") && l.contains("age"));
+    let age_line = lines
+        .iter()
+        .find(|l| l.contains("int") && l.contains("age"));
     assert!(age_line.is_some(), "attribute 'int age' visible");
 }
 
@@ -172,7 +194,10 @@ erDiagram
 #[test]
 fn spec_er_non_identifying_relationship_is_dotted() {
     let output = ma::render("erDiagram\n    A ||..o{ B : owns\n").unwrap();
-    assert!(output.contains('┈'), "non-identifying relationship is dotted");
+    assert!(
+        output.contains('┈'),
+        "non-identifying relationship is dotted"
+    );
 }
 
 #[test]
@@ -196,7 +221,8 @@ fn spec_er_key_and_comment_are_preserved_together() {
 
 #[test]
 fn spec_er_aliases_on_relationship_references_are_visible() {
-    let input = "erDiagram\n    CUSTOMER[\"Customer Account\"] ||..o{ ORDER[\"Order Record\"] : owns\n";
+    let input =
+        "erDiagram\n    CUSTOMER[\"Customer Account\"] ||..o{ ORDER[\"Order Record\"] : owns\n";
     let output = ma::render(input).unwrap();
     assert!(output.contains("Customer Account"), "{output}");
     assert!(output.contains("Order Record"), "{output}");

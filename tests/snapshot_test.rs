@@ -9,8 +9,14 @@ sequenceDiagram
 
     let error = ma::render_with_options(input, Some(20)).unwrap_err();
 
-    assert!(error.contains("requires at least"), "unexpected error: {error}");
-    assert!(error.contains("max_width is 20"), "unexpected error: {error}");
+    assert!(
+        error.contains("requires at least"),
+        "unexpected error: {error}"
+    );
+    assert!(
+        error.contains("max_width is 20"),
+        "unexpected error: {error}"
+    );
 }
 
 #[test]
@@ -121,7 +127,10 @@ sequenceDiagram
 ";
     let output = ma::render(input).unwrap();
 
-    assert!(output.contains('┃'), "active lifeline should use heavy vertical");
+    assert!(
+        output.contains('┃'),
+        "active lifeline should use heavy vertical"
+    );
 
     let lines: Vec<&str> = output.lines().collect();
     // First message (Hello) - Bob not yet active
@@ -173,7 +182,10 @@ sequenceDiagram
     assert!(output.contains("┌"));
     let lines: Vec<&str> = output.lines().collect();
     let note_line = lines.iter().find(|l| l.contains("Thinking")).unwrap();
-    assert!(note_line.contains("│ Thinking │"), "note text in box: {note_line}");
+    assert!(
+        note_line.contains("│ Thinking │"),
+        "note text in box: {note_line}"
+    );
 }
 
 #[test]
@@ -188,5 +200,8 @@ sequenceDiagram
     assert!(output.contains("Shared note"));
     let lines: Vec<&str> = output.lines().collect();
     let note_line = lines.iter().find(|l| l.contains("Shared note")).unwrap();
-    assert!(note_line.contains("│ Shared note"), "note text in box: {note_line}");
+    assert!(
+        note_line.contains("│ Shared note"),
+        "note text in box: {note_line}"
+    );
 }

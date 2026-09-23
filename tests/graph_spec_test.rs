@@ -612,7 +612,10 @@ fn spec_subgraph_border_contains_nodes() {
 fn spec_subgraph_nodes_accessible() {
     let input = "graph TD\n    subgraph Backend\n        A[API] --> B[DB]\n    end\n";
     let output = ma::render(input).unwrap();
-    assert!(output.contains("│ API │"), "node A rendered inside subgraph");
+    assert!(
+        output.contains("│ API │"),
+        "node A rendered inside subgraph"
+    );
     assert!(output.contains("│ DB │"), "node B rendered inside subgraph");
     assert!(output.contains('▼'), "edge arrow rendered");
 }
@@ -734,7 +737,11 @@ graph TD
 fn spec_self_loop_does_not_crash() {
     let input = "graph TD\n    A --> B\n    B -->|fallback| B\n    B --> C\n";
     let output = ma::render(input);
-    assert!(output.is_ok(), "self-loop should not crash: {:?}", output.err());
+    assert!(
+        output.is_ok(),
+        "self-loop should not crash: {:?}",
+        output.err()
+    );
     let rendered = output.unwrap();
     assert!(rendered.contains("│ A │"), "A rendered");
     // B's right border becomes ├ due to self-loop, so check for │ B ├
@@ -779,10 +786,16 @@ fn spec_cycle_lr_two_nodes_ranks_forward() {
     let input = "graph LR\n    A --> B\n    B --> A\n";
     let output = ma::render(input).unwrap();
     let first = output.lines().next().unwrap();
-    assert!(!first.trim().is_empty(), "first rank is not empty: {output:?}");
+    assert!(
+        !first.trim().is_empty(),
+        "first rank is not empty: {output:?}"
+    );
     let a = output.find("│ A ").unwrap();
     let b = output.find("│ B ").unwrap();
-    assert!(a < b, "A left of B, back edge B --> A goes backwards:\n{output}");
+    assert!(
+        a < b,
+        "A left of B, back edge B --> A goes backwards:\n{output}"
+    );
 }
 
 #[test]
@@ -790,10 +803,16 @@ fn spec_cycle_td_two_nodes_ranks_forward() {
     let input = "graph TD\n    A --> B\n    B --> A\n";
     let output = ma::render(input).unwrap();
     let first = output.lines().next().unwrap();
-    assert!(!first.trim().is_empty(), "first rank is not empty: {output:?}");
+    assert!(
+        !first.trim().is_empty(),
+        "first rank is not empty: {output:?}"
+    );
     let a = output.find("│ A ").unwrap();
     let b = output.find("│ B ").unwrap();
-    assert!(a < b, "A above B, back edge B --> A goes backwards:\n{output}");
+    assert!(
+        a < b,
+        "A above B, back edge B --> A goes backwards:\n{output}"
+    );
 }
 
 #[test]
@@ -876,7 +895,10 @@ fn spec_cycle_back_edge_excluded_from_fan_out_bar() {
     let input = "graph TD\n    A --> B\n    B --> C\n    C --> D\n    C --> A\n";
     let output = ma::render(input).unwrap();
     for id in ["A", "B", "C", "D"] {
-        assert!(output.contains(&format!("│ {id} │")), "{id} intact:\n{output}");
+        assert!(
+            output.contains(&format!("│ {id} │")),
+            "{id} intact:\n{output}"
+        );
     }
     assert!(output.contains('▲'), "back edge arrives:\n{output}");
 }
@@ -885,9 +907,15 @@ fn spec_cycle_back_edge_excluded_from_fan_out_bar() {
 fn spec_cycle_back_edge_long_label_keeps_route_intact() {
     let input = "graph LR\n    A --> B\n    B -->|averyverylonglabel| A\n";
     let output = ma::render(input).unwrap();
-    assert!(output.contains("averyverylonglabel"), "label not truncated:\n{output}");
+    assert!(
+        output.contains("averyverylonglabel"),
+        "label not truncated:\n{output}"
+    );
     let route = output.lines().last().unwrap();
-    assert!(route.contains('└') && route.contains('┘'), "route corners intact:\n{output}");
+    assert!(
+        route.contains('└') && route.contains('┘'),
+        "route corners intact:\n{output}"
+    );
 }
 
 #[test]
@@ -911,16 +939,25 @@ fn spec_cycle_back_edge_across_subgraphs_keeps_frames() {
     assert!(output.contains("┌─ One "), "One title intact:\n{output}");
     assert!(output.contains("┌─ Two "), "Two title intact:\n{output}");
     for id in ["A", "B", "C", "D"] {
-        assert!(output.contains(&format!("│ {id} │")), "{id} intact:\n{output}");
+        assert!(
+            output.contains(&format!("│ {id} │")),
+            "{id} intact:\n{output}"
+        );
     }
 }
 
 #[test]
 fn spec_cycle_back_edge_types() {
     let dotted = ma::render("graph LR\n    A --> B\n    B -.-> A\n").unwrap();
-    assert!(dotted.contains('╌') || dotted.contains('┊'), "dotted glyphs:\n{dotted}");
+    assert!(
+        dotted.contains('╌') || dotted.contains('┊'),
+        "dotted glyphs:\n{dotted}"
+    );
     let thick = ma::render("graph LR\n    A --> B\n    B ==> A\n").unwrap();
-    assert!(thick.contains('═') || thick.contains('║'), "thick glyphs:\n{thick}");
+    assert!(
+        thick.contains('═') || thick.contains('║'),
+        "thick glyphs:\n{thick}"
+    );
     let open = ma::render("graph LR\n    A --> B\n    B --- A\n").unwrap();
     assert!(!open.contains('▲'), "open link has no arrow head:\n{open}");
 }
@@ -930,9 +967,19 @@ fn spec_cycle_respects_max_width() {
     let input = "graph LR\n    A --> B\n    A --> C\n    B --> D\n    C --> D\n    D --> A\n";
     for max in [80, 30, 20] {
         let output = ma::render_with_options(input, Some(max)).unwrap();
-        let widest = output.lines().map(ma::display_width::display_width).max().unwrap_or(0);
-        assert!(widest <= max, "output fits {max} columns, got {widest}:\n{output}");
-        assert!(output.contains('▲'), "back edge still drawn at {max}:\n{output}");
+        let widest = output
+            .lines()
+            .map(ma::display_width::display_width)
+            .max()
+            .unwrap_or(0);
+        assert!(
+            widest <= max,
+            "output fits {max} columns, got {widest}:\n{output}"
+        );
+        assert!(
+            output.contains('▲'),
+            "back edge still drawn at {max}:\n{output}"
+        );
     }
 }
 
@@ -1063,7 +1110,10 @@ graph TD
     let has_top_corner = lines.iter().any(|l| l.contains('┐') && !l.contains("┌─"));
     let has_bottom_corner = lines.iter().any(|l| l.contains('┘') && !l.contains("└─"));
     assert!(has_top_corner, "gutter top corner ┐ exists:\n{output}");
-    assert!(has_bottom_corner, "gutter bottom corner ┘ exists:\n{output}");
+    assert!(
+        has_bottom_corner,
+        "gutter bottom corner ┘ exists:\n{output}"
+    );
 }
 
 // =============================================================================
@@ -1080,7 +1130,10 @@ graph TD
     let output = ma::render(input).unwrap();
     assert!(output.contains("│ A │"), "A rendered");
     assert!(output.contains("│ B │"), "B rendered");
-    assert!(!output.contains("style"), "style directive not rendered as node");
+    assert!(
+        !output.contains("style"),
+        "style directive not rendered as node"
+    );
     assert!(!output.contains("fill"), "style properties not rendered");
 }
 
@@ -1125,7 +1178,10 @@ graph TD
     let output = ma::render(input).unwrap();
     assert!(output.contains("│ A │"), "A rendered");
     assert!(output.contains("│ B │"), "B rendered");
-    assert!(!output.contains("classDef"), "classDef not rendered as node");
+    assert!(
+        !output.contains("classDef"),
+        "classDef not rendered as node"
+    );
     assert!(!output.contains("class"), "class not rendered as node");
     assert!(!output.contains("highlight"), "class name not rendered");
 }
@@ -1140,7 +1196,10 @@ graph LR
     let output = ma::render(input).unwrap();
     assert!(output.contains("│ A │"), "A rendered");
     assert!(output.contains("│ B │"), "B rendered");
-    assert!(!output.contains("linkStyle"), "linkStyle not rendered as node");
+    assert!(
+        !output.contains("linkStyle"),
+        "linkStyle not rendered as node"
+    );
 }
 
 // =============================================================================
@@ -1186,10 +1245,20 @@ fn spec_cycle_td_back_edge_clears_a_taller_node_in_the_target_rank() {
     // body has to stay untouched.
     let input = "graph TD\n    S --> A\n    S --> D{Decide}\n    A --> B\n    B --> A\n";
     let output = ma::render(input).unwrap();
-    assert!(output.contains("│ Decide │"), "diamond body intact:\n{output}");
-    assert!(output.contains(" ╲      ╱"), "diamond lower slant intact:\n{output}");
+    assert!(
+        output.contains("│ Decide │"),
+        "diamond body intact:\n{output}"
+    );
+    assert!(
+        output.contains(" ╲      ╱"),
+        "diamond lower slant intact:\n{output}"
+    );
     assert!(output.contains("│ A │"), "A intact:\n{output}");
-    assert_eq!(output.matches('▲').count(), 1, "back edge arrives:\n{output}");
+    assert_eq!(
+        output.matches('▲').count(),
+        1,
+        "back edge arrives:\n{output}"
+    );
 }
 
 #[test]
@@ -1197,9 +1266,16 @@ fn spec_cycle_disconnected_components_each_draw_their_own_back_edge() {
     let input = "graph TD\n    A --> B\n    B --> A\n    C --> D\n    D --> C\n";
     let output = ma::render(input).unwrap();
     for id in ["A", "B", "C", "D"] {
-        assert!(output.contains(&format!("│ {id} │")), "{id} intact:\n{output}");
+        assert!(
+            output.contains(&format!("│ {id} │")),
+            "{id} intact:\n{output}"
+        );
     }
-    assert_eq!(output.matches('▲').count(), 2, "both cycles close:\n{output}");
+    assert_eq!(
+        output.matches('▲').count(),
+        2,
+        "both cycles close:\n{output}"
+    );
 }
 
 #[test]
@@ -1220,9 +1296,16 @@ fn spec_cycle_lr_back_edges_from_the_last_rank_all_arrive() {
         "graph LR\n    A --> B\n    B --> C\n    C --> D\n    D --> A\n    D --> B\n    D --> C\n";
     let output = ma::render(input).unwrap();
     for id in ["A", "B", "C", "D"] {
-        assert!(output.contains(&format!("│ {id} │")), "{id} intact:\n{output}");
+        assert!(
+            output.contains(&format!("│ {id} │")),
+            "{id} intact:\n{output}"
+        );
     }
-    assert_eq!(output.matches('▲').count(), 3, "three back edges arrive:\n{output}");
+    assert_eq!(
+        output.matches('▲').count(),
+        3,
+        "three back edges arrive:\n{output}"
+    );
 }
 
 #[test]
@@ -1236,7 +1319,11 @@ fn spec_cycle_long_chain_renders_every_node() {
     for i in 1..=61 {
         assert!(output.contains(&format!("│ N{i} │")), "N{i} rendered");
     }
-    assert_eq!(output.matches('▲').count(), 1, "the back edge closes the chain");
+    assert_eq!(
+        output.matches('▲').count(),
+        1,
+        "the back edge closes the chain"
+    );
 }
 
 #[test]
