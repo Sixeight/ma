@@ -58,6 +58,9 @@ fn render_td(layout: &GraphLayout) -> String {
         draw_td_self_loop(&mut grid, from, edge);
     }
 
+    draw_nodes_over_edges(&mut grid, layout);
+    draw_edge_ports(&mut grid, layout);
+
     grid.render()
 }
 
@@ -106,9 +109,6 @@ fn render_lr(layout: &GraphLayout) -> String {
         draw_td_self_loop(&mut grid, from, edge);
     }
 
-    for (label, (row, start, end)) in labels {
-        draw_lr_label(&mut grid, label, row, start, end);
-    }
     for edge in &layout.edges {
         if edge.route == EdgeRoute::Forward && has_arrow_head(edge.edge_type) {
             let to = node_map[edge.to_id.as_str()];
@@ -116,7 +116,68 @@ fn render_lr(layout: &GraphLayout) -> String {
         }
     }
 
+    draw_nodes_over_edges(&mut grid, layout);
+    for (label, (row, start, end)) in labels {
+        draw_lr_label(&mut grid, label, row, start, end);
+    }
+    draw_edge_ports(&mut grid, layout);
+
     grid.render()
+}
+
+/// Nodes cover routes that pass behind them. Edge endpoints are restored after
+/// drawing the boxes so their connection marks remain visible on the borders.
+fn draw_nodes_over_edges(grid: &mut Grid, layout: &GraphLayout) {
+    for node in &layout.nodes {
+        for row in node.y..node.y + node.height {
+            for col in node.x..node.x + node.width {
+                grid.set(row, col, ' ');
+            }
+        }
+        draw_node(grid, node);
+    }
+}
+
+fn draw_edge_ports(grid: &mut Grid, layout: &GraphLayout) {
+    for edge in &layout.edges {
+        let from = layout.nodes.iter().find(|node| node.id == edge.from_id);
+        let to = layout.nodes.iter().find(|node| node.id == edge.to_id);
+
+        match edge.route {
+            EdgeRoute::Forward if layout.direction == Direction::TopDown => {
+                if let Some(from) = from {
+                    grid.set(from.y + from.height - 1, from.center_x, '┬');
+                }
+            }
+            EdgeRoute::Back { lane } => {
+                if layout.direction == Direction::LeftRight {
+                    let (Some(from), Some(to)) = (from, to) else {
+                        continue;
+                    };
+                    if lr_lane_col(layout, to, lane) >= lr_lane_col(layout, from, lane) {
+                        continue;
+                    }
+                    grid.set(from.y + from.height - 1, from.center_x, '┬');
+                    let entry_col = back_edge_entry_col(layout, to);
+                    grid.set(to.y + to.height - 1, entry_col, '┬');
+                } else {
+                    if let Some(from) = from {
+                        grid.set(from.y + from.height - 1, from.center_x, '┬');
+                    }
+                    if let Some(to) = to {
+                        let entry_col = back_edge_entry_col(layout, to);
+                        grid.set(to.y + to.height - 1, entry_col, '┬');
+                    }
+                }
+            }
+            EdgeRoute::SelfLoop => {
+                if let Some(from) = from {
+                    grid.set(from.y + 1, from.x + from.width - 1, '├');
+                }
+            }
+            EdgeRoute::Forward => {}
+        }
+    }
 }
 
 fn draw_node(grid: &mut Grid, node: &NodeLayout) {
@@ -1365,6 +1426,21 @@ mod tests {
 │ Start │────>│ End │
 └───────┘     └─────┘";
         assert_eq!(output, expected);
+    }
+
+    #[test]
+    fn render_lr_edge_does_not_overwrite_intermediate_node() {
+        let output = render_input(
+            "graph LR\n\
+             A[Start] --> C[End]\n\
+             A --> B[Middle]\n\
+             B --> C\n",
+        );
+
+        assert!(
+            output.contains("│ Middle │"),
+            "an edge passing behind another node must not overwrite it:\n{output}"
+        );
     }
 
     #[test]
