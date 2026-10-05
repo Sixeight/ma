@@ -113,7 +113,11 @@ fn add_subgraph_node_id(
 }
 
 fn add_node(nodes: &mut Vec<NodeDecl>, decl: NodeDecl) {
-    if !nodes.iter().any(|n| n.id == decl.id) {
+    if let Some(node) = nodes.iter_mut().find(|node| node.id == decl.id) {
+        if node.label == node.id && node.shape == NodeShape::Box {
+            *node = decl;
+        }
+    } else {
         nodes.push(decl);
     }
 }

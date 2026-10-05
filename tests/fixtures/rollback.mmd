@@ -1,0 +1,17 @@
+flowchart TD
+  pages["Cloudflare Pages を戻す（手動）<br/>deploy-*-web を戻し先の tag で実行"] --> setup
+
+  subgraph entry["rollback-release-servers.yaml"]
+    setup["setup<br/>prod は main からだけ<br/>release_ref の形式と存在<br/>同じ環境のデプロイが動いていないか<br/>対象サービスを 3 段に分ける"]
+    setup --> web["rollback-web<br/>web と gateway"]
+    web -->|成功したら| server["rollback-server<br/>newmo-server 以外の server"]
+    server -->|成功したら| core["rollback-core<br/>newmo-server"]
+  end
+
+  subgraph phase["wc-rollback-cloudrun-phase.yaml（サービスごとに並列）"]
+    find["イメージのタグが release_ref と一致する<br/>一番新しいリビジョンを探す"] --> traffic["トラフィックを 100% 切り替える<br/>dry_run なら Summary に出すだけ"]
+  end
+
+  web -.-> phase
+  server -.-> phase
+  core -.-> phase
