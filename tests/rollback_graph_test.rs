@@ -4,6 +4,27 @@ use ma::graph_parser::parse_graph;
 const ROLLBACK: &str = include_str!("fixtures/rollback.mmd");
 
 #[test]
+fn rollback_aligns_the_vertical_flow_and_keeps_a_stem_under_the_merge() {
+    let diagram = parse_graph(ROLLBACK).unwrap();
+    let layout = compute(&diagram).unwrap();
+    let pages = layout.nodes.iter().find(|node| node.id == "pages").unwrap();
+    for id in ["setup", "web", "server", "core", "find", "traffic"] {
+        let node = layout.nodes.iter().find(|node| node.id == id).unwrap();
+        assert_eq!(node.center_x, pages.center_x, "{id}");
+    }
+    for sg in &layout.subgraphs {
+        assert_eq!(sg.x + sg.width / 2, pages.center_x, "{}", sg.id);
+    }
+    let phase = layout.subgraphs.iter().find(|sg| sg.id == "phase").unwrap();
+    let rendered = ma::graph_renderer::render(&layout);
+    let rows: Vec<_> = rendered.lines().collect();
+    assert!(rows[phase.y - 2].contains('┌'), "{rendered}");
+    assert!(rows[phase.y - 2].contains('╌'), "{rendered}");
+    assert!(!rows[phase.y - 2].contains('▼'), "{rendered}");
+    assert!(rows[phase.y - 1].contains('▼'), "{rendered}");
+}
+
+#[test]
 fn rollback_retains_setup_label_declared_after_reference() {
     let diagram = parse_graph(ROLLBACK).unwrap();
     let setup = diagram

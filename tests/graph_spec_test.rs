@@ -567,9 +567,9 @@ fn spec_subgraph_single_node() {
     let output = ma::render(input).unwrap();
     let expected = "\
 ┌─ Group ─┐
-│ ┌───┐   │
-│ │ A │   │
-│ └───┘   │
+│  ┌───┐  │
+│  │ A │  │
+│  └───┘  │
 └─────────┘";
     assert_eq!(output, expected);
 }
@@ -580,14 +580,14 @@ fn spec_subgraph_with_edge() {
     let output = ma::render(input).unwrap();
     let expected = "\
 ┌─ Backend ─┐
-│ ┌─────┐   │
-│ │ API │   │
-│ └──┬──┘   │
-│    │      │
-│    ▼      │
-│ ┌────┐    │
-│ │ DB │    │
-│ └────┘    │
+│  ┌─────┐  │
+│  │ API │  │
+│  └──┬──┘  │
+│     │     │
+│     ▼     │
+│  ┌────┐   │
+│  │ DB │   │
+│  └────┘   │
 └───────────┘";
     assert_eq!(output, expected);
 }
@@ -658,17 +658,17 @@ flowchart TB
     let output = ma::render(input).unwrap();
     let expected = "\
 ┌─ Group A ─┐
-│ ┌───┐     │
-│ │ A │     │
-│ └───┘     │
+│   ┌───┐   │
+│   │ A │   │
+│   └───┘   │
 └───────────┘
 
 
 
 ┌─ Group B ─┐
-│ ┌───┐     │
-│ │ B │     │
-│ └───┘     │
+│   ┌───┐   │
+│   │ B │   │
+│   └───┘   │
 └───────────┘";
     assert_eq!(output, expected);
 }

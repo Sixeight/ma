@@ -430,6 +430,9 @@ fn connections_to_char(conn: u8) -> Option<char> {
 }
 
 fn merge_box_drawing(existing: char, new_char: char) -> char {
+    if existing == new_char {
+        return new_char;
+    }
     let ec = box_connections(existing);
     let nc = box_connections(new_char);
     if ec == 0 {
@@ -676,7 +679,7 @@ fn draw_td_subgraph_entry(
         .position(|other| std::ptr::eq(*other, edge))
         .unwrap_or(0);
     let gutter = layout.width - back_edge_lane_count(&layout.edges) - entries.len() + lane;
-    let turn_row = to.y - 1;
+    let turn_row = to.y - 2;
     let horizontal = lr_horizontal_connector(edge.edge_type);
     let vertical = td_vertical_connector(edge.edge_type);
     grid.set(from.center_y, from.x + from.width - 1, '├');
@@ -691,8 +694,9 @@ fn draw_td_subgraph_entry(
     for col in (to.center_x + 1)..gutter {
         grid.set_merged(turn_row, col, horizontal, merge_box_drawing);
     }
+    grid.set(turn_row, to.center_x, '┌');
     grid.set(
-        turn_row,
+        turn_row + 1,
         to.center_x,
         if has_arrow_head(edge.edge_type) {
             '▼'

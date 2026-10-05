@@ -424,6 +424,11 @@ fn layout_with_subgraphs(diagram: &GraphDiagram) -> Result<GraphLayout, String> 
         let title_width = display_width(&sg.label) + SUBGRAPH_TITLE_DECOR;
         let sg_width = content_width.max(title_width);
         let sg_height = content_bottom + SUBGRAPH_PAD_BOTTOM;
+        let content_offset = sg_width / 2 - content_width / 2;
+        for node in &mut node_layouts {
+            node.x += content_offset;
+            node.center_x += content_offset;
+        }
 
         sg_layouts.push(SubgraphLayout {
             id: sg.id.clone(),
@@ -772,6 +777,19 @@ fn stack_subgraphs(
         .collect();
     let ranks = assign_ranks(&groups);
     groups.nodes.sort_by_key(|node| ranks[&node.id]);
+    let center_x = layout
+        .subgraphs
+        .iter()
+        .map(|sg| sg.width / 2)
+        .chain(
+            layout
+                .nodes
+                .iter()
+                .filter(|node| !node_to_subgraph.contains_key(node.id.as_str()))
+                .map(|node| node.width / 2),
+        )
+        .max()
+        .unwrap_or(0);
     let mut y_offset = 0;
 
     for group in groups.nodes {
@@ -781,26 +799,27 @@ fn stack_subgraphs(
             }
             let old_x = sg_layout.x;
             let old_y = sg_layout.y;
+            let x_offset = center_x - sg_layout.width / 2;
             for node in layout.nodes.iter_mut().filter(|node| {
                 node_to_subgraph
                     .get(node.id.as_str())
                     .is_some_and(|index| diagram.subgraphs[*index].id == group.id)
             }) {
-                node.x -= old_x;
+                node.x = node.x - old_x + x_offset;
                 node.y = node.y - old_y + y_offset;
-                node.center_x -= old_x;
+                node.center_x = node.center_x - old_x + x_offset;
                 node.center_y = node.center_y - old_y + y_offset;
             }
-            sg_layout.x = 0;
+            sg_layout.x = x_offset;
             sg_layout.y = y_offset;
             y_offset += sg_layout.height + SUBGRAPH_GAP;
         } else if let Some(node) = layout.nodes.iter_mut().find(|node| node.id == group.id) {
             if node.width > max_width {
                 return Err(format!("graph diagram too wide for {max_width} columns"));
             }
-            node.x = 0;
+            node.x = center_x - node.width / 2;
             node.y = y_offset;
-            node.center_x = node.width / 2;
+            node.center_x = center_x;
             node.center_y = y_offset + node.height / 2;
             y_offset += node.height + SUBGRAPH_GAP;
         }
@@ -883,7 +902,7 @@ fn layout_td_with_gap(
     for (rank, rank_nodes) in ranks_nodes.iter().enumerate() {
         let rank_total = rank_widths[rank];
         let base_x = if max_width > rank_total {
-            (max_width - rank_total) / 2
+            max_width / 2 - rank_total / 2
         } else {
             0
         };
@@ -894,7 +913,7 @@ fn layout_td_with_gap(
             let w = box_width(&node.label, node.shape);
             let h = box_height(&node.label, node.shape);
             let footprint = w.max(td_label_width(&node.id, edges) + 2);
-            let node_x = x + (footprint - w) / 2;
+            let node_x = x + footprint / 2 - w / 2;
             layouts.push(NodeLayout {
                 id: node.id.clone(),
                 label: node.label.clone(),
