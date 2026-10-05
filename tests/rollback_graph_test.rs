@@ -14,3 +14,32 @@ fn rollback_retains_setup_label_declared_after_reference() {
     assert!(setup.label.contains("release_ref の形式と存在"));
     assert!(setup.label.contains("対象サービスを 3 段に分ける"));
 }
+
+#[test]
+fn rollback_places_pages_before_entry_and_phase_after_entry() {
+    let diagram = parse_graph(ROLLBACK).unwrap();
+    for layout in [
+        compute(&diagram).unwrap(),
+        compute_with_max_width(&diagram, 100).unwrap(),
+    ] {
+        let pages = layout.nodes.iter().find(|node| node.id == "pages").unwrap();
+        let entry = layout.subgraphs.iter().find(|sg| sg.id == "entry").unwrap();
+        let phase = layout.subgraphs.iter().find(|sg| sg.id == "phase").unwrap();
+        assert!(pages.y + pages.height < entry.y);
+        assert!(entry.y + entry.height < phase.y);
+        assert!(
+            layout
+                .edges
+                .iter()
+                .all(|edge| edge.route == EdgeRoute::Forward)
+        );
+        let rendered = ma::graph_renderer::render(&layout);
+        assert!(rendered.contains("release_ref の形式と存在"));
+        assert!(rendered.contains("対象サービスを 3 段に分ける"));
+        assert!(
+            rendered.contains("rollback-release-servers.yaml"),
+            "{rendered}"
+        );
+        assert_eq!(rendered.matches("成功したら").count(), 2, "{rendered}");
+    }
+}

@@ -17,8 +17,11 @@ pub fn render(layout: &GraphLayout) -> String {
 
 fn render_td(layout: &GraphLayout) -> String {
     let mut grid = Grid::new(layout.width, layout.height);
-    let node_map: HashMap<&str, &NodeLayout> =
-        layout.nodes.iter().map(|n| (n.id.as_str(), n)).collect();
+    let endpoints = crate::graph_layout::edge_endpoint_nodes(&layout.nodes, &layout.subgraphs);
+    let node_map: HashMap<&str, &NodeLayout> = endpoints
+        .iter()
+        .map(|node| (node.id.as_str(), node))
+        .collect();
 
     for sg in &layout.subgraphs {
         draw_subgraph(&mut grid, sg);
@@ -39,7 +42,11 @@ fn render_td(layout: &GraphLayout) -> String {
         }
         let from = node_map[edge.from_id.as_str()];
         let to = node_map[edge.to_id.as_str()];
-        draw_td_edge(&mut grid, from, to, edge, layout);
+        if is_subgraph_entry(edge, &layout.subgraphs) {
+            draw_td_subgraph_entry(&mut grid, from, to, edge, layout);
+        } else {
+            draw_td_edge(&mut grid, from, to, edge, layout);
+        }
     }
     for edge in &layout.edges {
         let EdgeRoute::Back { lane } = edge.route else {
@@ -66,8 +73,11 @@ fn render_td(layout: &GraphLayout) -> String {
 
 fn render_lr(layout: &GraphLayout) -> String {
     let mut grid = Grid::new(layout.width, layout.height);
-    let node_map: HashMap<&str, &NodeLayout> =
-        layout.nodes.iter().map(|n| (n.id.as_str(), n)).collect();
+    let endpoints = crate::graph_layout::edge_endpoint_nodes(&layout.nodes, &layout.subgraphs);
+    let node_map: HashMap<&str, &NodeLayout> = endpoints
+        .iter()
+        .map(|node| (node.id.as_str(), node))
+        .collect();
 
     for sg in &layout.subgraphs {
         draw_subgraph(&mut grid, sg);
@@ -146,7 +156,11 @@ fn draw_edge_ports(grid: &mut Grid, layout: &GraphLayout) {
         match edge.route {
             EdgeRoute::Forward if layout.direction == Direction::TopDown => {
                 if let Some(from) = from {
-                    grid.set(from.y + from.height - 1, from.center_x, '┬');
+                    if is_subgraph_entry(edge, &layout.subgraphs) {
+                        grid.set(from.center_y, from.x + from.width - 1, '├');
+                    } else {
+                        grid.set(from.y + from.height - 1, from.center_x, '┬');
+                    }
                 }
             }
             EdgeRoute::Back { lane } => {
@@ -643,6 +657,49 @@ fn draw_td_self_loop(grid: &mut Grid, node: &NodeLayout, edge: &EdgeLayout) {
         grid.set(from_below, col, '─');
     }
     grid.set(from_below, loop_col, '┘');
+}
+
+fn draw_td_subgraph_entry(
+    grid: &mut Grid,
+    from: &NodeLayout,
+    to: &NodeLayout,
+    edge: &EdgeLayout,
+    layout: &GraphLayout,
+) {
+    let entries: Vec<&EdgeLayout> = layout
+        .edges
+        .iter()
+        .filter(|other| is_subgraph_entry(other, &layout.subgraphs))
+        .collect();
+    let lane = entries
+        .iter()
+        .position(|other| std::ptr::eq(*other, edge))
+        .unwrap_or(0);
+    let gutter = layout.width - back_edge_lane_count(&layout.edges) - entries.len() + lane;
+    let turn_row = to.y - 1;
+    let horizontal = lr_horizontal_connector(edge.edge_type);
+    let vertical = td_vertical_connector(edge.edge_type);
+    grid.set(from.center_y, from.x + from.width - 1, '├');
+    for col in (from.x + from.width)..gutter {
+        grid.set_merged(from.center_y, col, horizontal, merge_box_drawing);
+    }
+    grid.set_merged(from.center_y, gutter, '┐', merge_box_drawing);
+    for row in (from.center_y + 1)..turn_row {
+        grid.set_merged(row, gutter, vertical, merge_box_drawing);
+    }
+    grid.set_merged(turn_row, gutter, '┘', merge_box_drawing);
+    for col in (to.center_x + 1)..gutter {
+        grid.set_merged(turn_row, col, horizontal, merge_box_drawing);
+    }
+    grid.set(
+        turn_row,
+        to.center_x,
+        if has_arrow_head(edge.edge_type) {
+            '▼'
+        } else {
+            vertical
+        },
+    );
 }
 
 fn draw_td_edge(
@@ -1376,6 +1433,28 @@ mod tests {
 │ Hello │
 └───────┘";
         assert_eq!(output, expected);
+    }
+
+    #[test]
+    fn render_edge_from_subgraph_id() {
+        let input = "graph LR\n\
+                     subgraph deploy[Deployment]\n\
+                       worker[Worker]\n\
+                     end\n\
+                     deploy ==> pages[Pages]\n";
+
+        for output in [
+            crate::render(input).unwrap(),
+            crate::render_with_options(input, Some(16)).unwrap(),
+        ] {
+            assert!(output.contains("Deployment"), "{output}");
+            assert!(output.contains("Worker"), "{output}");
+            assert!(output.contains("Pages"), "{output}");
+            assert!(
+                output.chars().any(|ch| matches!(ch, '>' | '▼')),
+                "subgraph edge was not drawn:\n{output}"
+            );
+        }
     }
 
     #[test]

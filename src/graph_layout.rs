@@ -15,6 +15,7 @@ pub struct GraphLayout {
 
 #[derive(Debug, Clone, PartialEq)]
 pub struct SubgraphLayout {
+    pub id: String,
     pub label: String,
     pub x: usize,
     pub y: usize,
@@ -42,6 +43,42 @@ pub struct EdgeLayout {
     pub edge_type: EdgeType,
     pub label: Option<String>,
     pub route: EdgeRoute,
+}
+
+pub(crate) fn edge_endpoint_nodes(
+    nodes: &[NodeLayout],
+    subgraphs: &[SubgraphLayout],
+) -> Vec<NodeLayout> {
+    let mut endpoints = nodes.to_vec();
+    endpoints.extend(subgraphs.iter().map(|subgraph| NodeLayout {
+        id: subgraph.id.clone(),
+        label: subgraph.label.clone(),
+        shape: NodeShape::Box,
+        x: subgraph.x,
+        y: subgraph.y,
+        width: subgraph.width,
+        height: subgraph.height,
+        center_x: subgraph.x + subgraph.width / 2,
+        center_y: subgraph.y + subgraph.height / 2,
+    }));
+    endpoints
+}
+
+pub(crate) fn is_subgraph_entry(edge: &EdgeLayout, subgraphs: &[SubgraphLayout]) -> bool {
+    edge.route == EdgeRoute::Forward
+        && edge.label.is_none()
+        && subgraphs.iter().any(|sg| sg.id == edge.to_id)
+        && !subgraphs.iter().any(|sg| sg.id == edge.from_id)
+}
+
+fn reserve_subgraph_entry_space(layout: &mut GraphLayout) {
+    if layout.direction == Direction::TopDown {
+        layout.width += layout
+            .edges
+            .iter()
+            .filter(|edge| is_subgraph_entry(edge, &layout.subgraphs))
+            .count();
+    }
 }
 
 /// How an edge reaches its target, decided once the nodes are placed. Space is
@@ -356,11 +393,20 @@ fn layout_with_subgraphs(diagram: &GraphDiagram) -> Result<GraphLayout, String> 
 
         // Apply subgraph padding
         let sg = &diagram.subgraphs[i];
+        let top_padding = SUBGRAPH_PAD_TOP
+            + if diagram.edges.iter().any(|edge| {
+                node_to_subgraph.get(&edge.to) == Some(&i)
+                    && node_to_subgraph.get(&edge.from) != Some(&i)
+            }) {
+                TD_RANK_SPACING
+            } else {
+                0
+            };
         for nl in &mut node_layouts {
             nl.x += x_offset + SUBGRAPH_PAD_LEFT;
-            nl.y += SUBGRAPH_PAD_TOP;
+            nl.y += top_padding;
             nl.center_x += x_offset + SUBGRAPH_PAD_LEFT;
-            nl.center_y += SUBGRAPH_PAD_TOP;
+            nl.center_y += top_padding;
         }
 
         let content_right = node_layouts
@@ -380,6 +426,7 @@ fn layout_with_subgraphs(diagram: &GraphDiagram) -> Result<GraphLayout, String> 
         let sg_height = content_bottom + SUBGRAPH_PAD_BOTTOM;
 
         sg_layouts.push(SubgraphLayout {
+            id: sg.id.clone(),
             label: sg.label.clone(),
             x: x_offset,
             y: 0,
@@ -433,11 +480,12 @@ fn layout_with_subgraphs(diagram: &GraphDiagram) -> Result<GraphLayout, String> 
         })
         .collect();
 
-    assign_edge_routes(&diagram.direction, &all_nodes, &mut edges);
+    let endpoints = edge_endpoint_nodes(&all_nodes, &sg_layouts);
+    assign_edge_routes(&diagram.direction, &endpoints, &mut edges);
     let (mut width, mut height) = base_extents(&all_nodes, &sg_layouts);
     reserve_back_edge_space(&diagram.direction, &edges, &mut width, &mut height);
 
-    let layout = GraphLayout {
+    let mut layout = GraphLayout {
         nodes: all_nodes,
         edges,
         subgraphs: sg_layouts,
@@ -445,6 +493,7 @@ fn layout_with_subgraphs(diagram: &GraphDiagram) -> Result<GraphLayout, String> 
         height,
         direction: diagram.direction.clone(),
     };
+    reserve_subgraph_entry_space(&mut layout);
 
     let subgraph_ids: HashSet<&str> = diagram
         .subgraphs
@@ -456,7 +505,12 @@ fn layout_with_subgraphs(diagram: &GraphDiagram) -> Result<GraphLayout, String> 
             && subgraph_ids.contains(edge.from.as_str())
             && subgraph_ids.contains(edge.to.as_str())
     });
-    if diagram.direction == Direction::TopDown && has_invisible_subgraph_constraint {
+    let has_subgraph_endpoint = diagram.edges.iter().any(|edge| {
+        subgraph_ids.contains(edge.from.as_str()) || subgraph_ids.contains(edge.to.as_str())
+    });
+    if diagram.direction == Direction::TopDown
+        && (has_invisible_subgraph_constraint || has_subgraph_endpoint)
+    {
         stack_subgraphs(diagram, layout, usize::MAX)
     } else {
         Ok(layout)
@@ -674,69 +728,95 @@ fn stack_subgraphs(
         .enumerate()
         .flat_map(|(index, sg)| sg.node_ids.iter().map(move |id| (id.as_str(), index)))
         .collect();
-    let nonempty_subgraphs: Vec<(usize, &Subgraph)> = diagram
-        .subgraphs
+    let mut groups = GraphDiagram {
+        direction: Direction::TopDown,
+        nodes: diagram
+            .subgraphs
+            .iter()
+            .filter(|sg| !sg.node_ids.is_empty())
+            .map(|sg| NodeDecl {
+                id: sg.id.clone(),
+                label: sg.label.clone(),
+                shape: NodeShape::Box,
+            })
+            .chain(
+                diagram
+                    .nodes
+                    .iter()
+                    .filter(|node| !node_to_subgraph.contains_key(node.id.as_str()))
+                    .cloned(),
+            )
+            .collect(),
+        edges: Vec::new(),
+        subgraphs: Vec::new(),
+    };
+    let group_id = |id: &str| {
+        node_to_subgraph.get(id).map_or_else(
+            || id.to_string(),
+            |index| diagram.subgraphs[*index].id.clone(),
+        )
+    };
+    groups.edges = diagram
+        .edges
         .iter()
-        .enumerate()
-        .filter(|(_, sg)| !sg.node_ids.is_empty())
+        .filter_map(|edge| {
+            let from = group_id(&edge.from);
+            let to = group_id(&edge.to);
+            (from != to).then_some(Edge {
+                from,
+                to,
+                edge_type: edge.edge_type,
+                label: None,
+            })
+        })
         .collect();
+    let ranks = assign_ranks(&groups);
+    groups.nodes.sort_by_key(|node| ranks[&node.id]);
     let mut y_offset = 0;
 
-    for ((index, _), sg_layout) in nonempty_subgraphs.iter().zip(&mut layout.subgraphs) {
-        if sg_layout.width > max_width {
-            return Err(format!("graph diagram too wide for {max_width} columns"));
-        }
-
-        let old_x = sg_layout.x;
-        let old_y = sg_layout.y;
-        for node in layout
-            .nodes
-            .iter_mut()
-            .filter(|node| node_to_subgraph.get(node.id.as_str()) == Some(index))
-        {
-            node.x -= old_x;
-            node.y = node.y - old_y + y_offset;
-            node.center_x -= old_x;
-            node.center_y = node.center_y - old_y + y_offset;
-        }
-        sg_layout.x = 0;
-        sg_layout.y = y_offset;
-        y_offset += sg_layout.height + SUBGRAPH_GAP;
-    }
-
-    let bare_nodes: Vec<&mut NodeLayout> = layout
-        .nodes
-        .iter_mut()
-        .filter(|node| !node_to_subgraph.contains_key(node.id.as_str()))
-        .collect();
-    if !bare_nodes.is_empty() {
-        let min_x = bare_nodes.iter().map(|node| node.x).min().unwrap_or(0);
-        let min_y = bare_nodes.iter().map(|node| node.y).min().unwrap_or(0);
-        let bare_width = bare_nodes
-            .iter()
-            .map(|node| node.x + node.width - min_x)
-            .max()
-            .unwrap_or(0);
-        if bare_width > max_width {
-            return Err(format!("graph diagram too wide for {max_width} columns"));
-        }
-        for node in bare_nodes {
-            node.x -= min_x;
-            node.y = node.y - min_y + y_offset;
-            node.center_x -= min_x;
-            node.center_y = node.center_y - min_y + y_offset;
+    for group in groups.nodes {
+        if let Some(sg_layout) = layout.subgraphs.iter_mut().find(|sg| sg.id == group.id) {
+            if sg_layout.width > max_width {
+                return Err(format!("graph diagram too wide for {max_width} columns"));
+            }
+            let old_x = sg_layout.x;
+            let old_y = sg_layout.y;
+            for node in layout.nodes.iter_mut().filter(|node| {
+                node_to_subgraph
+                    .get(node.id.as_str())
+                    .is_some_and(|index| diagram.subgraphs[*index].id == group.id)
+            }) {
+                node.x -= old_x;
+                node.y = node.y - old_y + y_offset;
+                node.center_x -= old_x;
+                node.center_y = node.center_y - old_y + y_offset;
+            }
+            sg_layout.x = 0;
+            sg_layout.y = y_offset;
+            y_offset += sg_layout.height + SUBGRAPH_GAP;
+        } else if let Some(node) = layout.nodes.iter_mut().find(|node| node.id == group.id) {
+            if node.width > max_width {
+                return Err(format!("graph diagram too wide for {max_width} columns"));
+            }
+            node.x = 0;
+            node.y = y_offset;
+            node.center_x = node.width / 2;
+            node.center_y = y_offset + node.height / 2;
+            y_offset += node.height + SUBGRAPH_GAP;
         }
     }
 
     layout.direction = Direction::TopDown;
-    assign_edge_routes(&layout.direction, &layout.nodes, &mut layout.edges);
+    let endpoints = edge_endpoint_nodes(&layout.nodes, &layout.subgraphs);
+    assign_edge_routes(&layout.direction, &endpoints, &mut layout.edges);
     let (mut width, mut height) = base_extents(&layout.nodes, &layout.subgraphs);
     reserve_back_edge_space(&layout.direction, &layout.edges, &mut width, &mut height);
-    if width > max_width {
-        return Err(format!("graph diagram too wide for {max_width} columns"));
-    }
     layout.width = width;
     layout.height = height;
+    reserve_subgraph_entry_space(&mut layout);
+    if layout.width > max_width {
+        return Err(format!("graph diagram too wide for {max_width} columns"));
+    }
     Ok(layout)
 }
 
@@ -1072,6 +1152,7 @@ fn compute_subgraph_layouts(
         let height = max_bottom - min_y + SUBGRAPH_PAD_BOTTOM;
 
         sg_layouts.push(SubgraphLayout {
+            id: sg.id.clone(),
             label: sg.label.clone(),
             x: min_x,
             y: min_y,
