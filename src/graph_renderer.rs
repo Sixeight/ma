@@ -1443,6 +1443,7 @@ fn draw_lr_edge(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::class_parser::parse_class;
     use crate::graph_parser::parse_graph;
     use pretty_assertions::assert_eq;
 
@@ -1994,5 +1995,61 @@ mod tests {
             "box and diamond share a text row:\n{output}"
         );
         assert!(text.contains('>'), "arrow stays on that row:\n{output}");
+    }
+
+    #[test]
+    fn lr_labels_do_not_collide_on_same_row() {
+        let diagram = parse_class(
+            "classDiagram\n\
+             direction LR\n\
+             A --> B : first\n\
+             B --> C : second\n\
+             A --> C : third\n",
+        )
+        .unwrap();
+        let layout = crate::graph_layout::compute(&diagram).unwrap();
+        let output = render(&layout);
+        
+        let label_line = output
+            .lines()
+            .find(|line| line.contains("second"))
+            .expect("second label should be present");
+        assert!(
+            !label_line.contains("third"),
+            "third label should be skipped due to collision:\n{output}"
+        );
+        assert!(
+            !label_line.contains("sthird") && !label_line.contains("secthird"),
+            "labels should not interleave:\n{output}"
+        );
+        assert!(
+            label_line.contains("second"),
+            "first non-colliding label should render:\n{output}"
+        );
+    }
+
+    #[test]
+    fn lr_label_placement_handles_overflow() {
+        let output = render_input(
+            "graph LR\n\
+             subgraph First\n\
+             source -->|upload| shared\n\
+             end\n\
+             subgraph Second\n\
+             shared -->|download| target\n\
+             end\n",
+        );
+        assert!(
+            output.contains("download"),
+            "label should render even when space is tight:\n{output}"
+        );
+        let lines: Vec<&str> = output.lines().collect();
+        let has_corruption = lines.iter().any(|line| {
+            line.contains("download") && line.chars().filter(|&c| c.is_alphabetic()).count() > 20
+        });
+        assert!(
+            !has_corruption,
+            "label should not corrupt surrounding content:\n{output}"
+        );
     }
 }
