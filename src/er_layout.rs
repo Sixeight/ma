@@ -462,4 +462,81 @@ mod tests {
             rendered
         );
     }
+
+    #[test]
+    fn cardinality_markers_preserved_per_relationship() {
+        let diagram = ErDiagram {
+            entities: vec![entity("ORDER"), entity("PRODUCT"), entity("LINE_ITEM")],
+            relationships: vec![
+                Relationship {
+                    from: "ORDER".into(),
+                    to: "LINE_ITEM".into(),
+                    left_card: Cardinality::ExactlyOne,
+                    right_card: Cardinality::OneOrMany,
+                    line_style: RelationshipLineStyle::Identifying,
+                    label: "contains".into(),
+                },
+                Relationship {
+                    from: "PRODUCT".into(),
+                    to: "LINE_ITEM".into(),
+                    left_card: Cardinality::ExactlyOne,
+                    right_card: Cardinality::ZeroOrMany,
+                    line_style: RelationshipLineStyle::Identifying,
+                    label: "ordered in".into(),
+                },
+            ],
+        };
+        let layout = compute(&diagram).unwrap();
+        let rendered = crate::er_renderer::render(&layout);
+        
+        let has_one_or_many = rendered.contains("|{");
+        let has_zero_or_many = rendered.contains("o{");
+        
+        assert!(
+            has_one_or_many,
+            "ORDER→LINE_ITEM (one-or-many |{{) marker not found in render:\n{}",
+            rendered
+        );
+        assert!(
+            has_zero_or_many,
+            "PRODUCT→LINE_ITEM (zero-or-many o{{) marker not found in render:\n{}",
+            rendered
+        );
+        
+        let one_many_count = rendered.matches("|{").count();
+        let zero_many_count = rendered.matches("o{").count();
+        assert_eq!(
+            one_many_count, 1,
+            "Expected exactly 1 |{{ marker, found {}",
+            one_many_count
+        );
+        assert_eq!(
+            zero_many_count, 1,
+            "Expected exactly 1 o{{ marker, found {}",
+            zero_many_count
+        );
+    }
+
+    #[test]
+    fn label_not_adjacent_to_left_marker() {
+        let diagram = ErDiagram {
+            entities: vec![entity("A"), entity("B")],
+            relationships: vec![Relationship {
+                from: "A".into(),
+                to: "B".into(),
+                left_card: Cardinality::ExactlyOne,
+                right_card: Cardinality::ZeroOrMany,
+                line_style: RelationshipLineStyle::Identifying,
+                label: "label".into(),
+            }],
+        };
+        let layout = compute(&diagram).unwrap();
+        let rendered = crate::er_renderer::render(&layout);
+        
+        assert!(
+            !rendered.contains("||label"),
+            "Label should not be adjacent to || marker. Render:\n{}",
+            rendered
+        );
+    }
 }
