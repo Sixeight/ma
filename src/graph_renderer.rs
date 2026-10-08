@@ -24,7 +24,7 @@ fn render_td(layout: &GraphLayout) -> String {
         .collect();
 
     for sg in &layout.subgraphs {
-        draw_subgraph(&mut grid, sg);
+        draw_subgraph(&mut grid, sg, layout);
     }
 
     for node in &layout.nodes {
@@ -67,6 +67,7 @@ fn render_td(layout: &GraphLayout) -> String {
 
     draw_nodes_over_edges(&mut grid, layout);
     draw_edge_ports(&mut grid, layout);
+    redraw_subgraph_titles(&mut grid, layout);
 
     grid.render()
 }
@@ -80,7 +81,7 @@ fn render_lr(layout: &GraphLayout) -> String {
         .collect();
 
     for sg in &layout.subgraphs {
-        draw_subgraph(&mut grid, sg);
+        draw_subgraph(&mut grid, sg, layout);
     }
 
     for node in &layout.nodes {
@@ -127,13 +128,13 @@ fn render_lr(layout: &GraphLayout) -> String {
     }
 
     draw_nodes_over_edges(&mut grid, layout);
-    
+
     let mut drawn_labels: Vec<(usize, usize, usize)> = Vec::new();
     for (label, (row, start, end)) in labels {
         if !draw_lr_label_if_fits(&mut grid, label, row, start, end, &drawn_labels) {
             continue;
         }
-        
+
         let label_width = multiline_width(label);
         let available_width = end.saturating_sub(start);
         let col = if label_width <= available_width {
@@ -294,21 +295,85 @@ fn draw_hexagon(grid: &mut Grid, x: usize, y: usize, width: usize, height: usize
     grid.set(bottom, x + width - 2, '╱');
 }
 
-fn draw_subgraph(grid: &mut Grid, sg: &SubgraphLayout) {
+fn subgraph_entry_cols(layout: &GraphLayout, sg: &SubgraphLayout) -> Vec<usize> {
+    layout
+        .nodes
+        .iter()
+        .filter(|node| {
+            node.x >= sg.x
+                && node.x + node.width <= sg.x + sg.width
+                && node.y >= sg.y
+                && node.y + node.height <= sg.y + sg.height
+        })
+        .filter(|node| {
+            layout.edges.iter().any(|edge| {
+                edge.to_id == node.id
+                    && layout
+                        .nodes
+                        .iter()
+                        .any(|from| from.id == edge.from_id && from.y + from.height <= sg.y)
+            })
+        })
+        .map(|node| node.center_x)
+        .collect()
+}
+
+fn subgraph_title_col(layout: &GraphLayout, sg: &SubgraphLayout) -> usize {
+    let title_w = display_width(&sg.label);
+    let min_col = sg.x + 3;
+    let max_start = (sg.x + sg.width).saturating_sub(2 + title_w);
+    if max_start < min_col {
+        return min_col;
+    }
+    let blocked = subgraph_entry_cols(layout, sg);
+    let candidates: Vec<usize> = (min_col..=max_start)
+        .filter(|start| {
+            let end = start + title_w;
+            blocked.iter().all(|col| *col < *start || *col >= end)
+        })
+        .collect();
+    candidates
+        .iter()
+        .copied()
+        .find(|start| {
+            !blocked.contains(&start.saturating_sub(1)) && !blocked.contains(&(start + title_w))
+        })
+        .or_else(|| candidates.first().copied())
+        .unwrap_or(min_col)
+}
+
+fn draw_subgraph_title(
+    grid: &mut Grid,
+    sg: &SubgraphLayout,
+    title_col: usize,
+    entry_cols: &[usize],
+) {
+    let title_w = display_width(&sg.label);
+    let left_space = title_col.saturating_sub(1);
+    if title_col > sg.x + 1 && !entry_cols.contains(&left_space) {
+        grid.set(sg.y, left_space, ' ');
+    }
+    grid.write_str(sg.y, title_col, &sg.label);
+    let right_space = title_col + title_w;
+    if right_space < sg.x + sg.width - 1 && !entry_cols.contains(&right_space) {
+        grid.set(sg.y, right_space, ' ');
+    }
+}
+
+fn draw_subgraph(grid: &mut Grid, sg: &SubgraphLayout, layout: &GraphLayout) {
     let x = sg.x;
     let y = sg.y;
     let w = sg.width;
     let h = sg.height;
+    let entry_cols = subgraph_entry_cols(layout, sg);
+    let title_col = subgraph_title_col(layout, sg);
 
     grid.set(y, x, '┌');
-    grid.set(y, x + 1, '─');
-    grid.set(y, x + 2, ' ');
-    grid.write_str(y, x + 3, &sg.label);
-    grid.set(y, x + 3 + display_width(&sg.label), ' ');
-    for col in (x + 4 + display_width(&sg.label))..(x + w - 1) {
+    for col in (x + 1)..(x + w - 1) {
         grid.set(y, col, '─');
     }
     grid.set(y, x + w - 1, '┐');
+    draw_subgraph_title(grid, sg, title_col, &entry_cols);
 
     for row in (y + 1)..(y + h - 1) {
         grid.set(row, x, '│');
@@ -477,6 +542,46 @@ fn is_subgraph_border_row(layout: &GraphLayout, row: usize) -> bool {
         .any(|sg| row == sg.y || row == sg.y + sg.height - 1)
 }
 
+fn subgraph_title_text_at(
+    layout: &GraphLayout,
+    sg: &SubgraphLayout,
+    row: usize,
+    col: usize,
+) -> bool {
+    if row != sg.y {
+        return false;
+    }
+    let start = subgraph_title_col(layout, sg);
+    let end = start + display_width(&sg.label);
+    col >= start && col < end
+}
+
+fn set_td_vertical(grid: &mut Grid, layout: &GraphLayout, row: usize, col: usize, ch: char) {
+    if layout
+        .subgraphs
+        .iter()
+        .any(|sg| subgraph_title_text_at(layout, sg, row, col))
+    {
+        return;
+    }
+    if is_subgraph_border_row(layout, row) {
+        grid.set_merged(row, col, ch, merge_box_drawing);
+    } else {
+        grid.set(row, col, ch);
+    }
+}
+
+fn redraw_subgraph_titles(grid: &mut Grid, layout: &GraphLayout) {
+    for sg in &layout.subgraphs {
+        draw_subgraph_title(
+            grid,
+            sg,
+            subgraph_title_col(layout, sg),
+            &subgraph_entry_cols(layout, sg),
+        );
+    }
+}
+
 fn route_crosses_node(
     layout: &GraphLayout,
     col: usize,
@@ -551,17 +656,13 @@ fn draw_td_single_edge_route(
     if from_cx == to_cx && from_col_clear {
         // Straight down
         for row in route_start..to_above {
-            if !is_subgraph_border_row(layout, row) {
-                grid.set(row, from_cx, vert);
-            }
+            set_td_vertical(grid, layout, row, from_cx, vert);
         }
     } else if from_col_clear && to_above > route_start {
         // Source column is clear: route down at from_cx, turn at to_above row.
         // The turn shares the to_above row with the arrow head.
         for row in route_start..to_above {
-            if !is_subgraph_border_row(layout, row) {
-                grid.set(row, from_cx, vert);
-            }
+            set_td_vertical(grid, layout, row, from_cx, vert);
         }
         // Draw horizontal + corner at to_above (▼ overwrites to_cx later)
         if from_cx < to_cx {
@@ -612,9 +713,7 @@ fn draw_td_single_edge_route(
         // No label, original L-shaped routing at midpoint
         let mid_row = from_below + (to_above - from_below) / 2;
         for row in from_below..mid_row {
-            if !is_subgraph_border_row(layout, row) {
-                grid.set(row, from_cx, vert);
-            }
+            set_td_vertical(grid, layout, row, from_cx, vert);
         }
         let (left, right) = if from_cx < to_cx {
             grid.set(mid_row, from_cx, '└');
@@ -629,18 +728,20 @@ fn draw_td_single_edge_route(
             grid.set(mid_row, col, '─');
         }
         for row in (mid_row + 1)..to_above {
-            if !is_subgraph_border_row(layout, row) {
-                grid.set(row, to_cx, vert);
-            }
+            set_td_vertical(grid, layout, row, to_cx, vert);
         }
     }
     // else: label + arrow only (no intermediate routing)
 
-    if !is_subgraph_border_row(layout, to_above) {
+    if !layout
+        .subgraphs
+        .iter()
+        .any(|sg| subgraph_title_text_at(layout, sg, to_above, to_cx))
+    {
         if has_arrow_head(edge_type) {
             grid.set(to_above, to_cx, '▼');
         } else {
-            grid.set(to_above, to_cx, vert);
+            set_td_vertical(grid, layout, to_above, to_cx, vert);
         }
     }
 }
@@ -777,7 +878,7 @@ fn draw_td_edge(
         grid.set(from_below, from_cx, '┴');
 
         for row in (from_below + 1)..to_above {
-            grid.set(row, to_cx, td_vertical_connector(edge_type));
+            set_td_vertical(grid, layout, row, to_cx, td_vertical_connector(edge_type));
         }
         if let Some(label) = &edge.label {
             let lines = split_br(label);
@@ -789,9 +890,21 @@ fn draw_td_edge(
         }
 
         if has_arrow_head(edge_type) {
-            grid.set(to_above, to_cx, '▼');
+            if !layout
+                .subgraphs
+                .iter()
+                .any(|sg| subgraph_title_text_at(layout, sg, to_above, to_cx))
+            {
+                grid.set(to_above, to_cx, '▼');
+            }
         } else {
-            grid.set(to_above, to_cx, td_vertical_connector(edge_type));
+            set_td_vertical(
+                grid,
+                layout,
+                to_above,
+                to_cx,
+                td_vertical_connector(edge_type),
+            );
         }
     } else if parent_count > 1 {
         let parents = &forward_parents;
@@ -811,7 +924,7 @@ fn draw_td_edge(
                 .unwrap_or(0);
             let bar_row = from_below + label_height;
             for row in from_below..bar_row {
-                grid.set(row, from_cx, td_vertical_connector(edge_type));
+                set_td_vertical(grid, layout, row, from_cx, td_vertical_connector(edge_type));
             }
             if let Some(label) = &edge.label {
                 let col = from_cx.saturating_sub(multiline_width(label) / 2);
@@ -827,10 +940,20 @@ fn draw_td_edge(
             grid.set(bar_row, max_cx, '┘');
             grid.set(bar_row, to_cx, '┬');
 
+            for row in (bar_row + 1)..to_above {
+                set_td_vertical(grid, layout, row, to_cx, td_vertical_connector(edge_type));
+            }
+
             if has_arrow_head(edge_type) {
                 grid.set(to_above, to_cx, '▼');
             } else {
-                grid.set(to_above, to_cx, td_vertical_connector(edge_type));
+                set_td_vertical(
+                    grid,
+                    layout,
+                    to_above,
+                    to_cx,
+                    td_vertical_connector(edge_type),
+                );
             }
         } else {
             draw_td_single_edge_route(grid, from_cx, to_cx, from_below, to_above, edge, layout);
@@ -1185,22 +1308,24 @@ fn draw_lr_label_if_fits(
 ) -> bool {
     let label_width = multiline_width(label);
     let available_width = end.saturating_sub(start);
-    
+
     let col = if label_width <= available_width {
         start + (available_width - label_width) / 2
     } else {
         start
     };
     let label_end = col + label_width;
-    
-    let collides = drawn_labels.iter().any(|(drawn_row, drawn_start, drawn_end)| {
-        *drawn_row == row && !(label_end <= *drawn_start || col >= *drawn_end)
-    });
-    
+
+    let collides = drawn_labels
+        .iter()
+        .any(|(drawn_row, drawn_start, drawn_end)| {
+            *drawn_row == row && !(label_end <= *drawn_start || col >= *drawn_end)
+        });
+
     if collides {
         return false;
     }
-    
+
     draw_lr_label(grid, label, row, start, end);
     true
 }
@@ -2009,7 +2134,7 @@ mod tests {
         .unwrap();
         let layout = crate::graph_layout::compute(&diagram).unwrap();
         let output = render(&layout);
-        
+
         let label_line = output
             .lines()
             .find(|line| line.contains("second"))

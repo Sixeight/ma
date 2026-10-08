@@ -423,7 +423,16 @@ fn layout_with_subgraphs(diagram: &GraphDiagram) -> Result<GraphLayout, String> 
         let content_width = content_right - x_offset + SUBGRAPH_PAD_RIGHT;
         let title_width = display_width(&sg.label) + SUBGRAPH_TITLE_DECOR;
         let sg_width = content_width.max(title_width);
-        let sg_height = content_bottom + SUBGRAPH_PAD_BOTTOM;
+        let bottom_padding = SUBGRAPH_PAD_BOTTOM
+            + if diagram.edges.iter().any(|edge| {
+                node_to_subgraph.get(&edge.from) == Some(&i)
+                    && node_to_subgraph.get(&edge.to) != Some(&i)
+            }) {
+                1
+            } else {
+                0
+            };
+        let sg_height = content_bottom + bottom_padding;
         let content_offset = sg_width / 2 - content_width / 2;
         for node in &mut node_layouts {
             node.x += content_offset;
@@ -505,16 +514,27 @@ fn layout_with_subgraphs(diagram: &GraphDiagram) -> Result<GraphLayout, String> 
         .iter()
         .map(|subgraph| subgraph.id.as_str())
         .collect();
+    let node_to_subgraph: HashMap<&str, usize> = diagram
+        .subgraphs
+        .iter()
+        .enumerate()
+        .flat_map(|(i, sg)| sg.node_ids.iter().map(move |id| (id.as_str(), i)))
+        .collect();
     let has_invisible_subgraph_constraint = diagram.edges.iter().any(|edge| {
         edge.edge_type == EdgeType::Invisible
             && subgraph_ids.contains(edge.from.as_str())
             && subgraph_ids.contains(edge.to.as_str())
     });
+    let has_cross_subgraph_edge = diagram.edges.iter().any(|edge| {
+        let from_sg = node_to_subgraph.get(edge.from.as_str());
+        let to_sg = node_to_subgraph.get(edge.to.as_str());
+        from_sg != to_sg && (from_sg.is_some() || to_sg.is_some())
+    });
     let has_subgraph_endpoint = diagram.edges.iter().any(|edge| {
         subgraph_ids.contains(edge.from.as_str()) || subgraph_ids.contains(edge.to.as_str())
     });
     if diagram.direction == Direction::TopDown
-        && (has_invisible_subgraph_constraint || has_subgraph_endpoint)
+        && (has_invisible_subgraph_constraint || has_subgraph_endpoint || has_cross_subgraph_edge)
     {
         stack_subgraphs(diagram, layout, usize::MAX)
     } else {
@@ -812,7 +832,7 @@ fn stack_subgraphs(
             }
             sg_layout.x = x_offset;
             sg_layout.y = y_offset;
-            y_offset += sg_layout.height + SUBGRAPH_GAP;
+            y_offset += sg_layout.height + TD_RANK_SPACING;
         } else if let Some(node) = layout.nodes.iter_mut().find(|node| node.id == group.id) {
             if node.width > max_width {
                 return Err(format!("graph diagram too wide for {max_width} columns"));
@@ -821,7 +841,7 @@ fn stack_subgraphs(
             node.y = y_offset;
             node.center_x = center_x;
             node.center_y = y_offset + node.height / 2;
-            y_offset += node.height + SUBGRAPH_GAP;
+            y_offset += node.height + TD_RANK_SPACING;
         }
     }
 
@@ -1524,7 +1544,7 @@ mod tests {
 
         assert!(layout.width <= max_width);
         assert_eq!(layout.direction, Direction::TopDown);
-        assert!(two.y >= one.y + one.height + SUBGRAPH_GAP);
+        assert!(two.y >= one.y + one.height + TD_RANK_SPACING);
     }
 
     #[test]
@@ -1550,16 +1570,13 @@ mod tests {
         assert!(b.x >= sg.x, "B x >= sg.x");
         assert!(b.x + b.width <= sg.x + sg.width, "B right <= sg right");
 
-        // C must not overlap with the subgraph x-range
-        let c_right = c.x + c.width;
-        let sg_right = sg.x + sg.width;
+        // C is above the subgraph (vertical layout)
+        assert_eq!(layout.direction, Direction::TopDown, "layout should be TD");
         assert!(
-            c_right <= sg.x || c.x >= sg_right,
-            "bare node C overlaps subgraph: C({}-{}), sg({}-{})",
-            c.x,
-            c_right,
-            sg.x,
-            sg_right
+            c.y + c.height <= sg.y,
+            "bare node C should be above Backend subgraph: C bottom {}, sg top {}",
+            c.y + c.height,
+            sg.y
         );
     }
 
