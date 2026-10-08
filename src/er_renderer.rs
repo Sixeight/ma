@@ -95,40 +95,101 @@ fn draw_er_edge(
 ) {
     let from_right = from.x + from.width;
     let to_left = to.x;
-    let row = from.center_y;
+    let from_cy = from.center_y;
+    let to_cy = to.center_y;
+    let h_char = match line_style {
+        RelationshipLineStyle::Identifying => '─',
+        RelationshipLineStyle::NonIdentifying => '┈',
+    };
 
-    for col in from_right..to_left {
-        grid.set(
-            row,
-            col,
-            match line_style {
-                RelationshipLineStyle::Identifying => '─',
-                RelationshipLineStyle::NonIdentifying => '┈',
-            },
-        );
-    }
-
-    let left_sym = left_cardinality_str(left_card);
-    grid.write_str(row, from_right, left_sym);
-
-    let right_sym = right_cardinality_str(right_card);
-    if to_left >= 2 {
-        grid.write_str(row, to_left - 2, right_sym);
-    }
-
-    let gap = to_left - from_right;
-    let lines = split_br(label);
-    let max_w = multiline_width(label);
-    if gap > max_w {
-        let label_col = from_right + (gap - max_w) / 2;
-        let start_row = if lines.len() > 1 {
-            row.saturating_sub(lines.len() / 2)
+    if from_cy == to_cy {
+        for col in from_right..to_left {
+            grid.set(from_cy, col, h_char);
+        }
+        grid.write_str(from_cy, from_right, left_cardinality_str(left_card));
+        if to_left >= 2 {
+            grid.write_str(from_cy, to_left - 2, right_cardinality_str(right_card));
+        }
+        
+        let gap = to_left - from_right;
+        let lines = split_br(label);
+        let max_w = multiline_width(label);
+        if gap > max_w {
+            let label_col = from_right + (gap - max_w) / 2;
+            let start_row = if lines.len() > 1 {
+                from_cy.saturating_sub(lines.len() / 2)
+            } else {
+                from_cy
+            };
+            for (i, line) in lines.iter().enumerate() {
+                let line_col = label_col + (max_w - display_width(line)) / 2;
+                grid.write_str(start_row + i, line_col, line);
+            }
+        }
+    } else {
+        let corner_col = to_left - 3;
+        
+        for col in from_right..corner_col {
+            grid.set(from_cy, col, h_char);
+        }
+        grid.write_str(from_cy, from_right, left_cardinality_str(left_card));
+        
+        let (min_y, max_y) = if from_cy < to_cy {
+            (from_cy, to_cy)
         } else {
-            row
+            (to_cy, from_cy)
         };
-        for (i, line) in lines.iter().enumerate() {
-            let line_col = label_col + (max_w - display_width(line)) / 2;
-            grid.write_str(start_row + i, line_col, line);
+        
+        for y in (min_y + 1)..max_y {
+            grid.set_merged(y, corner_col, '│', |old, _new| {
+                if old == '│' { '│' } else { '│' }
+            });
+        }
+        
+        grid.set_merged(from_cy, corner_col, 
+            if from_cy < to_cy { '┐' } else { '┘' },
+            |old, new| {
+                match old {
+                    '│' => '┤',
+                    '┐' | '┘' | '┤' => '┤',
+                    _ => new,
+                }
+            }
+        );
+        
+        grid.set_merged(to_cy, corner_col,
+            if from_cy < to_cy { '└' } else { '┌' },
+            |old, new| {
+                match old {
+                    '│' => '├',
+                    '└' | '┌' | '├' => '├',
+                    _ => new,
+                }
+            }
+        );
+        
+        for col in (corner_col + 1)..to_left {
+            grid.set(to_cy, col, h_char);
+        }
+        
+        if to_left >= 2 {
+            grid.write_str(to_cy, to_left - 2, right_cardinality_str(right_card));
+        }
+        
+        let h_gap = corner_col - from_right;
+        let lines = split_br(label);
+        let max_w = multiline_width(label);
+        if h_gap > max_w {
+            let label_col = from_right + (h_gap - max_w) / 2;
+            let start_row = if lines.len() > 1 {
+                from_cy.saturating_sub(lines.len() / 2)
+            } else {
+                from_cy
+            };
+            for (i, line) in lines.iter().enumerate() {
+                let line_col = label_col + (max_w - display_width(line)) / 2;
+                grid.write_str(start_row + i, line_col, line);
+            }
         }
     }
 }
