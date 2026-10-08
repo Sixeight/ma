@@ -741,7 +741,7 @@ fn draw_td_edge(
     let to_cx = to.center_x;
     let bottom_row = from.y + from.height - 1;
     let from_below = from.y + from.height;
-    let to_above = to.y - 1;
+    let to_above = to.y.saturating_sub(1);
 
     grid.set(bottom_row, from_cx, '┬');
 

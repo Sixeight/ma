@@ -479,40 +479,57 @@ fn layout_with_subgraphs(diagram: &GraphDiagram) -> Result<GraphLayout, String> 
             edges: bare_edges.into_iter().cloned().collect(),
             subgraphs: vec![],
         };
-        let ranks = assign_ranks(&bare_diagram);
-        let max_rank = *ranks.values().max().unwrap_or(&0);
+        
+        // Use full diagram ranks to maintain proper ordering
+        let full_ranks = diagram_ranks.clone();
+        let max_rank = *full_ranks.values().max().unwrap_or(&0);
         let mut ranks_nodes: Vec<Vec<&NodeDecl>> = vec![Vec::new(); max_rank + 1];
         for node in &bare_diagram.nodes {
-            let rank = ranks[&node.id];
+            let rank = full_ranks.get(&node.id).copied().unwrap_or(0);
             ranks_nodes[rank].push(node);
         }
 
         let mut node_layouts = match diagram.direction {
             Direction::TopDown => layout_td(&ranks_nodes, &bare_diagram.edges),
-            Direction::LeftRight => layout_lr(&ranks_nodes, &ranks, &bare_diagram.edges),
+            Direction::LeftRight => layout_lr(&ranks_nodes, &full_ranks, &bare_diagram.edges),
         };
+
+        // Identify subgraph node IDs for boundary detection
+        let subgraph_node_ids: HashSet<&str> = diagram
+            .subgraphs
+            .iter()
+            .flat_map(|sg| sg.node_ids.iter().map(|id| id.as_str()))
+            .collect();
+
+        // Adjust y positions based on subgraph relationships
+        // Upstream nodes stay above (no adjustment)
+        // Downstream nodes go below the tallest relevant subgraph
+        for nl in &mut node_layouts {
+            let node_rank = full_ranks.get(&nl.id).copied().unwrap_or(0);
+            
+            // Find the maximum bottom of any subgraph this node receives from
+            let mut target_y = nl.y; // Keep original y by default
+            
+            for (sg_idx, sg) in diagram.subgraphs.iter().enumerate() {
+                // Check if this bare node receives edges from this subgraph (downstream)
+                let receives_from_sg = diagram.edges.iter().any(|e| {
+                    sg.node_ids.contains(&e.from) && e.to == nl.id
+                });
+
+                if receives_from_sg {
+                    // Place below this subgraph
+                    let below_sg = sg_layouts[sg_idx].y + sg_layouts[sg_idx].height + TD_RANK_SPACING;
+                    target_y = target_y.max(below_sg);
+                }
+            }
+
+            nl.y = target_y;
+            nl.center_y = target_y + nl.height / 2;
+        }
 
         for nl in &mut node_layouts {
             nl.x += x_offset;
             nl.center_x += x_offset;
-        }
-
-        // If bare nodes have incoming edges from subgraph nodes, position them
-        // below the subgraphs to maintain forward flow
-        let max_subgraph_bottom = sg_layouts.iter().map(|sg| sg.y + sg.height).max().unwrap_or(0);
-        let has_edges_from_subgraphs = node_layouts.iter().any(|bare_node| {
-            diagram.edges.iter().any(|edge| {
-                edge.to == bare_node.id
-                    && all_nodes.iter().any(|n| n.id == edge.from)
-            })
-        });
-        
-        if has_edges_from_subgraphs && max_subgraph_bottom > 0 {
-            let offset_y = max_subgraph_bottom + TD_RANK_SPACING;
-            for nl in &mut node_layouts {
-                nl.y += offset_y;
-                nl.center_y += offset_y;
-            }
         }
 
         all_nodes.extend(node_layouts);
