@@ -1,0 +1,1 @@
+ERROR: line 12: composite states are not supported

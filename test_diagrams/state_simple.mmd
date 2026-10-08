@@ -1,0 +1,8 @@
+stateDiagram-v2
+    direction LR
+    [*] --> Idle
+    Idle --> Processing : start
+    Processing --> Success : complete
+    Processing --> Failed : error
+    Success --> [*]
+    Failed --> [*]

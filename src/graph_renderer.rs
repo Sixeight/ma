@@ -127,8 +127,22 @@ fn render_lr(layout: &GraphLayout) -> String {
     }
 
     draw_nodes_over_edges(&mut grid, layout);
+    
+    let mut drawn_labels: Vec<(usize, usize, usize)> = Vec::new();
     for (label, (row, start, end)) in labels {
-        draw_lr_label(&mut grid, label, row, start, end);
+        if !draw_lr_label_if_fits(&mut grid, label, row, start, end, &drawn_labels) {
+            continue;
+        }
+        
+        let label_width = multiline_width(label);
+        let available_width = end.saturating_sub(start);
+        let col = if label_width <= available_width {
+            start + (available_width - label_width) / 2
+        } else {
+            start
+        };
+        let label_end = col + label_width;
+        drawn_labels.push((row, col, label_end));
     }
     draw_edge_ports(&mut grid, layout);
 
@@ -1148,11 +1162,47 @@ fn lr_label_uses_source(layout: &GraphLayout, edge: &EdgeLayout) -> bool {
 
 fn draw_lr_label(grid: &mut Grid, label: &str, row: usize, start: usize, end: usize) {
     let lines = split_br(label);
-    let col = start + end.saturating_sub(start + multiline_width(label)) / 2;
+    let label_width = multiline_width(label);
+    let available_width = end.saturating_sub(start);
+    let col = if available_width >= label_width {
+        start + (available_width - label_width) / 2
+    } else {
+        start
+    };
     let top = row.saturating_sub(lines.len());
     for (offset, line) in lines.iter().enumerate() {
         grid.write_str(top + offset, col, line);
     }
+}
+
+fn draw_lr_label_if_fits(
+    grid: &mut Grid,
+    label: &str,
+    row: usize,
+    start: usize,
+    end: usize,
+    drawn_labels: &[(usize, usize, usize)],
+) -> bool {
+    let label_width = multiline_width(label);
+    let available_width = end.saturating_sub(start);
+    
+    let col = if label_width <= available_width {
+        start + (available_width - label_width) / 2
+    } else {
+        start
+    };
+    let label_end = col + label_width;
+    
+    let collides = drawn_labels.iter().any(|(drawn_row, drawn_start, drawn_end)| {
+        *drawn_row == row && !(label_end <= *drawn_start || col >= *drawn_end)
+    });
+    
+    if collides {
+        return false;
+    }
+    
+    draw_lr_label(grid, label, row, start, end);
+    true
 }
 
 fn lr_next_rank_x(layout: &GraphLayout, from: &NodeLayout, to: &NodeLayout) -> usize {
