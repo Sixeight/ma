@@ -127,13 +127,13 @@ fn render_lr(layout: &GraphLayout) -> String {
     }
 
     draw_nodes_over_edges(&mut grid, layout);
-    
+
     let mut drawn_labels: Vec<(usize, usize, usize)> = Vec::new();
     for (label, (row, start, end)) in labels {
         if !draw_lr_label_if_fits(&mut grid, label, row, start, end, &drawn_labels) {
             continue;
         }
-        
+
         let label_width = multiline_width(label);
         let available_width = end.saturating_sub(start);
         let col = if label_width <= available_width {
@@ -1185,22 +1185,24 @@ fn draw_lr_label_if_fits(
 ) -> bool {
     let label_width = multiline_width(label);
     let available_width = end.saturating_sub(start);
-    
+
     let col = if label_width <= available_width {
         start + (available_width - label_width) / 2
     } else {
         start
     };
     let label_end = col + label_width;
-    
-    let collides = drawn_labels.iter().any(|(drawn_row, drawn_start, drawn_end)| {
-        *drawn_row == row && !(label_end <= *drawn_start || col >= *drawn_end)
-    });
-    
+
+    let collides = drawn_labels
+        .iter()
+        .any(|(drawn_row, drawn_start, drawn_end)| {
+            *drawn_row == row && !(label_end <= *drawn_start || col >= *drawn_end)
+        });
+
     if collides {
         return false;
     }
-    
+
     draw_lr_label(grid, label, row, start, end);
     true
 }
@@ -2009,7 +2011,7 @@ mod tests {
         .unwrap();
         let layout = crate::graph_layout::compute(&diagram).unwrap();
         let output = render(&layout);
-        
+
         let label_line = output
             .lines()
             .find(|line| line.contains("second"))

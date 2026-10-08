@@ -505,16 +505,27 @@ fn layout_with_subgraphs(diagram: &GraphDiagram) -> Result<GraphLayout, String> 
         .iter()
         .map(|subgraph| subgraph.id.as_str())
         .collect();
+    let node_to_subgraph: HashMap<&str, usize> = diagram
+        .subgraphs
+        .iter()
+        .enumerate()
+        .flat_map(|(i, sg)| sg.node_ids.iter().map(move |id| (id.as_str(), i)))
+        .collect();
     let has_invisible_subgraph_constraint = diagram.edges.iter().any(|edge| {
         edge.edge_type == EdgeType::Invisible
             && subgraph_ids.contains(edge.from.as_str())
             && subgraph_ids.contains(edge.to.as_str())
     });
+    let has_cross_subgraph_edge = diagram.edges.iter().any(|edge| {
+        let from_sg = node_to_subgraph.get(edge.from.as_str());
+        let to_sg = node_to_subgraph.get(edge.to.as_str());
+        from_sg != to_sg && (from_sg.is_some() || to_sg.is_some())
+    });
     let has_subgraph_endpoint = diagram.edges.iter().any(|edge| {
         subgraph_ids.contains(edge.from.as_str()) || subgraph_ids.contains(edge.to.as_str())
     });
     if diagram.direction == Direction::TopDown
-        && (has_invisible_subgraph_constraint || has_subgraph_endpoint)
+        && (has_invisible_subgraph_constraint || has_subgraph_endpoint || has_cross_subgraph_edge)
     {
         stack_subgraphs(diagram, layout, usize::MAX)
     } else {
@@ -797,21 +808,49 @@ fn stack_subgraphs(
             if sg_layout.width > max_width {
                 return Err(format!("graph diagram too wide for {max_width} columns"));
             }
+
+            let sg_index = diagram
+                .subgraphs
+                .iter()
+                .position(|sg| sg.id == group.id)
+                .unwrap();
+            let incoming_edge_count = diagram
+                .edges
+                .iter()
+                .filter(|edge| {
+                    node_to_subgraph.get(edge.to.as_str()) == Some(&sg_index)
+                        && node_to_subgraph.get(edge.from.as_str()) != Some(&sg_index)
+                })
+                .count();
+            let entry_space = if incoming_edge_count > 0 {
+                TD_RANK_SPACING + incoming_edge_count + 1
+            } else {
+                0
+            };
+            y_offset += entry_space;
+
             let old_x = sg_layout.x;
             let old_y = sg_layout.y;
             let x_offset = center_x - sg_layout.width / 2;
+
+            let node_y_shift = if incoming_edge_count > 0 {
+                entry_space
+            } else {
+                0
+            };
             for node in layout.nodes.iter_mut().filter(|node| {
                 node_to_subgraph
                     .get(node.id.as_str())
                     .is_some_and(|index| diagram.subgraphs[*index].id == group.id)
             }) {
                 node.x = node.x - old_x + x_offset;
-                node.y = node.y - old_y + y_offset;
+                node.y = node.y - old_y + y_offset + node_y_shift;
                 node.center_x = node.center_x - old_x + x_offset;
-                node.center_y = node.center_y - old_y + y_offset;
+                node.center_y = node.center_y - old_y + y_offset + node_y_shift;
             }
             sg_layout.x = x_offset;
             sg_layout.y = y_offset;
+            sg_layout.height += node_y_shift;
             y_offset += sg_layout.height + SUBGRAPH_GAP;
         } else if let Some(node) = layout.nodes.iter_mut().find(|node| node.id == group.id) {
             if node.width > max_width {
@@ -1122,7 +1161,7 @@ fn box_height(label: &str, shape: NodeShape) -> usize {
 
 const SUBGRAPH_PAD_LEFT: usize = 2;
 const SUBGRAPH_PAD_RIGHT: usize = 2;
-const SUBGRAPH_PAD_TOP: usize = 1;
+const SUBGRAPH_PAD_TOP: usize = 3;
 const SUBGRAPH_PAD_BOTTOM: usize = 1;
 const SUBGRAPH_TITLE_DECOR: usize = 6;
 
@@ -1550,16 +1589,13 @@ mod tests {
         assert!(b.x >= sg.x, "B x >= sg.x");
         assert!(b.x + b.width <= sg.x + sg.width, "B right <= sg right");
 
-        // C must not overlap with the subgraph x-range
-        let c_right = c.x + c.width;
-        let sg_right = sg.x + sg.width;
+        // C is above the subgraph (vertical layout)
+        assert_eq!(layout.direction, Direction::TopDown, "layout should be TD");
         assert!(
-            c_right <= sg.x || c.x >= sg_right,
-            "bare node C overlaps subgraph: C({}-{}), sg({}-{})",
-            c.x,
-            c_right,
-            sg.x,
-            sg_right
+            c.y + c.height <= sg.y,
+            "bare node C should be above Backend subgraph: C bottom {}, sg top {}",
+            c.y + c.height,
+            sg.y
         );
     }
 
