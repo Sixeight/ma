@@ -108,6 +108,69 @@ fn group_entities_by_target<'a>(
     result
 }
 
+fn center_align_targets(
+    nodes: &mut [ErNodeLayout],
+    diagram: &ErDiagram,
+    ranks: &HashMap<&str, usize>,
+) {
+    let node_map: HashMap<String, usize> = nodes
+        .iter()
+        .enumerate()
+        .map(|(i, n)| (n.name.clone(), i))
+        .collect();
+    
+    let mut adjustments: Vec<(usize, usize)> = Vec::new();
+    
+    for target_name in nodes.iter().map(|n| n.name.clone()).collect::<Vec<_>>() {
+        let sources: Vec<&str> = diagram
+            .relationships
+            .iter()
+            .filter(|r| r.to == target_name)
+            .map(|r| r.from.as_str())
+            .collect();
+        
+        if sources.is_empty() {
+            continue;
+        }
+        
+        let target_rank = match ranks.get(target_name.as_str()) {
+            Some(&r) => r,
+            None => continue,
+        };
+        
+        let source_centers: Vec<usize> = sources
+            .iter()
+            .filter_map(|&src| {
+                let src_rank = ranks.get(src)?;
+                if *src_rank + 1 == target_rank {
+                    let idx = node_map.get(src)?;
+                    Some(nodes[*idx].center_y)
+                } else {
+                    None
+                }
+            })
+            .collect();
+        
+        if source_centers.is_empty() {
+            continue;
+        }
+        
+        let min_cy = *source_centers.iter().min().unwrap();
+        let max_cy = *source_centers.iter().max().unwrap();
+        let avg_cy = (min_cy + max_cy) / 2;
+        
+        let target_idx = node_map[&target_name];
+        let target_height = nodes[target_idx].height;
+        let new_y = avg_cy.saturating_sub(target_height / 2);
+        adjustments.push((target_idx, new_y));
+    }
+    
+    for (idx, new_y) in adjustments {
+        nodes[idx].y = new_y;
+        nodes[idx].center_y = new_y + nodes[idx].height / 2;
+    }
+}
+
 fn compute_with_gap(diagram: &ErDiagram, min_gap: usize) -> Result<ErLayout, String> {
     if diagram.entities.is_empty() {
         return Err("no entities found".to_string());
@@ -169,6 +232,8 @@ fn compute_with_gap(diagram: &ErDiagram, min_gap: usize) -> Result<ErLayout, Str
             x += rank_max_width + label_gap;
         }
     }
+
+    center_align_targets(&mut nodes, diagram, &ranks);
 
     let width = nodes.iter().map(|n| n.x + n.width).max().unwrap_or(0);
     let height = nodes.iter().map(|n| n.y + n.height).max().unwrap_or(0);
@@ -369,5 +434,38 @@ mod tests {
             "A and B (both→TARGET) should be consecutive, got indices {:?}",
             indices
         );
+    }
+
+    #[test]
+    fn no_dangling_edges() {
+        let diagram = ErDiagram {
+            entities: vec![
+                entity("A"),
+                entity("UNRELATED"),
+                entity("B"),
+                entity("TARGET"),
+                entity("OTHER"),
+            ],
+            relationships: vec![
+                rel("A", "TARGET"),
+                rel("B", "TARGET"),
+                rel("UNRELATED", "OTHER"),
+            ],
+        };
+        let layout = compute(&diagram).unwrap();
+        let node_map: HashMap<&str, &ErNodeLayout> =
+            layout.nodes.iter().map(|n| (n.name.as_str(), n)).collect();
+        
+        for edge in &layout.edges {
+            let from = node_map[edge.from.as_str()];
+            let to = node_map[edge.to.as_str()];
+            let from_cy = from.center_y;
+            let to_cy = to.center_y;
+            assert!(
+                from_cy.abs_diff(to_cy) <= 2,
+                "Edge {}→{} has misaligned centers: from.center_y={}, to.center_y={}",
+                edge.from, edge.to, from_cy, to_cy
+            );
+        }
     }
 }
