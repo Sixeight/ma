@@ -734,7 +734,7 @@ fn draw_td_edge(
 
     // The geometry below assumes the target sits ahead of the source, which is
     // what routing every other edge through a gutter lane guarantees.
-    debug_assert!(!is_back_edge(&layout.direction, from, to));
+    debug_assert!(matches!(edge.route, EdgeRoute::Forward));
 
     let edge_type = edge.edge_type;
     let from_cx = from.center_x;
@@ -750,16 +750,14 @@ fn draw_td_edge(
     let forward_children: Vec<&NodeLayout> = layout
         .edges
         .iter()
-        .filter(|e| e.from_id == from.id && e.from_id != e.to_id)
+        .filter(|e| e.from_id == from.id && e.from_id != e.to_id && e.route == EdgeRoute::Forward)
         .filter_map(|e| layout.nodes.iter().find(|n| n.id == e.to_id))
-        .filter(|n| !is_back_edge(&layout.direction, from, n))
         .collect();
     let forward_parents: Vec<&NodeLayout> = layout
         .edges
         .iter()
-        .filter(|e| e.to_id == to.id && e.from_id != e.to_id)
+        .filter(|e| e.to_id == to.id && e.from_id != e.to_id && e.route == EdgeRoute::Forward)
         .filter_map(|e| layout.nodes.iter().find(|n| n.id == e.from_id))
-        .filter(|n| !is_back_edge(&layout.direction, n, to))
         .collect();
     let sibling_count = forward_children.len();
     let parent_count = forward_parents.len();
@@ -1324,7 +1322,7 @@ fn draw_lr_edge(
 
     // The geometry below assumes the target sits ahead of the source, which is
     // what routing every other edge through a gutter lane guarantees.
-    debug_assert!(!is_back_edge(&layout.direction, from, to));
+    debug_assert!(matches!(edge.route, EdgeRoute::Forward));
 
     let from_right = from.x + from.width;
     let to_left = to.x;

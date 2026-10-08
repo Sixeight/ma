@@ -121,7 +121,29 @@ pub fn is_back_edge(direction: &Direction, from: &NodeLayout, to: &NodeLayout) -
 
 /// Decides each edge's route now that the nodes are placed, handing every back
 /// edge its own gutter lane in declaration order.
-fn assign_edge_routes(direction: &Direction, nodes: &[NodeLayout], edges: &mut [EdgeLayout]) {
+fn assign_edge_routes(
+    direction: &Direction,
+    nodes: &[NodeLayout],
+    edges: &mut [EdgeLayout],
+    subgraphs: &[SubgraphLayout],
+) {
+    // Build a map from node ID to its containing subgraph
+    let node_subgraph: HashMap<&str, &str> = subgraphs
+        .iter()
+        .flat_map(|sg| {
+            nodes
+                .iter()
+                .filter(move |n| {
+                    n.x >= sg.x
+                        && n.x + n.width <= sg.x + sg.width
+                        && n.y >= sg.y
+                        && n.y + n.height <= sg.y + sg.height
+                        && n.id != sg.id
+                })
+                .map(move |n| (n.id.as_str(), sg.id.as_str()))
+        })
+        .collect();
+
     let mut lane = 0;
     for edge in edges.iter_mut() {
         edge.route = if edge.from_id == edge.to_id {
@@ -129,8 +151,14 @@ fn assign_edge_routes(direction: &Direction, nodes: &[NodeLayout], edges: &mut [
         } else {
             let from = nodes.iter().find(|n| n.id == edge.from_id);
             let to = nodes.iter().find(|n| n.id == edge.to_id);
+            
+            // Check if edge crosses subgraph boundary
+            let from_subgraph = node_subgraph.get(edge.from_id.as_str());
+            let to_subgraph = node_subgraph.get(edge.to_id.as_str());
+            let crosses_boundary = from_subgraph != to_subgraph;
+            
             match (from, to) {
-                (Some(from), Some(to)) if is_back_edge(direction, from, to) => {
+                (Some(from), Some(to)) if !crosses_boundary && is_back_edge(direction, from, to) => {
                     lane += 1;
                     EdgeRoute::Back { lane: lane - 1 }
                 }
@@ -225,7 +253,7 @@ pub fn compute(diagram: &GraphDiagram) -> Result<GraphLayout, String> {
         .collect();
 
     let subgraphs = compute_subgraph_layouts(&diagram.subgraphs, &mut node_layouts);
-    assign_edge_routes(&diagram.direction, &node_layouts, &mut edges);
+    assign_edge_routes(&diagram.direction, &node_layouts, &mut edges, &subgraphs);
 
     let (mut width, mut height) = base_extents(&node_layouts, &subgraphs);
 
@@ -469,6 +497,24 @@ fn layout_with_subgraphs(diagram: &GraphDiagram) -> Result<GraphLayout, String> 
             nl.center_x += x_offset;
         }
 
+        // If bare nodes have incoming edges from subgraph nodes, position them
+        // below the subgraphs to maintain forward flow
+        let max_subgraph_bottom = sg_layouts.iter().map(|sg| sg.y + sg.height).max().unwrap_or(0);
+        let has_edges_from_subgraphs = node_layouts.iter().any(|bare_node| {
+            diagram.edges.iter().any(|edge| {
+                edge.to == bare_node.id
+                    && all_nodes.iter().any(|n| n.id == edge.from)
+            })
+        });
+        
+        if has_edges_from_subgraphs && max_subgraph_bottom > 0 {
+            let offset_y = max_subgraph_bottom + TD_RANK_SPACING;
+            for nl in &mut node_layouts {
+                nl.y += offset_y;
+                nl.center_y += offset_y;
+            }
+        }
+
         all_nodes.extend(node_layouts);
     }
 
@@ -486,7 +532,7 @@ fn layout_with_subgraphs(diagram: &GraphDiagram) -> Result<GraphLayout, String> 
         .collect();
 
     let endpoints = edge_endpoint_nodes(&all_nodes, &sg_layouts);
-    assign_edge_routes(&diagram.direction, &endpoints, &mut edges);
+    assign_edge_routes(&diagram.direction, &endpoints, &mut edges, &sg_layouts);
     let (mut width, mut height) = base_extents(&all_nodes, &sg_layouts);
     reserve_back_edge_space(&diagram.direction, &edges, &mut width, &mut height);
 
@@ -689,7 +735,7 @@ pub fn compute_with_max_width(
 
             let subgraphs = compute_subgraph_layouts(&diagram.subgraphs, &mut node_layouts);
 
-            assign_edge_routes(&diagram.direction, &node_layouts, &mut edges);
+            assign_edge_routes(&diagram.direction, &node_layouts, &mut edges, &subgraphs);
             let (mut width, mut height) = base_extents(&node_layouts, &subgraphs);
             if diagram.direction == Direction::TopDown {
                 width = width.max(td_labels_right(&node_layouts, &diagram.edges));
@@ -827,7 +873,7 @@ fn stack_subgraphs(
 
     layout.direction = Direction::TopDown;
     let endpoints = edge_endpoint_nodes(&layout.nodes, &layout.subgraphs);
-    assign_edge_routes(&layout.direction, &endpoints, &mut layout.edges);
+    assign_edge_routes(&layout.direction, &endpoints, &mut layout.edges, &layout.subgraphs);
     let (mut width, mut height) = base_extents(&layout.nodes, &layout.subgraphs);
     reserve_back_edge_space(&layout.direction, &layout.edges, &mut width, &mut height);
     layout.width = width;
