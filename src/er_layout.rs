@@ -66,6 +66,111 @@ pub fn compute_with_max_width(diagram: &ErDiagram, max_width: usize) -> Result<E
     Err(format!("ER diagram too wide for {max_width} columns"))
 }
 
+fn group_entities_by_target<'a>(
+    entities: &[&'a Entity],
+    diagram: &ErDiagram,
+    ranks: &HashMap<&str, usize>,
+    current_rank: usize,
+) -> Vec<&'a Entity> {
+    let next_rank = current_rank + 1;
+    let mut groups: HashMap<&str, Vec<&'a Entity>> = HashMap::new();
+    
+    for &entity in entities {
+        let target = diagram
+            .relationships
+            .iter()
+            .find(|r| r.from == entity.name && ranks.get(r.to.as_str()) == Some(&next_rank))
+            .map(|r| r.to.as_str())
+            .unwrap_or("");
+        groups.entry(target).or_default().push(entity);
+    }
+    
+    let mut result = Vec::new();
+    let mut seen = std::collections::HashSet::new();
+    
+    for &entity in entities {
+        if seen.contains(&entity.name) {
+            continue;
+        }
+        let target = diagram
+            .relationships
+            .iter()
+            .find(|r| r.from == entity.name && ranks.get(r.to.as_str()) == Some(&next_rank))
+            .map(|r| r.to.as_str())
+            .unwrap_or("");
+        
+        for &e in &groups[target] {
+            if seen.insert(&e.name) {
+                result.push(e);
+            }
+        }
+    }
+    result
+}
+
+fn center_align_targets(
+    nodes: &mut [ErNodeLayout],
+    diagram: &ErDiagram,
+    ranks: &HashMap<&str, usize>,
+) {
+    let node_map: HashMap<String, usize> = nodes
+        .iter()
+        .enumerate()
+        .map(|(i, n)| (n.name.clone(), i))
+        .collect();
+    
+    let mut adjustments: Vec<(usize, usize)> = Vec::new();
+    
+    for target_name in nodes.iter().map(|n| n.name.clone()).collect::<Vec<_>>() {
+        let sources: Vec<&str> = diagram
+            .relationships
+            .iter()
+            .filter(|r| r.to == target_name)
+            .map(|r| r.from.as_str())
+            .collect();
+        
+        if sources.is_empty() {
+            continue;
+        }
+        
+        let target_rank = match ranks.get(target_name.as_str()) {
+            Some(&r) => r,
+            None => continue,
+        };
+        
+        let source_centers: Vec<usize> = sources
+            .iter()
+            .filter_map(|&src| {
+                let src_rank = ranks.get(src)?;
+                if *src_rank + 1 == target_rank {
+                    let idx = node_map.get(src)?;
+                    Some(nodes[*idx].center_y)
+                } else {
+                    None
+                }
+            })
+            .collect();
+        
+        if source_centers.is_empty() {
+            continue;
+        }
+        
+        let min_cy = *source_centers.iter().min().unwrap();
+        let max_cy = *source_centers.iter().max().unwrap();
+        let avg_cy = (min_cy + max_cy) / 2;
+        
+        let target_idx = node_map[&target_name];
+        let target_height = nodes[target_idx].height;
+        let new_y = avg_cy.saturating_sub(target_height / 2);
+        adjustments.push((target_idx, new_y));
+    }
+    
+    for (idx, new_y) in adjustments {
+        nodes[idx].y = new_y;
+        nodes[idx].center_y = new_y + nodes[idx].height / 2;
+    }
+}
+
 fn compute_with_gap(diagram: &ErDiagram, min_gap: usize) -> Result<ErLayout, String> {
     if diagram.entities.is_empty() {
         return Err("no entities found".to_string());
@@ -84,8 +189,10 @@ fn compute_with_gap(diagram: &ErDiagram, min_gap: usize) -> Result<ErLayout, Str
     let mut x = 0;
 
     for (rank, rank_entities) in ranks_entities.iter().enumerate() {
+        let grouped_entities = group_entities_by_target(rank_entities, diagram, &ranks, rank);
+        
         let mut y = 0;
-        for entity in rank_entities {
+        for entity in grouped_entities {
             let w = entity_width(entity);
             let h = if entity.attributes.is_empty() {
                 BOX_HEIGHT
@@ -125,6 +232,8 @@ fn compute_with_gap(diagram: &ErDiagram, min_gap: usize) -> Result<ErLayout, Str
             x += rank_max_width + label_gap;
         }
     }
+
+    center_align_targets(&mut nodes, diagram, &ranks);
 
     let width = nodes.iter().map(|n| n.x + n.width).max().unwrap_or(0);
     let height = nodes.iter().map(|n| n.y + n.height).max().unwrap_or(0);
@@ -201,6 +310,7 @@ fn compute_rank<'a>(
     rank
 }
 
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -210,6 +320,17 @@ mod tests {
             name: name.to_string(),
             alias: None,
             attributes: Vec::new(),
+        }
+    }
+
+    fn rel(from: &str, to: &str) -> Relationship {
+        Relationship {
+            from: from.into(),
+            to: to.into(),
+            left_card: Cardinality::ExactlyOne,
+            right_card: Cardinality::ZeroOrMany,
+            line_style: RelationshipLineStyle::Identifying,
+            label: String::new(),
         }
     }
 
@@ -284,6 +405,138 @@ mod tests {
         assert!(
             gap >= "long label here".len() + 4,
             "gap ({gap}) should fit label + connectors"
+        );
+    }
+
+    #[test]
+    fn entities_targeting_same_node_grouped() {
+        let diagram = ErDiagram {
+            entities: vec![
+                entity("A"),
+                entity("UNRELATED"),
+                entity("B"),
+                entity("TARGET"),
+                entity("OTHER"),
+            ],
+            relationships: vec![
+                rel("A", "TARGET"),
+                rel("B", "TARGET"),
+                rel("UNRELATED", "OTHER"),
+            ],
+        };
+        let layout = compute(&diagram).unwrap();
+        let indices: Vec<_> = ["A", "B", "UNRELATED"]
+            .iter()
+            .map(|name| layout.nodes.iter().position(|n| &n.name == name).unwrap())
+            .collect();
+        assert!(
+            indices[0].abs_diff(indices[1]) == 1,
+            "A and B (both→TARGET) should be consecutive, got indices {:?}",
+            indices
+        );
+    }
+
+    #[test]
+    fn edges_connect_to_target_boxes_in_render() {
+        let diagram = ErDiagram {
+            entities: vec![entity("A"), entity("B"), entity("TARGET")],
+            relationships: vec![rel("A", "TARGET"), rel("B", "TARGET")],
+        };
+        let layout = compute(&diagram).unwrap();
+        let rendered = crate::er_renderer::render(&layout);
+        
+        let mut edges_connect_to_target = false;
+        
+        for line in rendered.lines() {
+            if line.contains("TARGET") {
+                if line.contains("o{│") || line.contains("|{│") {
+                    edges_connect_to_target = true;
+                    break;
+                }
+            }
+        }
+        
+        assert!(
+            edges_connect_to_target,
+            "No edge connects to TARGET box. Render:\n{}",
+            rendered
+        );
+    }
+
+    #[test]
+    fn cardinality_markers_preserved_per_relationship() {
+        let diagram = ErDiagram {
+            entities: vec![entity("ORDER"), entity("PRODUCT"), entity("LINE_ITEM")],
+            relationships: vec![
+                Relationship {
+                    from: "ORDER".into(),
+                    to: "LINE_ITEM".into(),
+                    left_card: Cardinality::ExactlyOne,
+                    right_card: Cardinality::OneOrMany,
+                    line_style: RelationshipLineStyle::Identifying,
+                    label: "contains".into(),
+                },
+                Relationship {
+                    from: "PRODUCT".into(),
+                    to: "LINE_ITEM".into(),
+                    left_card: Cardinality::ExactlyOne,
+                    right_card: Cardinality::ZeroOrMany,
+                    line_style: RelationshipLineStyle::Identifying,
+                    label: "ordered in".into(),
+                },
+            ],
+        };
+        let layout = compute(&diagram).unwrap();
+        let rendered = crate::er_renderer::render(&layout);
+        
+        let has_one_or_many = rendered.contains("|{");
+        let has_zero_or_many = rendered.contains("o{");
+        
+        assert!(
+            has_one_or_many,
+            "ORDER→LINE_ITEM (one-or-many |{{) marker not found in render:\n{}",
+            rendered
+        );
+        assert!(
+            has_zero_or_many,
+            "PRODUCT→LINE_ITEM (zero-or-many o{{) marker not found in render:\n{}",
+            rendered
+        );
+        
+        let one_many_count = rendered.matches("|{").count();
+        let zero_many_count = rendered.matches("o{").count();
+        assert_eq!(
+            one_many_count, 1,
+            "Expected exactly 1 |{{ marker, found {}",
+            one_many_count
+        );
+        assert_eq!(
+            zero_many_count, 1,
+            "Expected exactly 1 o{{ marker, found {}",
+            zero_many_count
+        );
+    }
+
+    #[test]
+    fn label_not_adjacent_to_left_marker() {
+        let diagram = ErDiagram {
+            entities: vec![entity("A"), entity("B")],
+            relationships: vec![Relationship {
+                from: "A".into(),
+                to: "B".into(),
+                left_card: Cardinality::ExactlyOne,
+                right_card: Cardinality::ZeroOrMany,
+                line_style: RelationshipLineStyle::Identifying,
+                label: "label".into(),
+            }],
+        };
+        let layout = compute(&diagram).unwrap();
+        let rendered = crate::er_renderer::render(&layout);
+        
+        assert!(
+            !rendered.contains("||label"),
+            "Label should not be adjacent to || marker. Render:\n{}",
+            rendered
         );
     }
 }

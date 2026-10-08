@@ -11,8 +11,19 @@ pub fn render(layout: &ErLayout) -> String {
     let node_map: HashMap<&str, &ErNodeLayout> =
         layout.nodes.iter().map(|n| (n.name.as_str(), n)).collect();
 
+    let mut target_edges: HashMap<&str, Vec<&ErEdgeLayout>> = HashMap::new();
+    for edge in &layout.edges {
+        target_edges.entry(edge.to.as_str()).or_default().push(edge);
+    }
+
     for node in &layout.nodes {
-        draw_box(&mut grid, node);
+        let incoming_edges = target_edges.get(node.name.as_str()).map(|v| v.len()).unwrap_or(0);
+        let extra_height = if incoming_edges > 1 {
+            incoming_edges - 1
+        } else {
+            0
+        };
+        draw_box_with_height(&mut grid, node, extra_height);
     }
 
     for edge in &layout.edges {
@@ -20,10 +31,19 @@ pub fn render(layout: &ErLayout) -> String {
             node_map.get(edge.from.as_str()),
             node_map.get(edge.to.as_str()),
         ) {
+            let edges_to_target = &target_edges[edge.to.as_str()];
+            let target_y = if edges_to_target.len() > 1 {
+                let edge_index = edges_to_target.iter().position(|e| std::ptr::eq(*e, edge)).unwrap();
+                to.y + 1 + edge_index
+            } else {
+                to.center_y
+            };
+            
             draw_er_edge(
                 &mut grid,
                 from,
                 to,
+                target_y,
                 &edge.label,
                 edge.left_card,
                 edge.right_card,
@@ -33,6 +53,61 @@ pub fn render(layout: &ErLayout) -> String {
     }
 
     grid.render()
+}
+
+fn draw_box_with_height(grid: &mut Grid, node: &ErNodeLayout, extra_height: usize) {
+    let x = node.x;
+    let y = node.y;
+    let w = node.width;
+    let base_h = if node.attributes.is_empty() {
+        3
+    } else {
+        3 + 1 + node.attributes.len()
+    };
+    let h = base_h + extra_height;
+
+    grid.set(y, x, '┌');
+    for col in (x + 1)..(x + w - 1) {
+        grid.set(y, col, '─');
+    }
+    grid.set(y, x + w - 1, '┐');
+
+    for row in (y + 1)..(y + h - 1) {
+        grid.set(row, x, '│');
+        grid.set(row, x + w - 1, '│');
+    }
+    
+    grid.write_str(y + 1, x + 2, node.alias.as_deref().unwrap_or(&node.name));
+
+    if node.attributes.is_empty() {
+        grid.set(y + h - 1, x, '└');
+        for col in (x + 1)..(x + w - 1) {
+            grid.set(y + h - 1, col, '─');
+        }
+        grid.set(y + h - 1, x + w - 1, '┘');
+    } else {
+        let sep_y = y + 2;
+        grid.set(sep_y, x, '├');
+        for col in (x + 1)..(x + w - 1) {
+            grid.set(sep_y, col, '─');
+        }
+        grid.set(sep_y, x + w - 1, '┤');
+
+        for (i, attr) in node.attributes.iter().enumerate() {
+            let row = sep_y + 1 + i;
+            grid.set(row, x, '│');
+            let text = attr.display_text();
+            grid.write_str(row, x + 2, &text);
+            grid.set(row, x + w - 1, '│');
+        }
+
+        let bottom_y = sep_y + 1 + node.attributes.len() + extra_height;
+        grid.set(bottom_y, x, '└');
+        for col in (x + 1)..(x + w - 1) {
+            grid.set(bottom_y, col, '─');
+        }
+        grid.set(bottom_y, x + w - 1, '┘');
+    }
 }
 
 fn draw_box(grid: &mut Grid, node: &ErNodeLayout) {
@@ -88,6 +163,7 @@ fn draw_er_edge(
     grid: &mut Grid,
     from: &ErNodeLayout,
     to: &ErNodeLayout,
+    target_y: usize,
     label: &str,
     left_card: Cardinality,
     right_card: Cardinality,
@@ -95,40 +171,103 @@ fn draw_er_edge(
 ) {
     let from_right = from.x + from.width;
     let to_left = to.x;
-    let row = from.center_y;
+    let from_cy = from.center_y;
+    let to_cy = target_y;
+    let h_char = match line_style {
+        RelationshipLineStyle::Identifying => '─',
+        RelationshipLineStyle::NonIdentifying => '┈',
+    };
 
-    for col in from_right..to_left {
-        grid.set(
-            row,
-            col,
-            match line_style {
-                RelationshipLineStyle::Identifying => '─',
-                RelationshipLineStyle::NonIdentifying => '┈',
-            },
-        );
-    }
-
-    let left_sym = left_cardinality_str(left_card);
-    grid.write_str(row, from_right, left_sym);
-
-    let right_sym = right_cardinality_str(right_card);
-    if to_left >= 2 {
-        grid.write_str(row, to_left - 2, right_sym);
-    }
-
-    let gap = to_left - from_right;
-    let lines = split_br(label);
-    let max_w = multiline_width(label);
-    if gap > max_w {
-        let label_col = from_right + (gap - max_w) / 2;
-        let start_row = if lines.len() > 1 {
-            row.saturating_sub(lines.len() / 2)
+    if from_cy == to_cy {
+        for col in from_right..to_left {
+            grid.set(from_cy, col, h_char);
+        }
+        grid.write_str(from_cy, from_right, left_cardinality_str(left_card));
+        if to_left >= 2 {
+            grid.write_str(from_cy, to_left - 2, right_cardinality_str(right_card));
+        }
+        
+        let gap = to_left - from_right;
+        let lines = split_br(label);
+        let max_w = multiline_width(label);
+        let left_marker_len = left_cardinality_str(left_card).len();
+        if gap > max_w + left_marker_len + 1 {
+            let label_col = from_right + left_marker_len + 1 + (gap - max_w - left_marker_len - 1) / 2;
+            let start_row = if lines.len() > 1 {
+                from_cy.saturating_sub(lines.len() / 2)
+            } else {
+                from_cy
+            };
+            for (i, line) in lines.iter().enumerate() {
+                let line_col = label_col + (max_w - display_width(line)) / 2;
+                grid.write_str(start_row + i, line_col, line);
+            }
+        }
+    } else {
+        let corner_col = to_left - 3;
+        
+        for col in from_right..corner_col {
+            grid.set(from_cy, col, h_char);
+        }
+        grid.write_str(from_cy, from_right, left_cardinality_str(left_card));
+        
+        let (min_y, max_y) = if from_cy < to_cy {
+            (from_cy, to_cy)
         } else {
-            row
+            (to_cy, from_cy)
         };
-        for (i, line) in lines.iter().enumerate() {
-            let line_col = label_col + (max_w - display_width(line)) / 2;
-            grid.write_str(start_row + i, line_col, line);
+        
+        for y in (min_y + 1)..max_y {
+            grid.set_merged(y, corner_col, '│', |old, _new| {
+                if old == '│' { '│' } else { '│' }
+            });
+        }
+        
+        grid.set_merged(from_cy, corner_col, 
+            if from_cy < to_cy { '┐' } else { '┘' },
+            |old, new| {
+                match old {
+                    '│' => '┤',
+                    '┐' | '┘' | '┤' => '┤',
+                    _ => new,
+                }
+            }
+        );
+        
+        grid.set_merged(to_cy, corner_col,
+            if from_cy < to_cy { '└' } else { '┌' },
+            |old, new| {
+                match old {
+                    '│' => '├',
+                    '└' | '┌' | '├' => '├',
+                    _ => new,
+                }
+            }
+        );
+        
+        for col in (corner_col + 1)..to_left {
+            grid.set(to_cy, col, h_char);
+        }
+        
+        if to_left >= 2 {
+            grid.write_str(to_cy, to_left - 2, right_cardinality_str(right_card));
+        }
+        
+        let h_gap = corner_col - from_right;
+        let lines = split_br(label);
+        let max_w = multiline_width(label);
+        let left_marker_len = left_cardinality_str(left_card).len();
+        if h_gap > max_w + left_marker_len + 1 {
+            let label_col = from_right + left_marker_len + 1 + (h_gap - max_w - left_marker_len - 1) / 2;
+            let start_row = if lines.len() > 1 {
+                from_cy.saturating_sub(lines.len() / 2)
+            } else {
+                from_cy
+            };
+            for (i, line) in lines.iter().enumerate() {
+                let line_col = label_col + (max_w - display_width(line)) / 2;
+                grid.write_str(start_row + i, line_col, line);
+            }
         }
     }
 }
@@ -183,7 +322,7 @@ mod tests {
         let output = render(&layout);
         let expected = "\
 ┌───┐          ┌───┐
-│ A │||──r1──||│ B │
+│ A │||───r1─||│ B │
 └───┘          └───┘";
         assert_eq!(output, expected);
     }
