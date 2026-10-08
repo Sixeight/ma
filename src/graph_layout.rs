@@ -423,7 +423,16 @@ fn layout_with_subgraphs(diagram: &GraphDiagram) -> Result<GraphLayout, String> 
         let content_width = content_right - x_offset + SUBGRAPH_PAD_RIGHT;
         let title_width = display_width(&sg.label) + SUBGRAPH_TITLE_DECOR;
         let sg_width = content_width.max(title_width);
-        let sg_height = content_bottom + SUBGRAPH_PAD_BOTTOM;
+        let bottom_padding = SUBGRAPH_PAD_BOTTOM
+            + if diagram.edges.iter().any(|edge| {
+                node_to_subgraph.get(&edge.from) == Some(&i)
+                    && node_to_subgraph.get(&edge.to) != Some(&i)
+            }) {
+                1
+            } else {
+                0
+            };
+        let sg_height = content_bottom + bottom_padding;
         let content_offset = sg_width / 2 - content_width / 2;
         for node in &mut node_layouts {
             node.x += content_offset;
@@ -808,50 +817,22 @@ fn stack_subgraphs(
             if sg_layout.width > max_width {
                 return Err(format!("graph diagram too wide for {max_width} columns"));
             }
-
-            let sg_index = diagram
-                .subgraphs
-                .iter()
-                .position(|sg| sg.id == group.id)
-                .unwrap();
-            let incoming_edge_count = diagram
-                .edges
-                .iter()
-                .filter(|edge| {
-                    node_to_subgraph.get(edge.to.as_str()) == Some(&sg_index)
-                        && node_to_subgraph.get(edge.from.as_str()) != Some(&sg_index)
-                })
-                .count();
-            let entry_space = if incoming_edge_count > 0 {
-                TD_RANK_SPACING + incoming_edge_count + 1
-            } else {
-                0
-            };
-            y_offset += entry_space;
-
             let old_x = sg_layout.x;
             let old_y = sg_layout.y;
             let x_offset = center_x - sg_layout.width / 2;
-
-            let node_y_shift = if incoming_edge_count > 0 {
-                entry_space
-            } else {
-                0
-            };
             for node in layout.nodes.iter_mut().filter(|node| {
                 node_to_subgraph
                     .get(node.id.as_str())
                     .is_some_and(|index| diagram.subgraphs[*index].id == group.id)
             }) {
                 node.x = node.x - old_x + x_offset;
-                node.y = node.y - old_y + y_offset + node_y_shift;
+                node.y = node.y - old_y + y_offset;
                 node.center_x = node.center_x - old_x + x_offset;
-                node.center_y = node.center_y - old_y + y_offset + node_y_shift;
+                node.center_y = node.center_y - old_y + y_offset;
             }
             sg_layout.x = x_offset;
             sg_layout.y = y_offset;
-            sg_layout.height += node_y_shift;
-            y_offset += sg_layout.height + SUBGRAPH_GAP;
+            y_offset += sg_layout.height + TD_RANK_SPACING;
         } else if let Some(node) = layout.nodes.iter_mut().find(|node| node.id == group.id) {
             if node.width > max_width {
                 return Err(format!("graph diagram too wide for {max_width} columns"));
@@ -860,7 +841,7 @@ fn stack_subgraphs(
             node.y = y_offset;
             node.center_x = center_x;
             node.center_y = y_offset + node.height / 2;
-            y_offset += node.height + SUBGRAPH_GAP;
+            y_offset += node.height + TD_RANK_SPACING;
         }
     }
 
@@ -1161,7 +1142,7 @@ fn box_height(label: &str, shape: NodeShape) -> usize {
 
 const SUBGRAPH_PAD_LEFT: usize = 2;
 const SUBGRAPH_PAD_RIGHT: usize = 2;
-const SUBGRAPH_PAD_TOP: usize = 3;
+const SUBGRAPH_PAD_TOP: usize = 1;
 const SUBGRAPH_PAD_BOTTOM: usize = 1;
 const SUBGRAPH_TITLE_DECOR: usize = 6;
 
@@ -1563,7 +1544,7 @@ mod tests {
 
         assert!(layout.width <= max_width);
         assert_eq!(layout.direction, Direction::TopDown);
-        assert!(two.y >= one.y + one.height + SUBGRAPH_GAP);
+        assert!(two.y >= one.y + one.height + TD_RANK_SPACING);
     }
 
     #[test]
