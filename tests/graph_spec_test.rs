@@ -567,8 +567,6 @@ fn spec_subgraph_single_node() {
     let output = ma::render(input).unwrap();
     let expected = "\
 ┌─ Group ─┐
-│         │
-│         │
 │  ┌───┐  │
 │  │ A │  │
 │  └───┘  │
@@ -582,8 +580,6 @@ fn spec_subgraph_with_edge() {
     let output = ma::render(input).unwrap();
     let expected = "\
 ┌─ Backend ─┐
-│           │
-│           │
 │  ┌─────┐  │
 │  │ API │  │
 │  └──┬──┘  │
@@ -662,18 +658,13 @@ flowchart TB
     let output = ma::render(input).unwrap();
     let expected = "\
 ┌─ Group A ─┐
-│           │
-│           │
 │   ┌───┐   │
 │   │ A │   │
 │   └───┘   │
 └───────────┘
 
 
-
 ┌─ Group B ─┐
-│           │
-│           │
 │   ┌───┐   │
 │   │ B │   │
 │   └───┘   │
