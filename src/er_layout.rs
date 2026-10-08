@@ -66,6 +66,48 @@ pub fn compute_with_max_width(diagram: &ErDiagram, max_width: usize) -> Result<E
     Err(format!("ER diagram too wide for {max_width} columns"))
 }
 
+fn group_entities_by_target<'a>(
+    entities: &[&'a Entity],
+    diagram: &ErDiagram,
+    ranks: &HashMap<&str, usize>,
+    current_rank: usize,
+) -> Vec<&'a Entity> {
+    let next_rank = current_rank + 1;
+    let mut groups: HashMap<&str, Vec<&'a Entity>> = HashMap::new();
+    
+    for &entity in entities {
+        let target = diagram
+            .relationships
+            .iter()
+            .find(|r| r.from == entity.name && ranks.get(r.to.as_str()) == Some(&next_rank))
+            .map(|r| r.to.as_str())
+            .unwrap_or("");
+        groups.entry(target).or_default().push(entity);
+    }
+    
+    let mut result = Vec::new();
+    let mut seen = std::collections::HashSet::new();
+    
+    for &entity in entities {
+        if seen.contains(&entity.name) {
+            continue;
+        }
+        let target = diagram
+            .relationships
+            .iter()
+            .find(|r| r.from == entity.name && ranks.get(r.to.as_str()) == Some(&next_rank))
+            .map(|r| r.to.as_str())
+            .unwrap_or("");
+        
+        for &e in &groups[target] {
+            if seen.insert(&e.name) {
+                result.push(e);
+            }
+        }
+    }
+    result
+}
+
 fn compute_with_gap(diagram: &ErDiagram, min_gap: usize) -> Result<ErLayout, String> {
     if diagram.entities.is_empty() {
         return Err("no entities found".to_string());
@@ -84,8 +126,10 @@ fn compute_with_gap(diagram: &ErDiagram, min_gap: usize) -> Result<ErLayout, Str
     let mut x = 0;
 
     for (rank, rank_entities) in ranks_entities.iter().enumerate() {
+        let grouped_entities = group_entities_by_target(rank_entities, diagram, &ranks, rank);
+        
         let mut y = 0;
-        for entity in rank_entities {
+        for entity in grouped_entities {
             let w = entity_width(entity);
             let h = if entity.attributes.is_empty() {
                 BOX_HEIGHT
@@ -201,6 +245,7 @@ fn compute_rank<'a>(
     rank
 }
 
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -210,6 +255,17 @@ mod tests {
             name: name.to_string(),
             alias: None,
             attributes: Vec::new(),
+        }
+    }
+
+    fn rel(from: &str, to: &str) -> Relationship {
+        Relationship {
+            from: from.into(),
+            to: to.into(),
+            left_card: Cardinality::ExactlyOne,
+            right_card: Cardinality::ZeroOrMany,
+            line_style: RelationshipLineStyle::Identifying,
+            label: String::new(),
         }
     }
 
@@ -284,6 +340,34 @@ mod tests {
         assert!(
             gap >= "long label here".len() + 4,
             "gap ({gap}) should fit label + connectors"
+        );
+    }
+
+    #[test]
+    fn entities_targeting_same_node_grouped() {
+        let diagram = ErDiagram {
+            entities: vec![
+                entity("A"),
+                entity("UNRELATED"),
+                entity("B"),
+                entity("TARGET"),
+                entity("OTHER"),
+            ],
+            relationships: vec![
+                rel("A", "TARGET"),
+                rel("B", "TARGET"),
+                rel("UNRELATED", "OTHER"),
+            ],
+        };
+        let layout = compute(&diagram).unwrap();
+        let indices: Vec<_> = ["A", "B", "UNRELATED"]
+            .iter()
+            .map(|name| layout.nodes.iter().position(|n| &n.name == name).unwrap())
+            .collect();
+        assert!(
+            indices[0].abs_diff(indices[1]) == 1,
+            "A and B (both→TARGET) should be consecutive, got indices {:?}",
+            indices
         );
     }
 }
