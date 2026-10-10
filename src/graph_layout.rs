@@ -194,6 +194,9 @@ pub fn compute(diagram: &GraphDiagram) -> Result<GraphLayout, String> {
     }
 
     if !diagram.subgraphs.is_empty() {
+        if diagram.direction == Direction::TopDown && outer_node_on_subgraph_ranks(diagram) {
+            return layout_td_shared_ranks(diagram);
+        }
         return layout_with_subgraphs(diagram);
     }
 
@@ -279,6 +282,590 @@ pub fn compute(diagram: &GraphDiagram) -> Result<GraphLayout, String> {
         height,
         direction: diagram.direction.clone(),
     })
+}
+
+fn outer_node_on_subgraph_ranks(diagram: &GraphDiagram) -> bool {
+    let ranks = ranks_with_subgraph_endpoints(diagram);
+    let node_to_subgraph = node_to_subgraph_index(diagram);
+    let spans: Vec<(usize, usize)> = diagram
+        .subgraphs
+        .iter()
+        .filter_map(|sg| {
+            let member_ranks: Vec<usize> = sg
+                .node_ids
+                .iter()
+                .filter_map(|id| ranks.get(id).copied())
+                .collect();
+            let min = *member_ranks.iter().min()?;
+            let max = *member_ranks.iter().max()?;
+            Some((min, max))
+        })
+        .collect();
+    diagram.nodes.iter().any(|node| {
+        if node_to_subgraph.contains_key(node.id.as_str()) {
+            return false;
+        }
+        let Some(&rank) = ranks.get(&node.id) else {
+            return false;
+        };
+        spans.iter().any(|&(min, max)| rank >= min && rank <= max)
+    })
+}
+
+fn node_to_subgraph_index(diagram: &GraphDiagram) -> HashMap<&str, usize> {
+    diagram
+        .subgraphs
+        .iter()
+        .enumerate()
+        .flat_map(|(index, sg)| sg.node_ids.iter().map(move |id| (id.as_str(), index)))
+        .collect()
+}
+
+fn subgraph_member_ids(diagram: &GraphDiagram) -> HashMap<&str, &[String]> {
+    let mut members = HashMap::new();
+    for sg in &diagram.subgraphs {
+        members.insert(sg.id.as_str(), sg.node_ids.as_slice());
+    }
+    members
+}
+
+fn endpoint_node_ids<'a>(
+    id: &'a str,
+    members: &HashMap<&str, &'a [String]>,
+    node_ids: &HashSet<&str>,
+) -> Vec<&'a str> {
+    if let Some(ids) = members.get(id) {
+        ids.iter()
+            .map(String::as_str)
+            .filter(|id| node_ids.contains(id))
+            .collect()
+    } else if node_ids.contains(id) {
+        vec![id]
+    } else {
+        Vec::new()
+    }
+}
+
+fn ranks_with_subgraph_endpoints(diagram: &GraphDiagram) -> HashMap<String, usize> {
+    let members = subgraph_member_ids(diagram);
+    let node_ids: HashSet<&str> = diagram.nodes.iter().map(|node| node.id.as_str()).collect();
+    let mut edges = Vec::new();
+    for edge in &diagram.edges {
+        for from in endpoint_node_ids(&edge.from, &members, &node_ids) {
+            for to in endpoint_node_ids(&edge.to, &members, &node_ids) {
+                if from != to {
+                    edges.push(Edge {
+                        from: from.to_string(),
+                        to: to.to_string(),
+                        edge_type: edge.edge_type,
+                        label: edge.label.clone(),
+                    });
+                }
+            }
+        }
+    }
+    assign_ranks(&GraphDiagram {
+        direction: diagram.direction.clone(),
+        nodes: diagram.nodes.clone(),
+        edges,
+        subgraphs: Vec::new(),
+    })
+}
+
+fn shift_nodes_from(nodes: &mut [NodeLayout], y_threshold: usize, dy: usize) {
+    if dy == 0 {
+        return;
+    }
+    for node in nodes {
+        if node.y >= y_threshold {
+            node.y += dy;
+            node.center_y += dy;
+        }
+    }
+}
+
+fn shift_all_nodes(nodes: &mut [NodeLayout], dx: usize, dy: usize) {
+    for node in nodes {
+        node.x += dx;
+        node.y += dy;
+        node.center_x += dx;
+        node.center_y += dy;
+    }
+}
+
+fn insert_subgraph_chrome(diagram: &GraphDiagram, nodes: &mut [NodeLayout]) {
+    let mut first_ys: Vec<(usize, bool)> = Vec::new();
+    for sg in &diagram.subgraphs {
+        let members: Vec<&NodeLayout> = nodes
+            .iter()
+            .filter(|node| sg.node_ids.iter().any(|id| id == &node.id))
+            .collect();
+        if members.is_empty() {
+            continue;
+        }
+        let first_y = members.iter().map(|node| node.y).min().unwrap();
+        let incoming_from_above = diagram.edges.iter().any(|edge| {
+            sg.node_ids.iter().any(|id| id == &edge.to)
+                && !sg.node_ids.iter().any(|id| id == &edge.from)
+                && nodes
+                    .iter()
+                    .any(|node| node.id == edge.from && node.y + node.height <= first_y)
+        });
+        first_ys.push((first_y, incoming_from_above));
+    }
+    first_ys.sort_by_key(|(y, _)| *y);
+    let mut merged_first = Vec::new();
+    for (y, incoming) in first_ys {
+        match merged_first.last_mut() {
+            Some((last_y, last_incoming)) if *last_y == y => *last_incoming |= incoming,
+            _ => merged_first.push((y, incoming)),
+        }
+    }
+    first_ys = merged_first;
+    for (first_y, incoming_from_above) in first_ys.into_iter().rev() {
+        let need = SUBGRAPH_PAD_TOP + usize::from(incoming_from_above);
+        let above = nodes
+            .iter()
+            .filter(|node| node.y + node.height <= first_y)
+            .map(|node| node.y + node.height)
+            .max()
+            .unwrap_or(0);
+        let gap = first_y.saturating_sub(above);
+        if gap < need {
+            shift_nodes_from(nodes, first_y, need - gap);
+        }
+    }
+
+    let mut last_bottoms: Vec<(usize, bool)> = Vec::new();
+    for sg in &diagram.subgraphs {
+        let members: Vec<&NodeLayout> = nodes
+            .iter()
+            .filter(|node| sg.node_ids.iter().any(|id| id == &node.id))
+            .collect();
+        if members.is_empty() {
+            continue;
+        }
+        let last_bottom = members
+            .iter()
+            .map(|node| node.y + node.height)
+            .max()
+            .unwrap();
+        let outgoing_below = diagram.edges.iter().any(|edge| {
+            sg.node_ids.iter().any(|id| id == &edge.from)
+                && !sg.node_ids.iter().any(|id| id == &edge.to)
+                && nodes
+                    .iter()
+                    .any(|node| node.id == edge.to && node.y >= last_bottom)
+        });
+        last_bottoms.push((last_bottom, outgoing_below));
+    }
+    last_bottoms.sort_by_key(|(y, _)| *y);
+    let mut merged_last = Vec::new();
+    for (y, outgoing) in last_bottoms {
+        match merged_last.last_mut() {
+            Some((last_y, last_outgoing)) if *last_y == y => *last_outgoing |= outgoing,
+            _ => merged_last.push((y, outgoing)),
+        }
+    }
+    last_bottoms = merged_last;
+    for (last_bottom, outgoing_below) in last_bottoms.into_iter().rev() {
+        let need = SUBGRAPH_PAD_BOTTOM + usize::from(outgoing_below);
+        let below = nodes
+            .iter()
+            .filter(|node| node.y >= last_bottom)
+            .map(|node| node.y)
+            .min()
+            .unwrap_or(last_bottom + need);
+        let gap = below.saturating_sub(last_bottom);
+        if gap < need {
+            shift_nodes_from(nodes, last_bottom, need - gap);
+        }
+    }
+}
+
+fn ensure_forward_edge_gaps(nodes: &mut [NodeLayout], edges: &[Edge]) {
+    loop {
+        let mut inserted = false;
+        for edge in edges {
+            if edge.from == edge.to || edge.edge_type == EdgeType::Invisible {
+                continue;
+            }
+            let Some(from) = nodes.iter().find(|node| node.id == edge.from).cloned() else {
+                continue;
+            };
+            let Some(to) = nodes.iter().find(|node| node.id == edge.to).cloned() else {
+                continue;
+            };
+            if to.y < from.y + from.height {
+                continue;
+            }
+            let label_rows = edge.label.as_deref().map(line_count).unwrap_or(0);
+            let jog_rows = if from.center_x == to.center_x { 0 } else { 2 };
+            let need = from.y + from.height + 1 + label_rows + jog_rows;
+            if to.y < need {
+                shift_nodes_from(nodes, to.y, need - to.y);
+                inserted = true;
+                break;
+            }
+        }
+        if !inserted {
+            break;
+        }
+    }
+}
+
+fn finish_td_layout(
+    diagram: &GraphDiagram,
+    node_layouts: Vec<NodeLayout>,
+    subgraphs: Vec<SubgraphLayout>,
+) -> GraphLayout {
+    let mut edges: Vec<EdgeLayout> = diagram
+        .edges
+        .iter()
+        .filter(|edge| edge.edge_type != EdgeType::Invisible)
+        .map(|edge| EdgeLayout {
+            from_id: edge.from.clone(),
+            to_id: edge.to.clone(),
+            edge_type: edge.edge_type,
+            label: edge.label.clone(),
+            route: EdgeRoute::Forward,
+        })
+        .collect();
+    let endpoints = edge_endpoint_nodes(&node_layouts, &subgraphs);
+    assign_edge_routes(&diagram.direction, &endpoints, &mut edges);
+    let (mut width, mut height) = base_extents(&node_layouts, &subgraphs);
+    width = width.max(td_labels_right(&node_layouts, &diagram.edges));
+    for edge in &diagram.edges {
+        if edge.from == edge.to
+            && let Some(nl) = node_layouts.iter().find(|node| node.id == edge.from)
+        {
+            let label_w = edge
+                .label
+                .as_ref()
+                .map(|label| display_width(label))
+                .unwrap_or(0);
+            width = width.max(nl.x + nl.width + 2 + label_w);
+            height = height.max(nl.y + nl.height + 1);
+        }
+    }
+    let max_right = node_layouts
+        .iter()
+        .map(|node| node.x + node.width)
+        .max()
+        .unwrap_or(0);
+    let has_cross_rank_fan_in = diagram.edges.iter().any(|edge| {
+        if edge.from == edge.to {
+            return false;
+        }
+        let parents: Vec<&NodeLayout> = diagram
+            .edges
+            .iter()
+            .filter(|other| other.to == edge.to && other.from != other.to)
+            .filter_map(|other| node_layouts.iter().find(|node| node.id == other.from))
+            .collect();
+        parents.len() > 1 && !parents.windows(2).all(|window| window[0].y == window[1].y)
+    });
+    if has_cross_rank_fan_in {
+        width = width.max(max_right + 2);
+    }
+    reserve_back_edge_space(&diagram.direction, &edges, &mut width, &mut height);
+    let mut layout = GraphLayout {
+        nodes: node_layouts,
+        edges,
+        subgraphs,
+        width,
+        height,
+        direction: diagram.direction.clone(),
+    };
+    reserve_subgraph_entry_space(&mut layout);
+    layout
+}
+
+struct SubgraphBand {
+    sg_index: usize,
+    min_rank: usize,
+    max_rank: usize,
+    width: usize,
+    x: usize,
+}
+
+fn band_width_for_subgraph(
+    diagram: &GraphDiagram,
+    sg: &Subgraph,
+    ranks: &HashMap<String, usize>,
+    ranks_nodes: &[Vec<&NodeDecl>],
+    node_gap: usize,
+) -> usize {
+    let mut width = display_width(&sg.label) + SUBGRAPH_TITLE_DECOR;
+    if let (Some(min_rank), Some(max_rank)) = (
+        sg.node_ids
+            .iter()
+            .filter_map(|id| ranks.get(id).copied())
+            .min(),
+        sg.node_ids
+            .iter()
+            .filter_map(|id| ranks.get(id).copied())
+            .max(),
+    ) {
+        for rank_nodes in ranks_nodes.iter().take(max_rank + 1).skip(min_rank) {
+            let footprints: Vec<usize> = rank_nodes
+                .iter()
+                .filter(|node| sg.node_ids.iter().any(|id| id == &node.id))
+                .map(|node| {
+                    box_width(&node.label, node.shape)
+                        .max(td_label_width(&node.id, &diagram.edges) + 2)
+                })
+                .collect();
+            if footprints.is_empty() {
+                continue;
+            }
+            let content =
+                footprints.iter().sum::<usize>() + footprints.len().saturating_sub(1) * node_gap;
+            width = width.max(content + SUBGRAPH_PAD_LEFT + SUBGRAPH_PAD_RIGHT);
+        }
+    }
+    width
+}
+
+fn pack_subgraph_bands(
+    diagram: &GraphDiagram,
+    ranks: &HashMap<String, usize>,
+    ranks_nodes: &[Vec<&NodeDecl>],
+    node_gap: usize,
+) -> Vec<SubgraphBand> {
+    let mut bands: Vec<SubgraphBand> = diagram
+        .subgraphs
+        .iter()
+        .enumerate()
+        .filter_map(|(sg_index, sg)| {
+            let member_ranks: Vec<usize> = sg
+                .node_ids
+                .iter()
+                .filter_map(|id| ranks.get(id).copied())
+                .collect();
+            let min_rank = *member_ranks.iter().min()?;
+            let max_rank = *member_ranks.iter().max()?;
+            Some(SubgraphBand {
+                sg_index,
+                min_rank,
+                max_rank,
+                width: band_width_for_subgraph(diagram, sg, ranks, ranks_nodes, node_gap),
+                x: 0,
+            })
+        })
+        .collect();
+
+    let mut col_spans: Vec<Vec<(usize, usize)>> = Vec::new();
+    let mut col_of = vec![0; bands.len()];
+    for (index, band) in bands.iter().enumerate() {
+        let col = col_spans.iter().position(|spans| {
+            spans
+                .iter()
+                .all(|&(min, max)| band.max_rank < min || band.min_rank > max)
+        });
+        let col = if let Some(col) = col {
+            col_spans[col].push((band.min_rank, band.max_rank));
+            col
+        } else {
+            col_spans.push(vec![(band.min_rank, band.max_rank)]);
+            col_spans.len() - 1
+        };
+        col_of[index] = col;
+    }
+
+    let col_count = col_spans.len();
+    let mut col_widths = vec![0; col_count];
+    for (index, band) in bands.iter().enumerate() {
+        col_widths[col_of[index]] = col_widths[col_of[index]].max(band.width);
+    }
+    let mut col_x = vec![0; col_count];
+    let mut x = 0;
+    for col in 0..col_count {
+        col_x[col] = x;
+        x += col_widths[col] + SUBGRAPH_GAP;
+    }
+    for (index, band) in bands.iter_mut().enumerate() {
+        band.x = col_x[col_of[index]];
+        band.width = col_widths[col_of[index]];
+    }
+    bands
+}
+
+fn place_rank_nodes(
+    nodes: &mut [NodeLayout],
+    decls: &[&NodeDecl],
+    start_x: usize,
+    node_gap: usize,
+    edges: &[Edge],
+) {
+    let mut x = start_x;
+    for decl in decls {
+        let footprint = box_width(&decl.label, decl.shape).max(td_label_width(&decl.id, edges) + 2);
+        if let Some(node) = nodes.iter_mut().find(|node| node.id == decl.id) {
+            node.x = x + footprint / 2 - node.width / 2;
+            node.center_x = node.x + node.width / 2;
+        }
+        x += footprint + node_gap;
+    }
+}
+
+fn apply_td_bands(
+    diagram: &GraphDiagram,
+    ranks: &HashMap<String, usize>,
+    ranks_nodes: &[Vec<&NodeDecl>],
+    nodes: &mut [NodeLayout],
+    node_to_subgraph: &HashMap<&str, usize>,
+    node_gap: usize,
+) -> Vec<SubgraphLayout> {
+    let bands = pack_subgraph_bands(diagram, ranks, ranks_nodes, node_gap);
+    let pack_width = bands
+        .iter()
+        .map(|band| band.x + band.width)
+        .max()
+        .unwrap_or(0);
+
+    for (rank, rank_nodes) in ranks_nodes.iter().enumerate() {
+        for band in &bands {
+            if rank < band.min_rank || rank > band.max_rank {
+                continue;
+            }
+            let sg = &diagram.subgraphs[band.sg_index];
+            let siblings: Vec<&NodeDecl> = rank_nodes
+                .iter()
+                .copied()
+                .filter(|node| sg.node_ids.iter().any(|id| id == &node.id))
+                .collect();
+            if siblings.is_empty() {
+                continue;
+            }
+            let total: usize = siblings
+                .iter()
+                .map(|node| {
+                    box_width(&node.label, node.shape)
+                        .max(td_label_width(&node.id, &diagram.edges) + 2)
+                })
+                .sum::<usize>()
+                + siblings.len().saturating_sub(1) * node_gap;
+            let inner = band
+                .width
+                .saturating_sub(SUBGRAPH_PAD_LEFT + SUBGRAPH_PAD_RIGHT);
+            let start = band.x + SUBGRAPH_PAD_LEFT + inner.saturating_sub(total) / 2;
+            place_rank_nodes(nodes, &siblings, start, node_gap, &diagram.edges);
+        }
+
+        let outers: Vec<&NodeDecl> = rank_nodes
+            .iter()
+            .copied()
+            .filter(|node| !node_to_subgraph.contains_key(node.id.as_str()))
+            .collect();
+        if outers.is_empty() {
+            continue;
+        }
+        let covering: Vec<&SubgraphBand> = bands
+            .iter()
+            .filter(|band| rank >= band.min_rank && rank <= band.max_rank)
+            .collect();
+        let start = if covering.is_empty() {
+            let total: usize = outers
+                .iter()
+                .map(|node| {
+                    box_width(&node.label, node.shape)
+                        .max(td_label_width(&node.id, &diagram.edges) + 2)
+                })
+                .sum::<usize>()
+                + outers.len().saturating_sub(1) * node_gap;
+            pack_width.saturating_sub(total) / 2
+        } else {
+            covering
+                .iter()
+                .map(|band| band.x + band.width)
+                .max()
+                .unwrap_or(0)
+                + SUBGRAPH_GAP
+        };
+        place_rank_nodes(nodes, &outers, start, node_gap, &diagram.edges);
+    }
+
+    bands
+        .iter()
+        .filter_map(|band| {
+            let sg = &diagram.subgraphs[band.sg_index];
+            let members: Vec<&NodeLayout> = nodes
+                .iter()
+                .filter(|node| sg.node_ids.iter().any(|id| id == &node.id))
+                .collect();
+            if members.is_empty() {
+                return None;
+            }
+            let min_y = members.iter().map(|node| node.y).min().unwrap();
+            let max_bottom = members
+                .iter()
+                .map(|node| node.y + node.height)
+                .max()
+                .unwrap();
+            let y = min_y.saturating_sub(SUBGRAPH_PAD_TOP);
+            Some(SubgraphLayout {
+                id: sg.id.clone(),
+                label: sg.label.clone(),
+                x: band.x,
+                y,
+                width: band.width,
+                height: max_bottom + SUBGRAPH_PAD_BOTTOM - y,
+            })
+        })
+        .collect()
+}
+
+fn layout_td_shared_ranks(diagram: &GraphDiagram) -> Result<GraphLayout, String> {
+    layout_td_shared_ranks_with_gap(diagram, TD_NODE_GAP)
+}
+
+fn layout_td_shared_ranks_with_gap(
+    diagram: &GraphDiagram,
+    node_gap: usize,
+) -> Result<GraphLayout, String> {
+    let ranks = ranks_with_subgraph_endpoints(diagram);
+    let max_rank = *ranks.values().max().unwrap_or(&0);
+    let node_to_subgraph = node_to_subgraph_index(diagram);
+    let mut ranks_nodes: Vec<Vec<&NodeDecl>> = vec![Vec::new(); max_rank + 1];
+    for node in &diagram.nodes {
+        ranks_nodes[ranks[&node.id]].push(node);
+    }
+    for rank_nodes in &mut ranks_nodes {
+        rank_nodes.sort_by_key(|node| {
+            node_to_subgraph
+                .get(node.id.as_str())
+                .copied()
+                .unwrap_or(usize::MAX)
+        });
+    }
+
+    let mut node_layouts = layout_td_with_gap(&ranks_nodes, &diagram.edges, node_gap);
+    apply_td_bands(
+        diagram,
+        &ranks,
+        &ranks_nodes,
+        &mut node_layouts,
+        &node_to_subgraph,
+        node_gap,
+    );
+    insert_subgraph_chrome(diagram, &mut node_layouts);
+    ensure_forward_edge_gaps(&mut node_layouts, &diagram.edges);
+    if node_layouts
+        .iter()
+        .any(|node| node_to_subgraph.contains_key(node.id.as_str()) && node.y < SUBGRAPH_PAD_TOP)
+    {
+        shift_all_nodes(&mut node_layouts, 0, SUBGRAPH_PAD_TOP);
+    }
+    let subgraphs = apply_td_bands(
+        diagram,
+        &ranks,
+        &ranks_nodes,
+        &mut node_layouts,
+        &node_to_subgraph,
+        node_gap,
+    );
+    Ok(finish_td_layout(diagram, node_layouts, subgraphs))
 }
 
 fn layout_with_subgraphs(diagram: &GraphDiagram) -> Result<GraphLayout, String> {
@@ -670,6 +1257,15 @@ pub fn compute_with_max_width(
     }
 
     if !diagram.subgraphs.is_empty() {
+        if diagram.direction == Direction::TopDown && outer_node_on_subgraph_ranks(diagram) {
+            for node_gap in (0..=TD_NODE_GAP).rev() {
+                let layout = layout_td_shared_ranks_with_gap(diagram, node_gap)?;
+                if layout.width <= max_width {
+                    return Ok(layout);
+                }
+            }
+            return Err(format!("graph diagram too wide for {max_width} columns"));
+        }
         let mut vertical = diagram.clone();
         vertical.direction = Direction::TopDown;
         let layout = layout_with_subgraphs(&vertical)?;
