@@ -1426,6 +1426,7 @@ fn layout_with_subgraphs(diagram: &GraphDiagram) -> Result<GraphLayout, String> 
     let mut sg_layouts: Vec<SubgraphLayout> = Vec::new();
     let mut x_offset: usize = 0;
     let diagram_ranks = assign_ranks(diagram);
+    let pack_lr_units = diagram.direction == Direction::LeftRight && !bare_nodes.is_empty();
 
     for (i, sg_diagram) in sg_groups.iter().enumerate() {
         if sg_diagram.nodes.is_empty() {
@@ -1460,7 +1461,7 @@ fn layout_with_subgraphs(diagram: &GraphDiagram) -> Result<GraphLayout, String> 
             Direction::LeftRight => layout_lr(&ranks_nodes, &ranks, &sg_diagram.edges),
         };
 
-        if diagram.direction == Direction::LeftRight {
+        if diagram.direction == Direction::LeftRight && !pack_lr_units {
             let external_targets: HashSet<&str> = diagram
                 .edges
                 .iter()
@@ -1489,19 +1490,22 @@ fn layout_with_subgraphs(diagram: &GraphDiagram) -> Result<GraphLayout, String> 
 
         // Apply subgraph padding
         let sg = &diagram.subgraphs[i];
+        let place_x = if pack_lr_units { 0 } else { x_offset };
         let top_padding = SUBGRAPH_PAD_TOP
-            + if diagram.edges.iter().any(|edge| {
-                node_to_subgraph.get(&edge.to) == Some(&i)
-                    && node_to_subgraph.get(&edge.from) != Some(&i)
-            }) {
+            + if !pack_lr_units
+                && diagram.edges.iter().any(|edge| {
+                    node_to_subgraph.get(&edge.to) == Some(&i)
+                        && node_to_subgraph.get(&edge.from) != Some(&i)
+                })
+            {
                 TD_RANK_SPACING
             } else {
                 0
             };
         for nl in &mut node_layouts {
-            nl.x += x_offset + SUBGRAPH_PAD_LEFT;
+            nl.x += place_x + SUBGRAPH_PAD_LEFT;
             nl.y += top_padding;
-            nl.center_x += x_offset + SUBGRAPH_PAD_LEFT;
+            nl.center_x += place_x + SUBGRAPH_PAD_LEFT;
             nl.center_y += top_padding;
         }
 
@@ -1516,7 +1520,7 @@ fn layout_with_subgraphs(diagram: &GraphDiagram) -> Result<GraphLayout, String> 
             .max()
             .unwrap_or(0);
 
-        let content_width = content_right - x_offset + SUBGRAPH_PAD_RIGHT;
+        let content_width = content_right - place_x + SUBGRAPH_PAD_RIGHT;
         let title_width = display_width(&sg.label) + SUBGRAPH_TITLE_DECOR;
         let sg_width = content_width.max(title_width);
         let bottom_padding = SUBGRAPH_PAD_BOTTOM
@@ -1529,7 +1533,11 @@ fn layout_with_subgraphs(diagram: &GraphDiagram) -> Result<GraphLayout, String> 
                 0
             };
         let sg_height = content_bottom + bottom_padding;
-        let content_offset = sg_width / 2 - content_width / 2;
+        let content_offset = if pack_lr_units {
+            0
+        } else {
+            sg_width / 2 - content_width / 2
+        };
         for node in &mut node_layouts {
             node.x += content_offset;
             node.center_x += content_offset;
@@ -1538,7 +1546,7 @@ fn layout_with_subgraphs(diagram: &GraphDiagram) -> Result<GraphLayout, String> 
         sg_layouts.push(SubgraphLayout {
             id: sg.id.clone(),
             label: sg.label.clone(),
-            x: x_offset,
+            x: place_x,
             y: 0,
             width: sg_width,
             height: sg_height,
@@ -1546,7 +1554,9 @@ fn layout_with_subgraphs(diagram: &GraphDiagram) -> Result<GraphLayout, String> 
         });
 
         all_nodes.extend(node_layouts);
-        x_offset += sg_width + SUBGRAPH_GAP;
+        if !pack_lr_units {
+            x_offset += sg_width + SUBGRAPH_GAP;
+        }
     }
 
     // Layout bare nodes
@@ -1570,12 +1580,18 @@ fn layout_with_subgraphs(diagram: &GraphDiagram) -> Result<GraphLayout, String> 
             Direction::LeftRight => layout_lr(&ranks_nodes, &ranks, &bare_diagram.edges),
         };
 
-        for nl in &mut node_layouts {
-            nl.x += x_offset;
-            nl.center_x += x_offset;
+        if !pack_lr_units {
+            for nl in &mut node_layouts {
+                nl.x += x_offset;
+                nl.center_x += x_offset;
+            }
         }
 
         all_nodes.extend(node_layouts);
+    }
+
+    if pack_lr_units {
+        pack_lr_units_along_flow(diagram, &mut all_nodes, &mut sg_layouts);
     }
 
     let mut edges: Vec<EdgeLayout> = diagram
@@ -1637,6 +1653,184 @@ fn layout_with_subgraphs(diagram: &GraphDiagram) -> Result<GraphLayout, String> 
     } else {
         clear_entry_title_collisions(&mut layout);
         Ok(layout)
+    }
+}
+
+fn pack_lr_units_along_flow(
+    diagram: &GraphDiagram,
+    nodes: &mut [NodeLayout],
+    frames: &mut [SubgraphLayout],
+) {
+    let ranks = flow_unit_ranks(diagram);
+    let member_ids = frame_member_ids(diagram);
+    let mut units: Vec<String> = frames.iter().map(|frame| frame.id.clone()).collect();
+    for node in nodes.iter() {
+        if member_ids.contains(node.id.as_str()) {
+            continue;
+        }
+        units.push(node.id.clone());
+    }
+    let max_rank = units
+        .iter()
+        .filter_map(|id| ranks.get(id).copied())
+        .max()
+        .unwrap_or(0);
+    let mut flow_at = 0usize;
+    for rank in 0..=max_rank {
+        let rank_units: Vec<String> = units
+            .iter()
+            .filter(|id| ranks.get(id.as_str()).copied() == Some(rank))
+            .cloned()
+            .collect();
+        if rank_units.is_empty() {
+            continue;
+        }
+        let mut cross_at = 0usize;
+        let mut rank_far = flow_at;
+        for unit_id in &rank_units {
+            if let Some(index) = frames.iter().position(|frame| frame.id == *unit_id) {
+                let frame = &frames[index];
+                let owned: HashSet<&str> = diagram
+                    .subgraphs
+                    .iter()
+                    .find(|sg| sg.id == *unit_id)
+                    .map(|sg| sg.node_ids.iter().map(String::as_str).collect())
+                    .unwrap_or_default();
+                let dx = flow_at as isize - frame.x as isize;
+                let dy = cross_at as isize - frame.y as isize;
+                frames[index].x = (frames[index].x as isize + dx) as usize;
+                frames[index].y = (frames[index].y as isize + dy) as usize;
+                for node in nodes.iter_mut() {
+                    if owned.contains(node.id.as_str()) {
+                        translate_nodes(std::slice::from_mut(node), dx, dy);
+                    }
+                }
+                let frame = &frames[index];
+                rank_far = rank_far.max(frame.x + frame.width);
+                cross_at = frame.y + frame.height + 1;
+            } else if let Some(node) = nodes.iter_mut().find(|node| node.id == *unit_id) {
+                let dx = flow_at as isize - node.x as isize;
+                let dy = cross_at as isize - node.y as isize;
+                translate_nodes(std::slice::from_mut(node), dx, dy);
+                rank_far = rank_far.max(node.x + node.width);
+                cross_at = node.y + node.height + LR_NODE_VERTICAL_GAP;
+            }
+        }
+        flow_at = rank_far + LR_GAP;
+    }
+    align_lr_bare_to_targets(diagram, nodes, frames);
+}
+
+fn flow_unit_ranks(diagram: &GraphDiagram) -> HashMap<String, usize> {
+    let mut owner: HashMap<&str, &str> = HashMap::new();
+    for sg in &diagram.subgraphs {
+        owner.insert(sg.id.as_str(), sg.id.as_str());
+        for id in &sg.node_ids {
+            owner.insert(id.as_str(), sg.id.as_str());
+        }
+    }
+    for node in &diagram.nodes {
+        owner.entry(node.id.as_str()).or_insert(node.id.as_str());
+    }
+    let mut unit_ids: Vec<String> = Vec::new();
+    for sg in &diagram.subgraphs {
+        unit_ids.push(sg.id.clone());
+    }
+    for node in &diagram.nodes {
+        if !diagram
+            .subgraphs
+            .iter()
+            .any(|sg| sg.node_ids.iter().any(|id| id == &node.id))
+        {
+            unit_ids.push(node.id.clone());
+        }
+    }
+    let mut contracted = GraphDiagram {
+        direction: diagram.direction.clone(),
+        nodes: unit_ids
+            .iter()
+            .map(|id| NodeDecl {
+                id: id.clone(),
+                label: id.clone(),
+                shape: NodeShape::Box,
+            })
+            .collect(),
+        edges: Vec::new(),
+        subgraphs: Vec::new(),
+    };
+    for edge in &diagram.edges {
+        let Some(from) = owner.get(edge.from.as_str()) else {
+            continue;
+        };
+        let Some(to) = owner.get(edge.to.as_str()) else {
+            continue;
+        };
+        if from == to {
+            continue;
+        }
+        contracted.edges.push(Edge {
+            from: (*from).to_string(),
+            to: (*to).to_string(),
+            edge_type: edge.edge_type,
+            label: None,
+        });
+    }
+    assign_ranks(&contracted)
+}
+
+fn frame_member_ids(diagram: &GraphDiagram) -> HashSet<&str> {
+    diagram
+        .subgraphs
+        .iter()
+        .flat_map(|sg| sg.node_ids.iter().map(String::as_str))
+        .collect()
+}
+
+fn align_lr_bare_to_targets(
+    diagram: &GraphDiagram,
+    nodes: &mut [NodeLayout],
+    frames: &mut [SubgraphLayout],
+) {
+    let members = frame_member_ids(diagram);
+    let bare_ids: Vec<String> = nodes
+        .iter()
+        .filter(|node| !members.contains(node.id.as_str()))
+        .map(|node| node.id.clone())
+        .collect();
+    for bare_id in bare_ids {
+        let targets: Vec<usize> = diagram
+            .edges
+            .iter()
+            .filter(|edge| edge.from == bare_id && edge.edge_type != EdgeType::Invisible)
+            .filter_map(|edge| {
+                if let Some(node) = nodes.iter().find(|node| node.id == edge.to) {
+                    return Some(node.center_y);
+                }
+                frames
+                    .iter()
+                    .find(|frame| frame.id == edge.to)
+                    .map(|frame| frame.y + frame.height / 2)
+            })
+            .collect();
+        let Some(&want) = targets.first() else {
+            continue;
+        };
+        let Some(bare) = nodes.iter().find(|node| node.id == bare_id) else {
+            continue;
+        };
+        let delta = want as isize - bare.center_y as isize;
+        if delta == 0 {
+            continue;
+        }
+        if (bare.y as isize + delta) < 0 {
+            let bump = -(bare.y as isize + delta);
+            translate_nodes(nodes, 0, bump);
+            for frame in frames.iter_mut() {
+                frame.y = (frame.y as isize + bump) as usize;
+            }
+        } else if let Some(bare) = nodes.iter_mut().find(|node| node.id == bare_id) {
+            translate_nodes(std::slice::from_mut(bare), 0, delta);
+        }
     }
 }
 
@@ -2309,10 +2503,12 @@ fn top_entry_centers(layout: &GraphLayout, sg: &SubgraphLayout) -> Vec<usize> {
         .filter(|node| {
             layout.edges.iter().any(|edge| {
                 edge.to_id == node.id
-                    && layout
-                        .nodes
-                        .iter()
-                        .any(|from| from.id == edge.from_id && from.y + from.height <= sg.y)
+                    && layout.nodes.iter().any(|from| {
+                        from.id == edge.from_id
+                            && from.y + from.height <= sg.y
+                            && from.x < sg.x + sg.width
+                            && from.x + from.width > sg.x
+                    })
             })
         })
         .map(|node| node.center_x)

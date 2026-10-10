@@ -51,8 +51,10 @@ fn row_with(lines: &[&str], needle: &str) -> usize {
 }
 
 fn col_with(line: &str, needle: &str) -> usize {
-    line.find(needle)
-        .unwrap_or_else(|| panic!("expected {needle:?} in {line:?}"))
+    let byte = line
+        .find(needle)
+        .unwrap_or_else(|| panic!("expected {needle:?} in {line:?}"));
+    line[..byte].chars().count()
 }
 
 #[test]
@@ -214,6 +216,29 @@ fn mermaid_doc_subgraph_direction_limitation() {
     assert_arrows_inside_frames(&lines, &output, &[sg1, sg2]);
     assert_no_edge_along_frame(&lines, &output, sg1);
     assert_no_edge_along_frame(&lines, &output, sg2);
+    assert_eq!(output, mermaid_doc_golden());
+}
+
+fn mermaid_doc_golden() -> String {
+    [
+        "                ┌─ subgraph1 ─┐",
+        "                │   ┌─────┐   │",
+        "                │   │ top │   │",
+        "                │   └──┬──┘   │",
+        "┌─────────┐     │      │      │",
+        "│ outside │───┬─┼>     ▼      │",
+        "└─────────┘   │ │ ┌────────┐  │",
+        "              │ │ │ bottom │  │",
+        "              │ │ └────────┘  │",
+        "              │ └─────────────┘",
+        "              │",
+        "              │ ┌─ subgraph2 ────────────┐",
+        "              │ │ ┌─────┐     ┌────────┐ │",
+        "              └─┼>│ top │────>│ bottom │ │",
+        "                │ └─────┘     └────────┘ │",
+        "                └────────────────────────┘",
+    ]
+    .join("\n")
 }
 
 fn assert_inherited_lr_members_packed(output: &str, frame: &str, left: &str, right: &str) {
@@ -286,7 +311,20 @@ fn is_arrow(ch: char) -> bool {
 fn is_edge(ch: char) -> bool {
     matches!(
         ch,
-        '─' | '│' | '┌' | '┐' | '└' | '┘' | '├' | '┤' | '┬' | '┴' | '┼' | '▲' | '▼' | '<' | '>'
+        '─' | '│'
+            | '┌'
+            | '┐'
+            | '└'
+            | '┘'
+            | '├'
+            | '┤'
+            | '┬'
+            | '┴'
+            | '┼'
+            | '▲'
+            | '▼'
+            | '<'
+            | '>'
     )
 }
 
@@ -372,26 +410,34 @@ fn assert_entry_from_facing_side(
     );
 }
 
-fn assert_no_edge_along_frame(
-    lines: &[&str],
-    output: &str,
-    frame: (usize, usize, usize, usize),
-) {
+fn assert_no_edge_along_frame(lines: &[&str], output: &str, frame: (usize, usize, usize, usize)) {
     let (top, bottom, left, right) = frame;
     for row in [top, bottom] {
         if left > 0 && is_edge(glyph(lines, row, left - 1).unwrap_or(' ')) {
-            panic!("edge runs along the frame border at ({row},{}):\n{output}", left - 1);
+            panic!(
+                "edge runs along the frame border at ({row},{}):\n{output}",
+                left - 1
+            );
         }
         if is_edge(glyph(lines, row, right + 1).unwrap_or(' ')) {
-            panic!("edge runs along the frame border at ({row},{}):\n{output}", right + 1);
+            panic!(
+                "edge runs along the frame border at ({row},{}):\n{output}",
+                right + 1
+            );
         }
     }
     for col in [left, right] {
         if top > 0 && is_edge(glyph(lines, top - 1, col).unwrap_or(' ')) {
-            panic!("edge runs along the frame border at ({}, {col}):\n{output}", top - 1);
+            panic!(
+                "edge runs along the frame border at ({}, {col}):\n{output}",
+                top - 1
+            );
         }
         if is_edge(glyph(lines, bottom + 1, col).unwrap_or(' ')) {
-            panic!("edge runs along the frame border at ({}, {col}):\n{output}", bottom + 1);
+            panic!(
+                "edge runs along the frame border at ({}, {col}):\n{output}",
+                bottom + 1
+            );
         }
     }
 }

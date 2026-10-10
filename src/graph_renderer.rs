@@ -129,7 +129,12 @@ fn render_lr(layout: &GraphLayout) -> String {
             let from = node_map[edge.from_id.as_str()];
             let to = node_map[edge.to_id.as_str()];
             if flow_of(layout, from, to) == Direction::LeftRight {
-                grid.set(to.center_y, to.x - 1, '>');
+                let arrow_col = if is_subgraph_entry(edge, &layout.subgraphs) {
+                    to.x + 1
+                } else {
+                    to.x - 1
+                };
+                grid.set(to.center_y, arrow_col, '>');
             }
         }
     }
@@ -1054,6 +1059,13 @@ fn lr_column_hits_foreign_side(
     })
 }
 
+fn col_is_frame_vborder(layout: &GraphLayout, col: usize) -> bool {
+    layout
+        .subgraphs
+        .iter()
+        .any(|sg| col == sg.x || col + 1 == sg.x + sg.width)
+}
+
 fn lr_vertical_hits_foreign_frame(
     layout: &GraphLayout,
     col: usize,
@@ -1536,7 +1548,13 @@ fn draw_lr_edge(
     debug_assert!(!is_back_edge(&flow_of(layout, from, to), from, to));
 
     let from_right = from.x + from.width;
-    let to_left = to.x;
+    let into_frame = layout.subgraphs.iter().any(|sg| sg.id == to.id);
+    let to_left = if into_frame { to.x + 2 } else { to.x };
+    let arrow_col = if into_frame {
+        to.x + 1
+    } else {
+        to.x.saturating_sub(1)
+    };
     let horiz = lr_horizontal_connector(edge.edge_type);
 
     if from.center_y == to.center_y {
@@ -1546,7 +1564,7 @@ fn draw_lr_edge(
             set_lr_cell(grid, layout, row, col, horiz);
         }
         if has_arrow_head(edge.edge_type) {
-            grid.set(row, to_left - 1, '>');
+            grid.set(row, arrow_col, '>');
         }
         let (start, end) = if lr_label_uses_source(layout, edge) {
             (
@@ -1616,6 +1634,7 @@ fn draw_lr_edge(
         if crosses_frame && to_left >= from_right + 2 {
             let corner_col = to_left - 2;
             if corner_col >= from_right
+                && !col_is_frame_vborder(layout, corner_col)
                 && !route_crosses_node(
                     layout,
                     corner_col,
@@ -1637,9 +1656,23 @@ fn draw_lr_edge(
             }
         }
         while mid_col > from_right
-            && lr_column_hits_foreign_side(layout, mid_col, span_top, span_bottom, from, to)
+            && (col_is_frame_vborder(layout, mid_col)
+                || lr_column_hits_foreign_side(layout, mid_col, span_top, span_bottom, from, to))
         {
             mid_col -= 1;
+        }
+        let entry_left = enclosing_subgraph(layout, to)
+            .map(|index| layout.subgraphs[index].x)
+            .or_else(|| into_frame.then_some(to.x));
+        if let Some(frame_left) = entry_left
+            && mid_col >= frame_left
+            && frame_left > from_right
+        {
+            let mid = from_right + (frame_left - from_right) / 2;
+            mid_col = mid.min(frame_left.saturating_sub(1));
+            if mid_col + 1 >= frame_left && mid_col > from_right {
+                mid_col -= 1;
+            }
         }
         let vert = td_vertical_connector(edge.edge_type);
 
@@ -1665,7 +1698,7 @@ fn draw_lr_edge(
             set_lr_cell(grid, layout, to.center_y, col, horiz);
         }
         if has_arrow_head(edge.edge_type) {
-            grid.set(to.center_y, to_left - 1, '>');
+            grid.set(to.center_y, arrow_col, '>');
         }
 
         let placement = if crosses_subgraphs.is_some() || !label_uses_source {
