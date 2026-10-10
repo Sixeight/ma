@@ -597,6 +597,7 @@ fn finish_td_layout(
         direction: diagram.direction.clone(),
     };
     reserve_subgraph_entry_space(&mut layout);
+    clear_entry_title_collisions(&mut layout);
     layout
 }
 
@@ -1596,6 +1597,7 @@ fn layout_with_subgraphs(diagram: &GraphDiagram) -> Result<GraphLayout, String> 
     {
         stack_subgraphs(diagram, layout, usize::MAX)
     } else {
+        clear_entry_title_collisions(&mut layout);
         Ok(layout)
     }
 }
@@ -1941,6 +1943,7 @@ fn stack_subgraphs(
     layout.width = width;
     layout.height = height;
     reserve_subgraph_entry_space(&mut layout);
+    clear_entry_title_collisions(&mut layout);
     let (width, height) = base_extents(&layout.nodes, &layout.subgraphs);
     layout.width = layout.width.max(width);
     layout.height = layout.height.max(height);
@@ -2245,6 +2248,62 @@ pub(crate) fn subgraph_title_col(sg: &SubgraphLayout) -> usize {
 
 pub(crate) fn subgraph_title_reserved_end(sg: &SubgraphLayout) -> usize {
     subgraph_title_col(sg) + display_width(&sg.label) + 2
+}
+
+fn node_in_subgraph(node: &NodeLayout, sg: &SubgraphLayout) -> bool {
+    node.x >= sg.x
+        && node.x + node.width <= sg.x + sg.width
+        && node.y >= sg.y
+        && node.y + node.height <= sg.y + sg.height
+}
+
+fn top_entry_centers(layout: &GraphLayout, sg: &SubgraphLayout) -> Vec<usize> {
+    layout
+        .nodes
+        .iter()
+        .filter(|node| node_in_subgraph(node, sg))
+        .filter(|node| {
+            layout.edges.iter().any(|edge| {
+                edge.to_id == node.id
+                    && layout
+                        .nodes
+                        .iter()
+                        .any(|from| from.id == edge.from_id && from.y + from.height <= sg.y)
+            })
+        })
+        .map(|node| node.center_x)
+        .collect()
+}
+
+fn clear_entry_title_collisions(layout: &mut GraphLayout) {
+    let mut order: Vec<usize> = (0..layout.subgraphs.len()).collect();
+    order.sort_by_key(|&i| (layout.subgraphs[i].x, layout.subgraphs[i].y));
+    for i in order {
+        let reserved_end = subgraph_title_reserved_end(&layout.subgraphs[i]);
+        let entry_centers = top_entry_centers(layout, &layout.subgraphs[i]);
+        let Some(&leftmost) = entry_centers.iter().min() else {
+            continue;
+        };
+        let shift = reserved_end.saturating_sub(leftmost);
+        if shift == 0 {
+            continue;
+        }
+        let sg_x = layout.subgraphs[i].x;
+        for node in &mut layout.nodes {
+            if node.x >= sg_x {
+                node.x += shift;
+                node.center_x += shift;
+            }
+        }
+        for (j, other) in layout.subgraphs.iter_mut().enumerate() {
+            if j == i {
+                other.width += shift;
+            } else if other.x >= sg_x {
+                other.x += shift;
+            }
+        }
+        layout.width += shift;
+    }
 }
 
 fn compute_subgraph_layouts(
@@ -3042,8 +3101,13 @@ fn side_inset(side: Side, against_child: bool, crosses: bool, exit_rows: usize) 
         Side::Bottom => SUBGRAPH_PAD_BOTTOM,
     };
     let inset = pad + exit_rows;
-    if against_child || crosses {
+    let inset = if against_child || crosses {
         inset.max(MIN_FRAME_SEPARATION)
+    } else {
+        inset
+    };
+    if side == Side::Top && crosses && !against_child {
+        inset.max(SUBGRAPH_PAD_TOP + 1)
     } else {
         inset
     }
