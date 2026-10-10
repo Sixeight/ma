@@ -1390,9 +1390,9 @@ fn assert_sibling_frames(lines: &[&str], output: &str, left: &str, right: &str) 
     } else {
         l_top.saturating_sub(r_bottom)
     };
-    assert!(
-        gap >= 2,
-        "{left} and {right} must be separated by one empty cell:\n{output}"
+    assert_eq!(
+        gap, 2,
+        "{left} and {right} must be separated by exactly one empty cell:\n{output}"
     );
 }
 
