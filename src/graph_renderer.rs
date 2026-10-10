@@ -641,7 +641,6 @@ fn draw_td_single_edge_route(
     );
 
     if from_cx == to_cx && from_col_clear {
-        // Straight down
         for row in route_start..to_above {
             set_td_vertical(grid, layout, row, from_cx, vert);
         }
@@ -1477,11 +1476,11 @@ fn draw_lr_edge(
         }
         let (start, end) = if lr_label_uses_source(layout, edge) {
             (
-                lr_rank_gutter(layout, from),
+                lr_rank_gutter(layout, from).saturating_add(1),
                 lr_next_rank_x(layout, from, to),
             )
         } else {
-            (lr_label_start(layout, to), to_left)
+            (lr_label_start(layout, to).max(from_right + 1), to_left)
         };
         Some((row, start, end))
     } else {
@@ -1581,10 +1580,16 @@ fn draw_lr_edge(
         }
 
         let placement = if crosses_subgraphs.is_some() || !label_uses_source {
-            let label_start = lr_label_start(layout, to).max(mid_col + 1);
+            let label_start = lr_label_start(layout, to)
+                .max(mid_col + 1)
+                .max(from_right + 1);
             (to.center_y, label_start, to_left)
         } else {
-            (from.center_y, lr_rank_gutter(layout, from), mid_col)
+            (
+                from.center_y,
+                lr_rank_gutter(layout, from).saturating_add(1),
+                mid_col,
+            )
         };
         (placement.2 > placement.1).then_some(placement)
     }

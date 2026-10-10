@@ -141,6 +141,82 @@ fn case_a_start_decision_processing_merge_end_vertical_flow() {
     }
 }
 
+fn node_box_left(lines: &[&str], needle: &str) -> usize {
+    let row = row_with(lines, needle);
+    let text_col = char_pos(lines[row], needle);
+    let chars: Vec<char> = lines[row].chars().collect();
+    (0..text_col)
+        .rev()
+        .find(|&col| chars[col] == '│')
+        .unwrap_or_else(|| panic!("box left of {needle}:\n{}", lines.join("\n")))
+}
+
+fn assert_label_off_horizontal(output: &str, label: &str) {
+    let lines: Vec<&str> = output.lines().collect();
+    let row = row_with(&lines, label);
+    let start = char_pos(lines[row], label);
+    let end = start + label.chars().count();
+    let chars: Vec<char> = lines[row].chars().collect();
+    let left = start.checked_sub(1).and_then(|col| chars.get(col).copied());
+    let right = chars.get(end).copied();
+    assert!(
+        !matches!(left, Some('─' | '╌')),
+        "{label} must not sit on a horizontal segment, left {left:?}:\n{output}"
+    );
+    assert!(
+        !matches!(right, Some('─' | '╌')),
+        "{label} must not sit on a horizontal segment, right {right:?}:\n{output}"
+    );
+}
+
+fn assert_arrowheads_off_border_rows(lines: &[&str], output: &str) {
+    let mut border_rows = std::collections::HashSet::new();
+    for title in [
+        "Processing",
+        "Process",
+        "Group",
+        "Leftish",
+        "Outer",
+        "Inner",
+    ] {
+        if lines.iter().any(|line| line.contains(title)) {
+            let (top, bottom, _, _) = subgraph_frame(lines, title);
+            border_rows.insert(top);
+            border_rows.insert(bottom);
+        }
+    }
+    for row in border_rows {
+        let line = lines[row];
+        assert!(
+            !line.contains('▼') && !line.contains('▲'),
+            "arrowhead must not sit on a frame border or title row {row}: {line:?}\n{output}"
+        );
+    }
+}
+
+#[test]
+fn case_a_entry_stems_go_straight_down() {
+    let output = render(CASE_A).unwrap();
+    let lines: Vec<&str> = output.lines().collect();
+
+    assert_title_at_home(&lines, "Processing");
+    assert_entries_cross_after_title(&lines, "Processing");
+    for step in ["Step 1", "Step 2", "Step 3"] {
+        assert_stem_misses_title(&lines, "Processing", step);
+    }
+    for label in ["Yes", "No", "Maybe"] {
+        assert_label_off_horizontal(&output, label);
+    }
+    assert_arrowheads_off_border_rows(&lines, &output);
+
+    let gap12 = node_box_left(&lines, "Step 2") - node_box_left(&lines, "Step 1");
+    let gap23 = node_box_left(&lines, "Step 3") - node_box_left(&lines, "Step 2");
+    assert_eq!(
+        gap12, gap23,
+        "inner boxes must stay evenly spaced:\n{output}"
+    );
+}
+
 #[test]
 fn case_b_subgraph_to_external_node_forward_edge() {
     let output = render(CASE_B).unwrap();
@@ -713,6 +789,64 @@ fn outer_node_ranks_between_lr_subgraph_members() {
     assert_no_box_overlap(&output);
 }
 
+fn assert_label_spaced_from_boxes(output: &str, label: &str) {
+    let lines: Vec<&str> = output.lines().collect();
+    let row = row_with(&lines, label);
+    let start = char_pos(lines[row], label);
+    let end = start + label.chars().count();
+    let chars: Vec<char> = lines[row].chars().collect();
+    let left = start.checked_sub(1).and_then(|col| chars.get(col).copied());
+    let right = chars.get(end).copied();
+    assert!(
+        left.is_none_or(|ch| ch == ' ' || ch == '─' || ch == '╌'),
+        "{label} must sit on its edge with a space from boxes, left {left:?}:\n{output}"
+    );
+    assert!(
+        right.is_none_or(|ch| {
+            ch == ' ' || ch == '─' || ch == '╌' || ch == '┐' || ch == '┘' || ch == '│'
+        }),
+        "{label} must sit on its edge with a space from boxes, right {right:?}:\n{output}"
+    );
+    if left == Some('─') || left == Some('╌') {
+        let before = start.checked_sub(2).and_then(|col| chars.get(col).copied());
+        assert!(
+            before != Some('┐') && before != Some('┌'),
+            "{label} must not glue to a box corner:\n{output}"
+        );
+    }
+}
+
+#[test]
+fn lr_interleave_labels_sit_on_the_edge_with_space() {
+    let output = render(CASE_LR_INTERLEAVE).unwrap();
+    assert!(
+        !output.contains("┐go") && !output.contains("┌─────┐go"),
+        "go must not glue to the InA box:\n{output}"
+    );
+    assert!(
+        !output.contains("┐back") && !output.contains("┌──────┐back"),
+        "back must not glue to the OutX box:\n{output}"
+    );
+    assert_label_on_lr_edge(&output, "go", "InA", "OutX");
+    assert_label_on_lr_edge(&output, "back", "OutX", "InB");
+    assert_label_spaced_from_boxes(&output, "go");
+    assert_label_spaced_from_boxes(&output, "back");
+}
+
+#[test]
+fn lr_interleave_outx_has_no_extra_rows() {
+    let output = render(CASE_LR_INTERLEAVE).unwrap();
+    let lines: Vec<&str> = output.lines().collect();
+    let (_, bottom_row, _, _) = subgraph_frame(&lines, "Group");
+    let x_row = row_with(&lines, "OutX");
+    let x_top = x_row - 1;
+    assert_eq!(
+        x_top,
+        bottom_row + 1,
+        "OutX must sit one row below the frame, no extra empty rows:\n{output}"
+    );
+}
+
 #[test]
 fn outer_node_shares_a_column_with_an_inner_node() {
     let output = render(CASE_LR_SHARE_COL).unwrap();
@@ -838,12 +972,16 @@ fn assert_nested_frames(lines: &[&str], output: &str) {
         "Outer title must not sit on the Inner title row:\n{output}"
     );
 
+    assert_eq!(
+        inner_top,
+        outer_top + 1,
+        "Inner top must sit exactly one cell below Outer:\n{output}"
+    );
     assert!(
-        inner_top >= outer_top + 2
-            && inner_bottom + 2 <= outer_bottom
+        inner_bottom < outer_bottom
             && inner_left >= outer_left + 2
             && inner_right + 2 <= outer_right,
-        "Inner frame must sit fully inside Outer with at least one cell of padding:\n{output}"
+        "Inner frame must sit fully inside Outer with side padding:\n{output}"
     );
 
     let outer_border = perimeter(outer_top, outer_bottom, outer_left, outer_right);
@@ -983,6 +1121,7 @@ fn nested_td_inner_frame_sits_inside_outer() {
     let lines: Vec<&str> = output.lines().collect();
 
     assert_nested_frames(&lines, &output);
+    assert_arrowheads_off_border_rows(&lines, &output);
     assert_td_nested_crossings(&lines, &output);
     assert_label_on_edge(&output, "enter", "Start", "InB");
     assert_label_on_edge(&output, "leave", "InB", "OutC");
@@ -1003,6 +1142,13 @@ fn nested_lr_inner_frame_sits_inside_outer() {
     let lines: Vec<&str> = output.lines().collect();
 
     assert_nested_frames(&lines, &output);
+    let (_, outer_bottom, _, _) = title_frame(&lines, "Outer");
+    let (_, inner_bottom, _, _) = title_frame(&lines, "Inner");
+    assert_eq!(
+        inner_bottom + 1,
+        outer_bottom,
+        "LR Inner bottom must sit exactly one cell above Outer:\n{output}"
+    );
     assert_lr_nested_crossings(&lines, &output);
     assert_label_on_lr_edge(&output, "enter", "Start", "InB");
     assert_label_on_lr_edge(&output, "leave", "InB", "OutC");

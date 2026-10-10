@@ -1074,7 +1074,6 @@ fn apply_lr_bands(
                     .map(|band| band.y + band.height)
                     .max()
                     .unwrap_or(0)
-                    + SUBGRAPH_GAP
             };
             place_rank_nodes_y(nodes, &outers, start);
         }
@@ -1313,7 +1312,6 @@ fn layout_lr_shared_ranks_with_gap(
         true,
     );
     insert_lr_subgraph_chrome(diagram, &mut node_layouts);
-    ensure_forward_edge_gaps(&mut node_layouts, &diagram.edges);
     ensure_lr_forward_edge_gaps(&mut node_layouts, &diagram.edges);
     if node_layouts
         .iter()
@@ -2240,7 +2238,7 @@ const SUBGRAPH_PAD_LEFT: usize = 2;
 const SUBGRAPH_PAD_RIGHT: usize = 2;
 const SUBGRAPH_PAD_TOP: usize = 1;
 const SUBGRAPH_PAD_BOTTOM: usize = 1;
-const MIN_FRAME_SEPARATION: usize = SUBGRAPH_PAD_TOP + 1;
+const MIN_FRAME_SEPARATION: usize = SUBGRAPH_PAD_TOP;
 const SUBGRAPH_TITLE_DECOR: usize = 6;
 const SUBGRAPH_TITLE_TEXT_OFFSET: usize = 3;
 
@@ -3103,8 +3101,13 @@ fn side_inset(side: Side, against_child: bool, crosses: bool, exit_rows: usize) 
         Side::Bottom => SUBGRAPH_PAD_BOTTOM,
     };
     let inset = pad + exit_rows;
-    if against_child || crosses {
+    let inset = if against_child || crosses {
         inset.max(MIN_FRAME_SEPARATION)
+    } else {
+        inset
+    };
+    if side == Side::Top && crosses && !against_child {
+        inset.max(SUBGRAPH_PAD_TOP + 1)
     } else {
         inset
     }
