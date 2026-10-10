@@ -500,8 +500,8 @@ fn ensure_forward_edge_gaps(nodes: &mut [NodeLayout], edges: &[Edge]) {
                 continue;
             }
             let label_rows = edge.label.as_deref().map(line_count).unwrap_or(0);
-            let turn_row = usize::from(from.center_x != to.center_x);
-            let need = from.y + from.height + 1 + label_rows + turn_row;
+            let jog_rows = if from.center_x == to.center_x { 0 } else { 2 };
+            let need = from.y + from.height + 1 + label_rows + jog_rows;
             if to.y < need {
                 shift_nodes_from(nodes, to.y, need - to.y);
                 inserted = true;

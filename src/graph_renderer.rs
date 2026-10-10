@@ -571,6 +571,24 @@ fn set_td_vertical(grid: &mut Grid, layout: &GraphLayout, row: usize, col: usize
     }
 }
 
+fn horizontal_crosses_subgraph_side(
+    layout: &GraphLayout,
+    row: usize,
+    from_col: usize,
+    to_col: usize,
+) -> bool {
+    let lo = from_col.min(to_col);
+    let hi = from_col.max(to_col);
+    layout.subgraphs.iter().any(|sg| {
+        let left = sg.x;
+        let right = sg.x + sg.width - 1;
+        row > sg.y
+            && row + 1 < sg.y + sg.height
+            && lo < hi
+            && ((lo < left && hi > left) || (lo < right && hi > right))
+    })
+}
+
 fn on_subgraph_side(layout: &GraphLayout, row: usize, col: usize) -> bool {
     layout.subgraphs.iter().any(|sg| {
         row > sg.y && row + 1 < sg.y + sg.height && (col == sg.x || col + 1 == sg.x + sg.width)
@@ -680,21 +698,31 @@ fn draw_td_single_edge_route(
             set_td_vertical(grid, layout, row, from_cx, vert);
         }
     } else if from_col_clear && to_above > route_start {
-        // Source column is clear: route down at from_cx, turn at to_above row.
-        // The turn shares the to_above row with the arrow head.
-        for row in route_start..to_above {
+        let turn_row = if to_above > route_start + 1
+            && horizontal_crosses_subgraph_side(layout, to_above, from_cx, to_cx)
+        {
+            to_above - 1
+        } else {
+            to_above
+        };
+        for row in route_start..turn_row {
             set_td_vertical(grid, layout, row, from_cx, vert);
         }
-        // Draw horizontal + corner at to_above (▼ overwrites to_cx later)
         if from_cx < to_cx {
-            grid.set_merged(to_above, from_cx, '└', merge_box_drawing);
+            grid.set_merged(turn_row, from_cx, '└', merge_box_drawing);
             for col in (from_cx + 1)..to_cx {
-                set_td_horizontal(grid, layout, to_above, col, '─');
+                set_td_horizontal(grid, layout, turn_row, col, '─');
+            }
+            if turn_row < to_above {
+                grid.set_merged(turn_row, to_cx, '┐', merge_box_drawing);
             }
         } else {
-            grid.set_merged(to_above, from_cx, '┘', merge_box_drawing);
+            grid.set_merged(turn_row, from_cx, '┘', merge_box_drawing);
             for col in (to_cx + 1)..from_cx {
-                set_td_horizontal(grid, layout, to_above, col, '─');
+                set_td_horizontal(grid, layout, turn_row, col, '─');
+            }
+            if turn_row < to_above {
+                grid.set_merged(turn_row, to_cx, '┌', merge_box_drawing);
             }
         }
     } else if !from_col_clear && to_above > route_start {
@@ -896,7 +924,21 @@ fn draw_td_edge(
             set_td_horizontal(grid, layout, from_below, col, '─');
         }
         grid.set_merged(from_below, max_cx, '┐', merge_box_drawing);
-        grid.set(from_below, from_cx, '┴');
+        let has_left = min_cx < from_cx;
+        let has_right = max_cx > from_cx;
+        let has_down = forward_children
+            .iter()
+            .any(|child| child.center_x == from_cx);
+        let junction = match (has_left, has_right, has_down) {
+            (true, true, _) => '┴',
+            (false, true, true) => '├',
+            (true, false, true) => '┤',
+            (false, true, false) => '└',
+            (true, false, false) => '┘',
+            (false, false, true) => '│',
+            (false, false, false) => '┴',
+        };
+        grid.set(from_below, from_cx, junction);
 
         for row in (from_below + 1)..to_above {
             set_td_vertical(grid, layout, row, to_cx, td_vertical_connector(edge_type));
