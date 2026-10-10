@@ -891,12 +891,7 @@ fn draw_td_edge(
             set_td_vertical(grid, layout, row, to_cx, td_vertical_connector(edge_type));
         }
         if let Some(label) = &edge.label {
-            let lines = split_br(label);
-            let col = to_cx.saturating_sub(multiline_width(label) / 2);
-            let top = to_above.saturating_sub(lines.len());
-            for (offset, line) in lines.iter().enumerate() {
-                grid.write_str(top + offset, col, line);
-            }
+            write_td_edge_label(grid, layout, label, to_cx, to_above);
         }
 
         if has_arrow_head(edge_type) {
@@ -995,6 +990,70 @@ fn td_rank_gutter(layout: &GraphLayout, node: &NodeLayout) -> usize {
         .map(|n| n.y + n.height)
         .max()
         .unwrap_or(node.y + node.height)
+}
+
+fn write_td_edge_label(
+    grid: &mut Grid,
+    layout: &GraphLayout,
+    label: &str,
+    center_col: usize,
+    below: usize,
+) {
+    let lines = split_br(label);
+    let col = center_col.saturating_sub(multiline_width(label) / 2);
+    let mut top = below.saturating_sub(lines.len());
+    while top > 0 && is_subgraph_border_row(layout, top) {
+        top -= 1;
+    }
+    for (offset, line) in lines.iter().enumerate() {
+        if is_subgraph_border_row(layout, top + offset) {
+            continue;
+        }
+        grid.write_str(top + offset, col, line);
+    }
+}
+
+fn node_inside_frame(node: &NodeLayout, sg: &SubgraphLayout) -> bool {
+    node.x >= sg.x
+        && node.x + node.width <= sg.x + sg.width
+        && node.y >= sg.y
+        && node.y + node.height <= sg.y + sg.height
+}
+
+fn lr_column_hits_foreign_side(
+    layout: &GraphLayout,
+    col: usize,
+    top: usize,
+    bottom: usize,
+    from: &NodeLayout,
+    to: &NodeLayout,
+) -> bool {
+    layout.subgraphs.iter().any(|sg| {
+        let to_in = node_inside_frame(to, sg);
+        if to_in {
+            return false;
+        }
+        let on_side = col == sg.x || col + 1 == sg.x + sg.width;
+        let y_hits = top < sg.y + sg.height && bottom > sg.y;
+        on_side && y_hits && !node_inside_frame(from, sg)
+    })
+}
+
+fn lr_vertical_hits_foreign_frame(
+    layout: &GraphLayout,
+    col: usize,
+    top: usize,
+    bottom: usize,
+    from: &NodeLayout,
+    to: &NodeLayout,
+) -> bool {
+    layout.subgraphs.iter().any(|sg| {
+        if node_inside_frame(from, sg) || node_inside_frame(to, sg) {
+            return false;
+        }
+        let y_hits = top < sg.y + sg.height && bottom > sg.y;
+        y_hits && col >= sg.x && col < sg.x + sg.width
+    })
 }
 
 fn enclosing_subgraph(layout: &GraphLayout, node: &NodeLayout) -> Option<usize> {
@@ -1535,6 +1594,8 @@ fn draw_lr_edge(
                         .unwrap_or(from_right + (to_left - from_right) / 2)
                 }
             });
+        let span_top = from.center_y.min(to.center_y);
+        let span_bottom = from.center_y.max(to.center_y);
         let crosses_frame =
             enclosing_subgraph(layout, from).is_some() != enclosing_subgraph(layout, to).is_some();
         if crosses_frame && to_left >= from_right + 2 {
@@ -1543,14 +1604,27 @@ fn draw_lr_edge(
                 && !route_crosses_node(
                     layout,
                     corner_col,
-                    from.center_y.min(to.center_y),
-                    from.center_y.max(to.center_y) + 1,
+                    span_top,
+                    span_bottom + 1,
                     &from.id,
                     &to.id,
+                )
+                && !lr_vertical_hits_foreign_frame(
+                    layout,
+                    corner_col,
+                    span_top,
+                    span_bottom,
+                    from,
+                    to,
                 )
             {
                 mid_col = corner_col;
             }
+        }
+        while mid_col > from_right
+            && lr_column_hits_foreign_side(layout, mid_col, span_top, span_bottom, from, to)
+        {
+            mid_col -= 1;
         }
         let vert = td_vertical_connector(edge.edge_type);
 
