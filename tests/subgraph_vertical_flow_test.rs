@@ -334,10 +334,36 @@ fn assert_no_box_overlap(output: &str) {
     }
 }
 
-fn assert_label_on_edge(lines: &[&str], label: &str, above: &str, below: &str) {
-    let label_row = row_with(lines, label);
-    let above_row = row_with(lines, above);
-    let below_row = row_with(lines, below);
+fn glyph_at(lines: &[&str], row: usize, col: usize) -> Option<char> {
+    lines.get(row).and_then(|line| line.chars().nth(col))
+}
+
+fn label_touches_edge_path(lines: &[&str], label: &str) -> bool {
+    let row = row_with(lines, label);
+    let start = char_pos(lines[row], label);
+    let width = label.chars().count();
+    (start..start + width).any(|col| {
+        [
+            (row.wrapping_sub(1), col),
+            (row + 1, col),
+            (row, col.wrapping_sub(1)),
+            (row, col + 1),
+        ]
+        .into_iter()
+        .any(|(r, c)| glyph_at(lines, r, c).is_some_and(is_line_glyph))
+    })
+}
+
+fn assert_label_on_edge(output: &str, label: &str, above: &str, below: &str) {
+    let lines: Vec<&str> = output.lines().collect();
+    assert_eq!(
+        output.matches(label).count(),
+        1,
+        "{label} must appear exactly once:\n{output}"
+    );
+    let label_row = row_with(&lines, label);
+    let above_row = row_with(&lines, above);
+    let below_row = row_with(&lines, below);
     let (start, end) = if above_row < below_row {
         (above_row, below_row)
     } else {
@@ -345,20 +371,11 @@ fn assert_label_on_edge(lines: &[&str], label: &str, above: &str, below: &str) {
     };
     assert!(
         start < label_row && label_row < end,
-        "{label} must sit on the {above}-{below} edge, row {label_row}:\n{}",
-        lines.join("\n")
+        "{label} must sit on the {above}-{below} edge, row {label_row}:\n{output}"
     );
-    let col = char_pos(lines[label_row], label) + label.chars().count() / 2;
-    let touches_line = ((start + 1)..end).any(|row| {
-        lines[row]
-            .chars()
-            .nth(col)
-            .is_some_and(|ch| is_line_glyph(ch) || ch.is_ascii_alphabetic())
-    });
     assert!(
-        touches_line,
-        "{label} must sit on a drawn edge at column {col}:\n{}",
-        lines.join("\n")
+        label_touches_edge_path(&lines, label),
+        "{label} must sit on its edge path:\n{output}"
     );
 }
 
@@ -387,8 +404,36 @@ fn outer_node_ranks_between_subgraph_members() {
         "OutX must sit beside the subgraph, not above or below it:\n{output}"
     );
 
-    assert_label_on_edge(&lines, "go", "InA", "OutX");
-    assert_label_on_edge(&lines, "back", "OutX", "InB");
+    assert_label_on_edge(&output, "go", "InA", "OutX");
+    assert_label_on_edge(&output, "back", "OutX", "InB");
+
+    let b_cx = char_pos(lines[b_row], "InB") + "InB".chars().count() / 2;
+    let arrow_row = (0..b_row)
+        .rev()
+        .find(|&row| glyph_at(&lines, row, b_cx) == Some('▼'))
+        .unwrap_or_else(|| panic!("arrow above InB:\n{output}"));
+    let inb_box_top = (0..=b_row)
+        .rev()
+        .find(|&row| glyph_at(&lines, row, char_pos(lines[b_row], "InB") - 2) == Some('┌'))
+        .unwrap_or_else(|| panic!("InB box top:\n{output}"));
+    assert_eq!(
+        arrow_row + 1,
+        inb_box_top,
+        "▼ must sit on its own row directly above InB:\n{output}"
+    );
+    let arrow_neighbors = [
+        glyph_at(&lines, arrow_row, b_cx.saturating_sub(1)),
+        glyph_at(&lines, arrow_row, b_cx + 1),
+    ];
+    assert!(
+        arrow_neighbors.iter().all(|ch| *ch != Some('─')),
+        "▼ must not share its row with the horizontal run:\n{output}"
+    );
+    let turn = glyph_at(&lines, arrow_row.saturating_sub(1), b_cx);
+    assert!(
+        matches!(turn, Some('┌' | '┐')),
+        "horizontal run must end in a corner above ▼, got {turn:?}:\n{output}"
+    );
     assert_no_box_overlap(&output);
 }
 
@@ -409,6 +454,16 @@ fn outer_node_shares_a_row_with_an_inner_node() {
 
     let a_row = row_with(&lines, "InA");
     assert!(a_row < b_row, "InA must stay above InB:\n{output}");
-    assert_label_on_edge(&lines, "side", "InA", "OutX");
+    assert_label_on_edge(&output, "side", "InA", "OutX");
+
+    let a_cx = char_pos(lines[a_row], "InA") + "InA".chars().count() / 2;
+    let stem_row = (a_row..b_row)
+        .find(|&row| glyph_at(&lines, row, a_cx) == Some('┬'))
+        .unwrap_or_else(|| panic!("InA bottom stem:\n{output}"));
+    let fork = glyph_at(&lines, stem_row + 1, a_cx);
+    assert!(
+        matches!(fork, Some('├' | '┬' | '┼')),
+        "down/right split under InA must be ├/┬/┼, got {fork:?}:\n{output}"
+    );
     assert_no_box_overlap(&output);
 }
