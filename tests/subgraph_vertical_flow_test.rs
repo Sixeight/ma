@@ -754,3 +754,266 @@ fn outer_node_shares_a_column_with_an_inner_node() {
     assert_arrowheads_isolated(&lines, &output);
     assert_no_box_overlap(&output);
 }
+
+const CASE_NESTED_TD: &str = r#"flowchart TD
+    Start -->|enter| InB
+    subgraph Outer[Outer]
+        subgraph Inner[Inner]
+            InB
+        end
+        InB -->|leave| OutC
+        OutC
+    end
+"#;
+
+const CASE_NESTED_LR: &str = r#"flowchart LR
+    Start -->|enter| InB
+    subgraph Outer[Outer]
+        subgraph Inner[Inner]
+            InB
+        end
+        InB -->|leave| OutC
+        OutC
+    end
+"#;
+
+fn title_frame(lines: &[&str], title: &str) -> (usize, usize, usize, usize) {
+    let title_row = row_with(lines, title);
+    let chars: Vec<char> = lines[title_row].chars().collect();
+    let title_chars: Vec<char> = title.chars().collect();
+    let title_at = chars
+        .windows(title_chars.len())
+        .position(|window| window == title_chars.as_slice())
+        .unwrap_or_else(|| panic!("title {title} columns:\n{}", lines.join("\n")));
+    let left = (0..=title_at)
+        .rev()
+        .find(|&col| chars[col] == '┌')
+        .unwrap_or_else(|| panic!("┌ before {title}:\n{}", lines.join("\n")));
+    let right = (title_at + title_chars.len()..chars.len())
+        .find(|&col| matches!(chars[col], '┐' | '┤'))
+        .unwrap_or_else(|| panic!("┐ after {title}:\n{}", lines.join("\n")));
+    let bottom_row = ((title_row + 1)..lines.len())
+        .find(|&row| {
+            let end: Vec<char> = lines[row].chars().collect();
+            end.get(left) == Some(&'└') && end.get(right) == Some(&'┘')
+        })
+        .unwrap_or_else(|| panic!("bottom of {title}:\n{}", lines.join("\n")));
+    (title_row, bottom_row, left, right)
+}
+
+fn assert_inside_box(
+    lines: &[&str],
+    needle: &str,
+    title_row: usize,
+    bottom_row: usize,
+    left: usize,
+    right: usize,
+) {
+    let row = row_with(lines, needle);
+    let col = node_col(lines, needle);
+    assert!(
+        row > title_row && row < bottom_row && col > left && col + needle.chars().count() <= right,
+        "{needle} must sit inside the box [{left},{right}] x [{title_row},{bottom_row}]:\n{}",
+        lines.join("\n")
+    );
+}
+
+fn assert_nested_frames(lines: &[&str], output: &str) {
+    assert_title_at_home(lines, "Outer");
+    assert_title_at_home(lines, "Inner");
+
+    let (outer_top, outer_bottom, outer_left, outer_right) = title_frame(lines, "Outer");
+    let (inner_top, inner_bottom, inner_left, inner_right) = title_frame(lines, "Inner");
+
+    assert_ne!(
+        outer_top, inner_top,
+        "each title must occupy its own row:\n{output}"
+    );
+    assert!(
+        !lines[outer_top].contains("Inner"),
+        "Inner title must not sit on the Outer title row:\n{output}"
+    );
+    assert!(
+        !lines[inner_top].contains("Outer"),
+        "Outer title must not sit on the Inner title row:\n{output}"
+    );
+
+    assert!(
+        inner_top >= outer_top + 2
+            && inner_bottom + 2 <= outer_bottom
+            && inner_left >= outer_left + 2
+            && inner_right + 2 <= outer_right,
+        "Inner frame must sit fully inside Outer with at least one cell of padding:\n{output}"
+    );
+
+    let outer_border = perimeter(outer_top, outer_bottom, outer_left, outer_right);
+    let inner_border = perimeter(inner_top, inner_bottom, inner_left, inner_right);
+    assert!(
+        outer_border.is_disjoint(&inner_border),
+        "frames must not share border cells:\n{output}"
+    );
+
+    assert_outside_subgraph_box(
+        lines,
+        "Start",
+        outer_top,
+        outer_bottom,
+        outer_left,
+        outer_right,
+    );
+    assert_inside_box(
+        lines,
+        "InB",
+        inner_top,
+        inner_bottom,
+        inner_left,
+        inner_right,
+    );
+    assert_inside_box(
+        lines,
+        "OutC",
+        outer_top,
+        outer_bottom,
+        outer_left,
+        outer_right,
+    );
+    assert_outside_subgraph_box(
+        lines,
+        "OutC",
+        inner_top,
+        inner_bottom,
+        inner_left,
+        inner_right,
+    );
+}
+
+fn perimeter(
+    title_row: usize,
+    bottom_row: usize,
+    left: usize,
+    right: usize,
+) -> std::collections::HashSet<(usize, usize)> {
+    let mut cells = std::collections::HashSet::new();
+    for col in left..=right {
+        cells.insert((title_row, col));
+        cells.insert((bottom_row, col));
+    }
+    for row in title_row..=bottom_row {
+        cells.insert((row, left));
+        cells.insert((row, right));
+    }
+    cells
+}
+
+fn horizontal_border_crossings(lines: &[&str], row: usize, left: usize, right: usize) -> usize {
+    (left + 1..right)
+        .filter(|&col| {
+            matches!(
+                glyph_at(lines, row, col),
+                Some('┼' | '┬' | '┴' | '├' | '┤' | '│' | '▼' | '┊')
+            )
+        })
+        .count()
+}
+
+fn vertical_border_crossings(lines: &[&str], col: usize, top: usize, bottom: usize) -> usize {
+    (top + 1..bottom)
+        .filter(|&row| {
+            matches!(
+                glyph_at(lines, row, col),
+                Some('┼' | '┬' | '┴' | '├' | '┤' | '─' | '>' | '╌')
+            )
+        })
+        .count()
+}
+
+fn assert_td_nested_crossings(lines: &[&str], output: &str) {
+    let (outer_top, outer_bottom, outer_left, outer_right) = title_frame(lines, "Outer");
+    let (inner_top, inner_bottom, inner_left, inner_right) = title_frame(lines, "Inner");
+    assert_eq!(
+        horizontal_border_crossings(lines, outer_top, outer_left, outer_right),
+        1,
+        "Start→InB must cross the Outer top border once:\n{output}"
+    );
+    assert_eq!(
+        horizontal_border_crossings(lines, inner_top, inner_left, inner_right),
+        1,
+        "Start→InB must cross the Inner top border once:\n{output}"
+    );
+    assert_eq!(
+        horizontal_border_crossings(lines, inner_bottom, inner_left, inner_right),
+        1,
+        "InB→OutC must cross the Inner bottom border once:\n{output}"
+    );
+    assert_eq!(
+        horizontal_border_crossings(lines, outer_bottom, outer_left, outer_right),
+        0,
+        "InB→OutC must stay inside Outer and not cross its bottom:\n{output}"
+    );
+}
+
+fn assert_lr_nested_crossings(lines: &[&str], output: &str) {
+    let (outer_top, outer_bottom, outer_left, outer_right) = title_frame(lines, "Outer");
+    let (inner_top, inner_bottom, inner_left, inner_right) = title_frame(lines, "Inner");
+    assert_eq!(
+        vertical_border_crossings(lines, outer_left, outer_top, outer_bottom),
+        1,
+        "Start→InB must cross the Outer left border once:\n{output}"
+    );
+    assert_eq!(
+        vertical_border_crossings(lines, inner_left, inner_top, inner_bottom),
+        1,
+        "Start→InB must cross the Inner left border once:\n{output}"
+    );
+    assert_eq!(
+        vertical_border_crossings(lines, inner_right, inner_top, inner_bottom),
+        1,
+        "InB→OutC must cross the Inner right border once:\n{output}"
+    );
+    assert_eq!(
+        vertical_border_crossings(lines, outer_right, outer_top, outer_bottom),
+        0,
+        "InB→OutC must stay inside Outer and not cross its right border:\n{output}"
+    );
+}
+
+#[test]
+fn nested_td_inner_frame_sits_inside_outer() {
+    let output = render(CASE_NESTED_TD).unwrap();
+    let lines: Vec<&str> = output.lines().collect();
+
+    assert_nested_frames(&lines, &output);
+    assert_td_nested_crossings(&lines, &output);
+    assert_label_on_edge(&output, "enter", "Start", "InB");
+    assert_label_on_edge(&output, "leave", "InB", "OutC");
+    assert_no_box_overlap(&output);
+
+    let start_row = row_with(&lines, "Start");
+    let inb_row = row_with(&lines, "InB");
+    let outc_row = row_with(&lines, "OutC");
+    assert!(
+        start_row < inb_row && inb_row < outc_row,
+        "Start must sit above InB, and InB above OutC:\n{output}"
+    );
+}
+
+#[test]
+fn nested_lr_inner_frame_sits_inside_outer() {
+    let output = render(CASE_NESTED_LR).unwrap();
+    let lines: Vec<&str> = output.lines().collect();
+
+    assert_nested_frames(&lines, &output);
+    assert_lr_nested_crossings(&lines, &output);
+    assert_label_on_lr_edge(&output, "enter", "Start", "InB");
+    assert_label_on_lr_edge(&output, "leave", "InB", "OutC");
+    assert_arrowheads_isolated(&lines, &output);
+    assert_no_box_overlap(&output);
+
+    let start_col = node_col(&lines, "Start");
+    let inb_col = node_col(&lines, "InB");
+    let outc_col = node_col(&lines, "OutC");
+    assert!(
+        start_col < inb_col && inb_col < outc_col,
+        "Start must sit left of InB, and InB left of OutC:\n{output}"
+    );
+}

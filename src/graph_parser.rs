@@ -7,7 +7,7 @@ use crate::graph_ast::*;
 
 pub fn parse_graph(input: &str) -> Result<GraphDiagram, String> {
     let mut input = input;
-    graph_diagram(&mut input).map_err(|_| {
+    let diagram = graph_diagram(&mut input).map_err(|_| {
         let context = input.lines().next().unwrap_or("").trim();
         let context_display = if context.len() > 40 {
             format!("{}...", &context[..40])
@@ -15,7 +15,9 @@ pub fn parse_graph(input: &str) -> Result<GraphDiagram, String> {
             context.to_string()
         };
         format!("syntax error in graph diagram: unexpected `{context_display}`")
-    })
+    })?;
+    validate_subgraph_forest(&diagram)?;
+    Ok(diagram)
 }
 
 fn graph_diagram(input: &mut &str) -> winnow::Result<GraphDiagram> {
@@ -69,33 +71,56 @@ fn collect_line(
             add_node(nodes, decl);
         }
         GraphLine::SubgraphBlock(id, label, inner_lines) => {
-            let mut sg_node_ids: Vec<String> = Vec::new();
+            let mut direct_node_ids: Vec<String> = Vec::new();
+            let child_start = subgraphs.len();
             for inner in inner_lines {
                 match &inner {
                     GraphLine::Edge(_, from_decl, to_decl) => {
-                        add_subgraph_node_id(&mut sg_node_ids, subgraphs, from_decl);
-                        add_subgraph_node_id(&mut sg_node_ids, subgraphs, to_decl);
+                        add_subgraph_node_id(&mut direct_node_ids, subgraphs, from_decl);
+                        add_subgraph_node_id(&mut direct_node_ids, subgraphs, to_decl);
                     }
                     GraphLine::Edges(items) => {
                         for (_, from_decl, to_decl) in items {
-                            add_subgraph_node_id(&mut sg_node_ids, subgraphs, from_decl);
-                            add_subgraph_node_id(&mut sg_node_ids, subgraphs, to_decl);
+                            add_subgraph_node_id(&mut direct_node_ids, subgraphs, from_decl);
+                            add_subgraph_node_id(&mut direct_node_ids, subgraphs, to_decl);
                         }
                     }
                     GraphLine::Node(decl) => {
-                        add_subgraph_node_id(&mut sg_node_ids, subgraphs, decl);
+                        add_subgraph_node_id(&mut direct_node_ids, subgraphs, decl);
                     }
                     GraphLine::SubgraphBlock(_, _, _) => {}
                 }
                 collect_line(inner, nodes, edges, subgraphs);
             }
-            subgraphs.push(Subgraph {
-                id,
-                label,
-                node_ids: sg_node_ids,
-            });
+            close_subgraph(id, label, direct_node_ids, child_start, subgraphs);
         }
     }
+}
+
+fn close_subgraph(
+    id: String,
+    label: String,
+    mut direct_node_ids: Vec<String>,
+    child_start: usize,
+    subgraphs: &mut Vec<Subgraph>,
+) {
+    let parent_index = SubgraphIndex::new(subgraphs.len());
+    for child in subgraphs.iter_mut().skip(child_start) {
+        for node_id in &child.node_ids {
+            if !direct_node_ids.contains(node_id) {
+                direct_node_ids.push(node_id.clone());
+            }
+        }
+        if child.parent.is_none() {
+            child.parent = Some(parent_index);
+        }
+    }
+    subgraphs.push(Subgraph {
+        id,
+        label,
+        node_ids: direct_node_ids,
+        parent: None,
+    });
 }
 
 fn add_subgraph_node_id(
@@ -815,6 +840,42 @@ mod tests {
         let a_nodes: Vec<_> = diagram.nodes.iter().filter(|n| n.id == "A").collect();
         assert_eq!(a_nodes.len(), 1);
         assert_eq!(a_nodes[0].label, "Start");
+    }
+
+    #[test]
+    fn parse_nested_subgraph_closes_membership() {
+        let nested = parse_graph(
+            "flowchart TD\n\
+             Start -->|enter| InB\n\
+             subgraph Outer[Outer]\n\
+                 subgraph Inner[Inner]\n\
+                     InB\n\
+                 end\n\
+                 InB -->|leave| OutC\n\
+                 OutC\n\
+             end\n",
+        )
+        .unwrap();
+
+        let inner = SubgraphIndex::new(0);
+        let outer = SubgraphIndex::new(1);
+        assert_eq!(nested.subgraphs[0].id, "Inner");
+        assert_eq!(nested.subgraphs[0].parent, Some(outer));
+        assert!(nested.subgraphs[1].node_ids.iter().any(|id| id == "InB"));
+        assert!(nested.subgraphs[1].node_ids.iter().any(|id| id == "OutC"));
+        assert_eq!(nested.subgraphs[1].id, "Outer");
+        assert_eq!(nested.subgraphs[1].parent, None);
+        assert_eq!(nested.roots(), vec![outer]);
+        assert_eq!(nested.children(outer), vec![inner]);
+        assert_eq!(nested.exclusive_members(inner), vec!["InB"]);
+        assert_eq!(nested.exclusive_members(outer), vec!["OutC"]);
+        assert_eq!(nested.innermost("Start"), None);
+        assert!(nested.is_nested());
+
+        let flat =
+            parse_graph("graph TD\n    subgraph Backend\n        A --> B\n    end\n").unwrap();
+        assert!(flat.subgraphs.iter().all(|sg| sg.parent.is_none()));
+        assert!(!flat.is_nested());
     }
 
     #[test]
