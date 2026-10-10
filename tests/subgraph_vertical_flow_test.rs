@@ -728,6 +728,74 @@ fn assert_arrowheads_isolated(lines: &[&str], output: &str) {
     }
 }
 
+fn node_box_sides(lines: &[&str], needle: &str) -> (usize, usize, usize, usize) {
+    let text_row = row_with(lines, needle);
+    let left = node_box_left(lines, needle);
+    let chars: Vec<char> = lines[text_row].chars().collect();
+    let right = ((left + 1)..chars.len())
+        .find(|&col| chars[col] == '│')
+        .unwrap_or_else(|| panic!("box right of {needle}:\n{}", lines.join("\n")));
+    (text_row - 1, text_row + 1, left, right)
+}
+
+fn assert_node_box_intact(lines: &[&str], output: &str, needle: &str) {
+    let (top, bottom, left, right) = node_box_sides(lines, needle);
+    let top_chars: Vec<char> = lines[top].chars().collect();
+    let bottom_chars: Vec<char> = lines[bottom].chars().collect();
+    assert_eq!(
+        top_chars.get(left).copied(),
+        Some('┌'),
+        "{needle} top-left must stay a box corner:\n{output}"
+    );
+    assert_eq!(
+        top_chars.get(right).copied(),
+        Some('┐'),
+        "{needle} top-right must stay a box corner:\n{output}"
+    );
+    for col in (left + 1)..right {
+        let ch = top_chars.get(col).copied();
+        assert!(
+            matches!(ch, Some('─' | '═')),
+            "{needle} top border col {col} was {ch:?}, a glyph overwrote the box:\n{output}"
+        );
+    }
+    assert_eq!(
+        bottom_chars.get(left).copied(),
+        Some('└'),
+        "{needle} bottom-left must stay a box corner:\n{output}"
+    );
+    assert_eq!(
+        bottom_chars.get(right).copied(),
+        Some('┘'),
+        "{needle} bottom-right must stay a box corner:\n{output}"
+    );
+    for col in (left + 1)..right {
+        let ch = bottom_chars.get(col).copied();
+        assert!(
+            matches!(ch, Some('─' | '═' | '┬')),
+            "{needle} bottom border col {col} was {ch:?}, a glyph overwrote the box:\n{output}"
+        );
+    }
+}
+
+fn assert_box_padded_in_frame(lines: &[&str], output: &str, needle: &str, frame: &str) {
+    let (_, _, box_left, box_right) = node_box_sides(lines, needle);
+    let (top, bottom, frame_left, frame_right) = title_frame(lines, frame);
+    let row = row_with(lines, needle);
+    assert!(
+        row > top && row < bottom,
+        "{needle} must sit inside {frame}:\n{output}"
+    );
+    assert!(
+        box_left >= frame_left + 2,
+        "{needle} needs one padding cell left of the box inside {frame} ({box_left} vs {frame_left}):\n{output}"
+    );
+    assert!(
+        box_right + 2 <= frame_right,
+        "{needle} needs one padding cell right of the box inside {frame} ({box_right} vs {frame_right}):\n{output}"
+    );
+}
+
 #[test]
 fn outer_node_ranks_between_lr_subgraph_members() {
     let output = render(CASE_LR_INTERLEAVE).unwrap();
@@ -1597,6 +1665,24 @@ fn sibling_subgraphs_inside_parent_lr() {
     assert_label_on_lr_edge(&output, "toE", "Start", "RightA");
     assert_arrowheads_isolated(&lines, &output);
     assert_no_box_overlap(&output);
+    for node in ["Start", "LeftA", "LeftB", "RightA", "RightB"] {
+        assert_node_box_intact(&lines, &output, node);
+    }
+    assert_box_padded_in_frame(&lines, &output, "LeftA", "West");
+    assert_box_padded_in_frame(&lines, &output, "RightA", "East");
+    assert_box_padded_in_frame(&lines, &output, "RightB", "East");
+
+    let right_a_row = row_with(&lines, "RightA");
+    let right_a_left = node_box_left(&lines, "RightA");
+    let arrow_col = (0..right_a_left)
+        .rev()
+        .find(|&col| glyph_at(&lines, right_a_row, col) == Some('>'))
+        .unwrap_or_else(|| panic!("arrow left of RightA:\n{output}"));
+    assert_eq!(
+        arrow_col + 1,
+        right_a_left,
+        "> must sit directly left of RightA:\n{output}"
+    );
 }
 
 #[test]
@@ -1786,4 +1872,11 @@ fn sibling_claim_first_declaration_keeps_shared_in_left() {
         right_right,
     );
     assert_no_box_overlap(&output);
+    for node in ["LeftOnly", "Shared", "RightOnly"] {
+        assert_node_box_intact(&lines, &output, node);
+    }
+    assert_box_padded_in_frame(&lines, &output, "LeftOnly", "West");
+    assert_box_padded_in_frame(&lines, &output, "Shared", "West");
+    assert_box_padded_in_frame(&lines, &output, "RightOnly", "East");
+    assert_arrowheads_isolated(&lines, &output);
 }
