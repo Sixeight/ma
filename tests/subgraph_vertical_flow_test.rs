@@ -1391,8 +1391,8 @@ fn assert_sibling_frames(lines: &[&str], output: &str, left: &str, right: &str) 
         l_top.saturating_sub(r_bottom)
     };
     assert!(
-        gap >= 1,
-        "{left} and {right} must be separated by at least one cell:\n{output}"
+        gap >= 2,
+        "{left} and {right} must be separated by one empty cell:\n{output}"
     );
 }
 
@@ -1879,4 +1879,8 @@ fn sibling_claim_first_declaration_keeps_shared_in_left() {
     assert_box_padded_in_frame(&lines, &output, "Shared", "West");
     assert_box_padded_in_frame(&lines, &output, "RightOnly", "East");
     assert_arrowheads_isolated(&lines, &output);
+    assert!(
+        !output.contains("┘┌"),
+        "West and East must not touch at a corner:\n{output}"
+    );
 }
