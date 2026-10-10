@@ -72,6 +72,7 @@ fn collect_line(
         }
         GraphLine::SubgraphBlock(id, label, inner_lines) => {
             let mut direct_node_ids: Vec<String> = Vec::new();
+            let mut direction = None;
             let child_start = subgraphs.len();
             for inner in inner_lines {
                 match &inner {
@@ -88,12 +89,21 @@ fn collect_line(
                     GraphLine::Node(decl) => {
                         add_subgraph_node_id(&mut direct_node_ids, subgraphs, decl);
                     }
+                    GraphLine::Direction(dir) => direction = Some(dir.clone()),
                     GraphLine::SubgraphBlock(_, _, _) => {}
                 }
                 collect_line(inner, nodes, edges, subgraphs);
             }
-            close_subgraph(id, label, direct_node_ids, child_start, subgraphs);
+            close_subgraph(
+                id,
+                label,
+                direct_node_ids,
+                direction,
+                child_start,
+                subgraphs,
+            );
         }
+        GraphLine::Direction(_) => {}
     }
 }
 
@@ -101,6 +111,7 @@ fn close_subgraph(
     id: String,
     label: String,
     mut direct_node_ids: Vec<String>,
+    direction: Option<Direction>,
     child_start: usize,
     subgraphs: &mut Vec<Subgraph>,
 ) {
@@ -120,6 +131,7 @@ fn close_subgraph(
         label,
         node_ids: direct_node_ids,
         parent: None,
+        direction,
     });
 }
 
@@ -153,6 +165,7 @@ enum GraphLine {
     Edges(Vec<(Edge, NodeDecl, NodeDecl)>),
     Node(NodeDecl),
     SubgraphBlock(String, String, Vec<GraphLine>),
+    Direction(Direction),
 }
 
 fn graph_line(input: &mut &str) -> winnow::Result<Option<GraphLine>> {
@@ -164,6 +177,7 @@ fn graph_line(input: &mut &str) -> winnow::Result<Option<GraphLine>> {
 
     let result = alt((
         blank_line.map(|_| None),
+        direction_statement.map(|dir| Some(GraphLine::Direction(dir))),
         directive_line.map(|_| None),
         subgraph_block.map(Some),
         edge_line.map(Some),
@@ -234,6 +248,15 @@ fn directive_line(input: &mut &str) -> winnow::Result<()> {
     let _ = take_while(0.., |c: char| c != '\n' && c != '\r').parse_next(input)?;
     opt(line_ending).parse_next(input)?;
     Ok(())
+}
+
+fn direction_statement(input: &mut &str) -> winnow::Result<Direction> {
+    "direction".parse_next(input)?;
+    space1.parse_next(input)?;
+    let dir = direction.parse_next(input)?;
+    let _ = take_while(0.., |c: char| c != '\n' && c != '\r').parse_next(input)?;
+    opt(line_ending).parse_next(input)?;
+    Ok(dir)
 }
 
 fn direction(input: &mut &str) -> winnow::Result<Direction> {
@@ -372,6 +395,7 @@ fn edge_type(input: &mut &str) -> winnow::Result<EdgeType> {
         "-.-".value(EdgeType::DottedLink),
         "==>".value(EdgeType::ThickArrow),
         "===".value(EdgeType::ThickLink),
+        "--->".value(EdgeType::Arrow),
         "-->".value(EdgeType::Arrow),
         "---".value(EdgeType::OpenLink),
     ))
@@ -1036,5 +1060,15 @@ mod tests {
         let diagram = parse_graph(input).unwrap();
         assert_eq!(diagram.nodes.len(), 2);
         assert_eq!(diagram.edges.len(), 1);
+        assert_eq!(diagram.subgraphs[0].direction, Some(Direction::LeftRight));
+    }
+
+    #[test]
+    fn parse_subgraph_direction_last_wins() {
+        let diagram = parse_graph(
+            "flowchart TD\n    subgraph Cluster\n        direction LR\n        A --> B\n        direction TB\n    end\n",
+        )
+        .unwrap();
+        assert_eq!(diagram.subgraphs[0].direction, Some(Direction::TopDown));
     }
 }
