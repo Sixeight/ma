@@ -193,6 +193,10 @@ pub fn compute(diagram: &GraphDiagram) -> Result<GraphLayout, String> {
         return Err("no nodes found".to_string());
     }
 
+    if diagram.is_nested() {
+        return layout_nested(diagram);
+    }
+
     if !diagram.subgraphs.is_empty() {
         if outer_node_on_subgraph_ranks(diagram) {
             return match diagram.direction {
@@ -833,6 +837,10 @@ fn apply_td_bands(
 }
 
 fn layout_td_shared_ranks(diagram: &GraphDiagram) -> Result<GraphLayout, String> {
+    debug_assert!(
+        !diagram.is_nested(),
+        "nested diagrams go through layout_nested"
+    );
     layout_td_shared_ranks_with_gap(diagram, TD_NODE_GAP)
 }
 
@@ -1268,6 +1276,10 @@ fn finish_lr_layout(
 }
 
 fn layout_lr_shared_ranks(diagram: &GraphDiagram) -> Result<GraphLayout, String> {
+    debug_assert!(
+        !diagram.is_nested(),
+        "nested diagrams go through layout_nested"
+    );
     layout_lr_shared_ranks_with_gap(diagram, LR_GAP)
 }
 
@@ -1327,6 +1339,10 @@ fn layout_lr_shared_ranks_with_gap(
 }
 
 fn layout_with_subgraphs(diagram: &GraphDiagram) -> Result<GraphLayout, String> {
+    debug_assert!(
+        !diagram.is_nested(),
+        "nested diagrams go through layout_nested"
+    );
     let node_to_subgraph: HashMap<String, usize> = diagram
         .subgraphs
         .iter()
@@ -1715,6 +1731,10 @@ pub fn compute_with_max_width(
         return Ok(layout);
     }
 
+    if diagram.is_nested() {
+        return layout_nested_within_width(diagram, max_width);
+    }
+
     if !diagram.subgraphs.is_empty() {
         if outer_node_on_subgraph_ranks(diagram) {
             match diagram.direction {
@@ -1815,6 +1835,10 @@ fn stack_subgraphs(
     mut layout: GraphLayout,
     max_width: usize,
 ) -> Result<GraphLayout, String> {
+    debug_assert!(
+        !diagram.is_nested(),
+        "nested diagrams go through layout_nested"
+    );
     let node_to_subgraph: HashMap<&str, usize> = diagram
         .subgraphs
         .iter()
@@ -2216,6 +2240,8 @@ const SUBGRAPH_PAD_LEFT: usize = 2;
 const SUBGRAPH_PAD_RIGHT: usize = 2;
 const SUBGRAPH_PAD_TOP: usize = 1;
 const SUBGRAPH_PAD_BOTTOM: usize = 1;
+/// `PAD_TOP` is the title row, so a nested border needs a cell of its own.
+const MIN_FRAME_SEPARATION: usize = 2;
 const SUBGRAPH_TITLE_DECOR: usize = 6;
 const SUBGRAPH_TITLE_TEXT_OFFSET: usize = 3;
 
@@ -2340,6 +2366,1214 @@ fn compute_subgraph_layouts(
     sg_layouts
 }
 
+fn layout_nested(diagram: &GraphDiagram) -> Result<GraphLayout, String> {
+    layout_nested_with_gaps(diagram, TD_NODE_GAP, LR_GAP)
+}
+
+fn layout_nested_within_width(
+    diagram: &GraphDiagram,
+    max_width: usize,
+) -> Result<GraphLayout, String> {
+    match diagram.direction {
+        Direction::TopDown => {
+            for node_gap in (0..TD_NODE_GAP).rev() {
+                let layout = layout_nested_with_gaps(diagram, node_gap, LR_GAP)?;
+                if layout.width <= max_width {
+                    return Ok(layout);
+                }
+            }
+        }
+        Direction::LeftRight => {
+            for lr_gap in (1..LR_GAP).rev() {
+                let layout = layout_nested_with_gaps(diagram, TD_NODE_GAP, lr_gap)?;
+                if layout.width <= max_width {
+                    return Ok(layout);
+                }
+            }
+        }
+    }
+    Err(format!("graph diagram too wide for {max_width} columns"))
+}
+
+fn layout_nested_with_gaps(
+    diagram: &GraphDiagram,
+    node_gap: usize,
+    lr_gap: usize,
+) -> Result<GraphLayout, String> {
+    let roots = roots_diagram(diagram);
+    let mut placed = if outer_node_on_subgraph_ranks(&roots) {
+        match diagram.direction {
+            Direction::TopDown => layout_td_shared_ranks_with_gap(&roots, node_gap)?,
+            Direction::LeftRight => layout_lr_shared_ranks_with_gap(&roots, lr_gap)?,
+        }
+    } else {
+        place_remaining_groups(diagram, node_gap, lr_gap)?
+    };
+    placed.subgraphs.clear();
+    wrap_frames_inside_out(diagram, &mut placed);
+    finish_routes(&mut placed, diagram);
+    Ok(placed)
+}
+
+fn roots_diagram(diagram: &GraphDiagram) -> GraphDiagram {
+    let subgraphs = diagram
+        .roots()
+        .into_iter()
+        .map(|index| {
+            let sg = &diagram.subgraphs[index.get()];
+            Subgraph {
+                id: sg.id.clone(),
+                label: sg.label.clone(),
+                node_ids: sg.node_ids.clone(),
+                parent: None,
+            }
+        })
+        .collect();
+    GraphDiagram {
+        direction: diagram.direction.clone(),
+        nodes: diagram.nodes.clone(),
+        edges: diagram.edges.clone(),
+        subgraphs,
+    }
+}
+
+struct PlacedGroup {
+    id: String,
+    nodes: Vec<NodeLayout>,
+}
+
+fn place_remaining_groups(
+    diagram: &GraphDiagram,
+    node_gap: usize,
+    lr_gap: usize,
+) -> Result<GraphLayout, String> {
+    let mut groups = Vec::new();
+    for root in diagram.roots() {
+        let sg = &diagram.subgraphs[root.get()];
+        let mut closure = Vec::new();
+        collect_exclusive(diagram, root, &mut closure);
+        let mut sorted_closure = closure.clone();
+        let mut closed: Vec<&str> = sg.node_ids.iter().map(String::as_str).collect();
+        sorted_closure.sort_unstable();
+        closed.sort_unstable();
+        debug_assert_eq!(sorted_closure, closed);
+        if closure.is_empty() {
+            continue;
+        }
+        let id_set: HashSet<&str> = closure.into_iter().collect();
+        let nodes: Vec<NodeDecl> = diagram
+            .nodes
+            .iter()
+            .filter(|node| id_set.contains(node.id.as_str()))
+            .cloned()
+            .collect();
+        let edges: Vec<Edge> = diagram
+            .edges
+            .iter()
+            .filter(|edge| id_set.contains(edge.from.as_str()) && id_set.contains(edge.to.as_str()))
+            .cloned()
+            .collect();
+        let mut laid = layout_members(diagram, &nodes, &edges, node_gap, lr_gap);
+        align_single_node_ranks(&mut laid, &diagram.direction);
+        groups.push(PlacedGroup {
+            id: sg.id.clone(),
+            nodes: laid,
+        });
+    }
+    for node in &diagram.nodes {
+        if diagram.innermost(&node.id).is_some() {
+            continue;
+        }
+        let laid = layout_members(diagram, std::slice::from_ref(node), &[], node_gap, lr_gap);
+        groups.push(PlacedGroup {
+            id: node.id.clone(),
+            nodes: laid,
+        });
+    }
+
+    let ranks = contracted_ranks(diagram, &groups);
+    pack_groups(diagram, &mut groups, &ranks, node_gap, lr_gap);
+    Ok(GraphLayout {
+        nodes: groups.into_iter().flat_map(|group| group.nodes).collect(),
+        edges: forward_edges(diagram),
+        subgraphs: Vec::new(),
+        width: 0,
+        height: 0,
+        direction: diagram.direction.clone(),
+    })
+}
+
+fn collect_exclusive<'a>(diagram: &'a GraphDiagram, index: SubgraphIndex, out: &mut Vec<&'a str>) {
+    out.extend(diagram.exclusive_members(index));
+    for child in diagram.children(index) {
+        collect_exclusive(diagram, child, out);
+    }
+}
+
+fn forward_edges(diagram: &GraphDiagram) -> Vec<EdgeLayout> {
+    diagram
+        .edges
+        .iter()
+        .filter(|edge| edge.edge_type != EdgeType::Invisible)
+        .map(|edge| EdgeLayout {
+            from_id: edge.from.clone(),
+            to_id: edge.to.clone(),
+            edge_type: edge.edge_type,
+            label: edge.label.clone(),
+            route: EdgeRoute::Forward,
+        })
+        .collect()
+}
+
+fn layout_members(
+    diagram: &GraphDiagram,
+    nodes: &[NodeDecl],
+    edges: &[Edge],
+    node_gap: usize,
+    lr_gap: usize,
+) -> Vec<NodeLayout> {
+    let mini = GraphDiagram {
+        direction: diagram.direction.clone(),
+        nodes: nodes.to_vec(),
+        edges: edges.to_vec(),
+        subgraphs: Vec::new(),
+    };
+    let ranks = assign_ranks(&mini);
+    let max_rank = *ranks.values().max().unwrap_or(&0);
+    let mut ranks_nodes: Vec<Vec<&NodeDecl>> = vec![Vec::new(); max_rank + 1];
+    for node in &mini.nodes {
+        ranks_nodes[ranks[&node.id]].push(node);
+    }
+    match diagram.direction {
+        Direction::TopDown => layout_td_with_gap(&ranks_nodes, &mini.edges, node_gap),
+        Direction::LeftRight => layout_lr_with_gap(&ranks_nodes, &ranks, &mini.edges, lr_gap),
+    }
+}
+
+fn align_single_node_ranks(nodes: &mut [NodeLayout], direction: &Direction) {
+    let rank_of = |node: &NodeLayout| match direction {
+        Direction::TopDown => node.y,
+        Direction::LeftRight => node.x,
+    };
+    let center_of = |node: &NodeLayout| match direction {
+        Direction::TopDown => node.center_x,
+        Direction::LeftRight => node.center_y,
+    };
+    let mut keys: Vec<usize> = nodes.iter().map(rank_of).collect();
+    keys.sort_unstable();
+    keys.dedup();
+    let singles: Vec<usize> = keys
+        .into_iter()
+        .filter(|key| nodes.iter().filter(|node| rank_of(node) == *key).count() == 1)
+        .collect();
+    if singles.len() < 2 {
+        return;
+    }
+    let mut bump_x = 0isize;
+    let mut bump_y = 0isize;
+    let target = center_of(
+        nodes
+            .iter()
+            .find(|node| rank_of(node) == singles[0])
+            .unwrap(),
+    );
+    for node in nodes.iter() {
+        if !singles.contains(&rank_of(node)) {
+            continue;
+        }
+        let delta = target as isize - center_of(node) as isize;
+        match direction {
+            Direction::TopDown => bump_x = bump_x.max(-(node.x as isize + delta)),
+            Direction::LeftRight => bump_y = bump_y.max(-(node.y as isize + delta)),
+        }
+    }
+    if bump_x > 0 || bump_y > 0 {
+        translate_nodes(nodes, bump_x, bump_y);
+    }
+    let target = center_of(
+        nodes
+            .iter()
+            .find(|node| rank_of(node) == singles[0])
+            .unwrap(),
+    );
+    for node in nodes.iter_mut() {
+        if !singles.contains(&rank_of(node)) {
+            continue;
+        }
+        let delta = target as isize - center_of(node) as isize;
+        match direction {
+            Direction::TopDown => translate_nodes(std::slice::from_mut(node), delta, 0),
+            Direction::LeftRight => translate_nodes(std::slice::from_mut(node), 0, delta),
+        }
+    }
+}
+
+fn contracted_ranks(diagram: &GraphDiagram, groups: &[PlacedGroup]) -> HashMap<String, usize> {
+    let mut owner: HashMap<&str, &str> = HashMap::new();
+    for group in groups {
+        for node in &group.nodes {
+            owner.insert(node.id.as_str(), group.id.as_str());
+        }
+    }
+    let mut contracted = GraphDiagram {
+        direction: diagram.direction.clone(),
+        nodes: groups
+            .iter()
+            .map(|group| NodeDecl {
+                id: group.id.clone(),
+                label: group.id.clone(),
+                shape: NodeShape::Box,
+            })
+            .collect(),
+        edges: Vec::new(),
+        subgraphs: Vec::new(),
+    };
+    for edge in &diagram.edges {
+        let (Some(from), Some(to)) = (owner.get(edge.from.as_str()), owner.get(edge.to.as_str()))
+        else {
+            continue;
+        };
+        if from != to {
+            contracted.edges.push(Edge {
+                from: (*from).to_string(),
+                to: (*to).to_string(),
+                edge_type: edge.edge_type,
+                label: None,
+            });
+        }
+    }
+    assign_ranks(&contracted)
+}
+
+fn pack_groups(
+    diagram: &GraphDiagram,
+    groups: &mut [PlacedGroup],
+    ranks: &HashMap<String, usize>,
+    node_gap: usize,
+    lr_gap: usize,
+) {
+    if groups.is_empty() {
+        return;
+    }
+    let max_rank = ranks.values().copied().max().unwrap_or(0);
+    let mut flow_at = 0usize;
+    for rank in 0..=max_rank {
+        let indexes: Vec<usize> = groups
+            .iter()
+            .enumerate()
+            .filter(|(_, group)| ranks.get(&group.id).copied() == Some(rank))
+            .map(|(index, _)| index)
+            .collect();
+        if indexes.is_empty() {
+            continue;
+        }
+        let mut cross_at = 0usize;
+        let mut rank_far = flow_at;
+        for index in indexes {
+            place_group_at(groups, index, &diagram.direction, flow_at, cross_at);
+            align_group_entry(diagram, groups, index);
+            rank_far = rank_far.max(
+                groups[index]
+                    .nodes
+                    .iter()
+                    .map(|node| flow_end(node, &diagram.direction))
+                    .max()
+                    .unwrap_or(flow_at),
+            );
+            let far_cross = groups[index]
+                .nodes
+                .iter()
+                .map(|node| cross_end(node, &diagram.direction))
+                .max()
+                .unwrap_or(cross_at);
+            cross_at = far_cross
+                + match diagram.direction {
+                    Direction::TopDown => node_gap.max(1),
+                    Direction::LeftRight => LR_NODE_VERTICAL_GAP,
+                };
+        }
+        let from_ids = node_ids_at(groups, ranks, |group_rank| group_rank == rank);
+        let to_ids = node_ids_at(groups, ranks, |group_rank| group_rank > rank);
+        flow_at = rank_far + flow_gap(diagram, &from_ids, &to_ids, lr_gap);
+    }
+}
+
+fn node_ids_at(
+    groups: &[PlacedGroup],
+    ranks: &HashMap<String, usize>,
+    keep: impl Fn(usize) -> bool,
+) -> HashSet<String> {
+    groups
+        .iter()
+        .filter(|group| ranks.get(&group.id).copied().is_some_and(&keep))
+        .flat_map(|group| group.nodes.iter().map(|node| node.id.clone()))
+        .collect()
+}
+
+fn flow_gap(
+    diagram: &GraphDiagram,
+    from_ids: &HashSet<String>,
+    to_ids: &HashSet<String>,
+    lr_gap: usize,
+) -> usize {
+    let crossing: Vec<&Edge> = diagram
+        .edges
+        .iter()
+        .filter(|edge| {
+            edge.edge_type != EdgeType::Invisible
+                && from_ids.contains(&edge.from)
+                && to_ids.contains(&edge.to)
+        })
+        .collect();
+    match diagram.direction {
+        Direction::TopDown => {
+            let spacing = crossing
+                .iter()
+                .filter_map(|edge| {
+                    edge.label.as_deref().map(|label| {
+                        let branches = crossing
+                            .iter()
+                            .filter(|other| other.from == edge.from || other.to == edge.to)
+                            .count();
+                        line_count(label) + if branches > 1 { 2 } else { 1 }
+                    })
+                })
+                .max()
+                .unwrap_or(0);
+            TD_RANK_SPACING.max(spacing)
+        }
+        Direction::LeftRight => {
+            let spacing = crossing
+                .iter()
+                .filter_map(|edge| {
+                    edge.label
+                        .as_deref()
+                        .map(|label| multiline_width(label) + 2)
+                })
+                .max()
+                .unwrap_or(0);
+            lr_gap.max(spacing).max(1)
+        }
+    }
+}
+
+fn place_group_at(
+    groups: &mut [PlacedGroup],
+    index: usize,
+    direction: &Direction,
+    flow_at: usize,
+    cross_at: usize,
+) {
+    let min_flow = groups[index]
+        .nodes
+        .iter()
+        .map(|node| flow_origin(node, direction))
+        .min()
+        .unwrap_or(0);
+    let min_cross = groups[index]
+        .nodes
+        .iter()
+        .map(|node| cross_origin(node, direction))
+        .min()
+        .unwrap_or(0);
+    let d_flow = flow_at as isize - min_flow as isize;
+    let d_cross = cross_at as isize - min_cross as isize;
+    let (dx, dy) = match direction {
+        Direction::TopDown => (d_cross, d_flow),
+        Direction::LeftRight => (d_flow, d_cross),
+    };
+    translate_nodes(&mut groups[index].nodes, dx, dy);
+}
+
+fn align_group_entry(diagram: &GraphDiagram, groups: &mut [PlacedGroup], index: usize) {
+    let delta = {
+        let group_ids: HashSet<&str> = groups[index]
+            .nodes
+            .iter()
+            .map(|node| node.id.as_str())
+            .collect();
+        let mut delta = None;
+        for node in &groups[index].nodes {
+            let preds: Vec<&str> = diagram
+                .edges
+                .iter()
+                .filter(|edge| {
+                    edge.to == node.id
+                        && edge.from != edge.to
+                        && edge.edge_type != EdgeType::Invisible
+                })
+                .map(|edge| edge.from.as_str())
+                .collect();
+            if preds.len() != 1 || group_ids.contains(preds[0]) {
+                continue;
+            }
+            let Some(pred) = groups
+                .iter()
+                .flat_map(|group| group.nodes.iter())
+                .find(|other| other.id == preds[0])
+            else {
+                continue;
+            };
+            let (pred_center, node_center) = match diagram.direction {
+                Direction::TopDown => (pred.center_x, node.center_x),
+                Direction::LeftRight => (pred.center_y, node.center_y),
+            };
+            delta = Some(pred_center as isize - node_center as isize);
+            break;
+        }
+        delta
+    };
+    let Some(delta) = delta else {
+        return;
+    };
+    if delta == 0 {
+        return;
+    }
+    let min_after = groups[index]
+        .nodes
+        .iter()
+        .map(|node| match diagram.direction {
+            Direction::TopDown => node.x as isize + delta,
+            Direction::LeftRight => node.y as isize + delta,
+        })
+        .min()
+        .unwrap_or(0);
+    if min_after < 0 {
+        let bump = -min_after;
+        for group in groups.iter_mut() {
+            match diagram.direction {
+                Direction::TopDown => translate_nodes(&mut group.nodes, bump, 0),
+                Direction::LeftRight => translate_nodes(&mut group.nodes, 0, bump),
+            }
+        }
+    }
+    match diagram.direction {
+        Direction::TopDown => translate_nodes(&mut groups[index].nodes, delta, 0),
+        Direction::LeftRight => translate_nodes(&mut groups[index].nodes, 0, delta),
+    }
+}
+
+fn flow_origin(node: &NodeLayout, direction: &Direction) -> usize {
+    match direction {
+        Direction::TopDown => node.y,
+        Direction::LeftRight => node.x,
+    }
+}
+
+fn flow_end(node: &NodeLayout, direction: &Direction) -> usize {
+    match direction {
+        Direction::TopDown => node.y + node.height,
+        Direction::LeftRight => node.x + node.width,
+    }
+}
+
+fn cross_origin(node: &NodeLayout, direction: &Direction) -> usize {
+    match direction {
+        Direction::TopDown => node.x,
+        Direction::LeftRight => node.y,
+    }
+}
+
+fn cross_end(node: &NodeLayout, direction: &Direction) -> usize {
+    match direction {
+        Direction::TopDown => node.x + node.width,
+        Direction::LeftRight => node.y + node.height,
+    }
+}
+
+fn translate_nodes(nodes: &mut [NodeLayout], dx: isize, dy: isize) {
+    for node in nodes {
+        node.x = (node.x as isize + dx) as usize;
+        node.y = (node.y as isize + dy) as usize;
+        node.center_x = (node.center_x as isize + dx) as usize;
+        node.center_y = (node.center_y as isize + dy) as usize;
+    }
+}
+
+#[derive(Clone, Copy, PartialEq, Eq, Hash)]
+enum Side {
+    Left,
+    Right,
+    Top,
+    Bottom,
+}
+
+#[derive(Clone, Copy)]
+enum Axis {
+    X,
+    Y,
+}
+
+#[derive(Clone, Copy)]
+struct FrameDraft {
+    x: isize,
+    y: isize,
+    width: usize,
+    height: usize,
+}
+
+impl FrameDraft {
+    fn right(self) -> isize {
+        self.x + self.width as isize
+    }
+
+    fn bottom(self) -> isize {
+        self.y + self.height as isize
+    }
+}
+
+struct Bounds {
+    min_x: usize,
+    min_y: usize,
+    max_x: usize,
+    max_y: usize,
+}
+
+fn wrap_frames_inside_out(diagram: &GraphDiagram, layout: &mut GraphLayout) {
+    for index in 0..diagram.subgraphs.len() {
+        wrap_one(diagram, SubgraphIndex::new(index), layout);
+    }
+    clear_label_columns(diagram, layout);
+}
+
+fn wrap_one(diagram: &GraphDiagram, index: SubgraphIndex, layout: &mut GraphLayout) {
+    let mut tries = 0;
+    let draft = loop {
+        tries += 1;
+        let Some(draft) = fit_frame(diagram, index, layout) else {
+            return;
+        };
+        if tries > 16 {
+            break draft;
+        }
+        if repair_negative(layout, &draft) || repair_clearance(diagram, index, layout, &draft) {
+            continue;
+        }
+        break draft;
+    };
+    let sg = &diagram.subgraphs[index.get()];
+    let mut frame = SubgraphLayout {
+        id: sg.id.clone(),
+        label: sg.label.clone(),
+        x: draft.x.max(0) as usize,
+        y: draft.y.max(0) as usize,
+        width: draft.width,
+        height: draft.height,
+    };
+    repair_title(diagram, index, layout, &mut frame);
+    for child in diagram.children(index) {
+        let child_id = diagram.subgraphs[child.get()].id.as_str();
+        if let Some(inner) = layout.subgraphs.iter().find(|sg| sg.id == child_id) {
+            debug_assert!(
+                strictly_contains(&frame, inner),
+                "child frame {} must sit inside {}",
+                inner.id,
+                frame.id
+            );
+        }
+    }
+    layout.subgraphs.push(frame);
+}
+
+fn strictly_contains(outer: &SubgraphLayout, inner: &SubgraphLayout) -> bool {
+    let inner_bottom = inner.y + inner.height - 1;
+    let outer_bottom = outer.y + outer.height - 1;
+    let inner_right = inner.x + inner.width - 1;
+    let outer_right = outer.x + outer.width - 1;
+    inner.y >= outer.y + MIN_FRAME_SEPARATION
+        && inner_bottom + MIN_FRAME_SEPARATION <= outer_bottom
+        && inner.x >= outer.x + MIN_FRAME_SEPARATION
+        && inner_right + MIN_FRAME_SEPARATION <= outer_right
+}
+
+fn fit_frame(
+    diagram: &GraphDiagram,
+    index: SubgraphIndex,
+    layout: &GraphLayout,
+) -> Option<FrameDraft> {
+    let exclusive = diagram.exclusive_members(index);
+    let members: Vec<&NodeLayout> = layout
+        .nodes
+        .iter()
+        .filter(|node| exclusive.iter().any(|id| *id == node.id))
+        .collect();
+    let child_ids: Vec<&str> = diagram
+        .children(index)
+        .iter()
+        .map(|child| diagram.subgraphs[child.get()].id.as_str())
+        .collect();
+    let children: Vec<&SubgraphLayout> = layout
+        .subgraphs
+        .iter()
+        .filter(|sg| child_ids.contains(&sg.id.as_str()))
+        .collect();
+    if members.is_empty() && children.is_empty() {
+        return None;
+    }
+    let mut bounds = None;
+    for node in &members {
+        include_bounds(
+            &mut bounds,
+            node.x,
+            node.y,
+            node.x + node.width,
+            node.y + node.height,
+        );
+    }
+    for child in &children {
+        include_bounds(
+            &mut bounds,
+            child.x,
+            child.y,
+            child.x + child.width,
+            child.y + child.height,
+        );
+    }
+    let bounds = bounds?;
+    let crosses = crossing_sides(diagram, index, layout, &bounds);
+    let left = side_inset(
+        Side::Left,
+        children.iter().any(|child| child.x == bounds.min_x),
+        crosses.contains(&Side::Left),
+        exit_rows(diagram, index, layout, &bounds, Side::Left),
+    );
+    let right = side_inset(
+        Side::Right,
+        children
+            .iter()
+            .any(|child| child.x + child.width == bounds.max_x),
+        crosses.contains(&Side::Right),
+        exit_rows(diagram, index, layout, &bounds, Side::Right),
+    );
+    let top = side_inset(
+        Side::Top,
+        children.iter().any(|child| child.y == bounds.min_y),
+        crosses.contains(&Side::Top),
+        exit_rows(diagram, index, layout, &bounds, Side::Top),
+    );
+    let bottom = side_inset(
+        Side::Bottom,
+        children
+            .iter()
+            .any(|child| child.y + child.height == bounds.max_y),
+        crosses.contains(&Side::Bottom),
+        exit_rows(diagram, index, layout, &bounds, Side::Bottom),
+    );
+    let mut x = bounds.min_x as isize - left as isize;
+    let y = bounds.min_y as isize - top as isize;
+    let mut width = bounds.max_x - bounds.min_x + left + right;
+    let height = bounds.max_y - bounds.min_y + top + bottom;
+    let title = display_width(&diagram.subgraphs[index.get()].label) + SUBGRAPH_TITLE_DECOR;
+    if title > width {
+        let extra = title - width;
+        x -= (extra / 2) as isize;
+        width = title;
+    }
+    Some(FrameDraft {
+        x,
+        y,
+        width,
+        height,
+    })
+}
+
+fn include_bounds(bounds: &mut Option<Bounds>, x0: usize, y0: usize, x1: usize, y1: usize) {
+    match bounds {
+        None => {
+            *bounds = Some(Bounds {
+                min_x: x0,
+                min_y: y0,
+                max_x: x1,
+                max_y: y1,
+            });
+        }
+        Some(bounds) => {
+            bounds.min_x = bounds.min_x.min(x0);
+            bounds.min_y = bounds.min_y.min(y0);
+            bounds.max_x = bounds.max_x.max(x1);
+            bounds.max_y = bounds.max_y.max(y1);
+        }
+    }
+}
+
+fn side_inset(side: Side, against_child: bool, crosses: bool, exit_rows: usize) -> usize {
+    let pad = match side {
+        Side::Left => SUBGRAPH_PAD_LEFT,
+        Side::Right => SUBGRAPH_PAD_RIGHT,
+        Side::Top => SUBGRAPH_PAD_TOP,
+        Side::Bottom => SUBGRAPH_PAD_BOTTOM,
+    };
+    let inset = pad + exit_rows;
+    if against_child || crosses {
+        inset.max(MIN_FRAME_SEPARATION)
+    } else {
+        inset
+    }
+}
+
+fn crossing_sides(
+    diagram: &GraphDiagram,
+    index: SubgraphIndex,
+    layout: &GraphLayout,
+    bounds: &Bounds,
+) -> HashSet<Side> {
+    let mut sides = HashSet::new();
+    let closed = &diagram.subgraphs[index.get()].node_ids;
+    for edge in &diagram.edges {
+        if edge.edge_type == EdgeType::Invisible || edge.from == edge.to {
+            continue;
+        }
+        let from_in = closed.iter().any(|id| id == &edge.from);
+        let to_in = closed.iter().any(|id| id == &edge.to);
+        if from_in == to_in {
+            continue;
+        }
+        let outside_id = if from_in { &edge.to } else { &edge.from };
+        let Some(outside) = layout.nodes.iter().find(|node| node.id == *outside_id) else {
+            continue;
+        };
+        if let Some(side) = outside_side(outside, bounds) {
+            sides.insert(side);
+        }
+    }
+    sides
+}
+
+fn exit_rows(
+    diagram: &GraphDiagram,
+    index: SubgraphIndex,
+    layout: &GraphLayout,
+    bounds: &Bounds,
+    side: Side,
+) -> usize {
+    let closed = &diagram.subgraphs[index.get()].node_ids;
+    diagram
+        .edges
+        .iter()
+        .filter(|edge| {
+            closed.iter().any(|id| id == &edge.from)
+                && !closed.iter().any(|id| id == &edge.to)
+                && layout
+                    .nodes
+                    .iter()
+                    .find(|node| node.id == edge.to)
+                    .and_then(|node| outside_side(node, bounds))
+                    == Some(side)
+        })
+        .filter_map(|edge| edge.label.as_deref().map(line_count))
+        .max()
+        .unwrap_or(0)
+}
+
+fn outside_side(node: &NodeLayout, bounds: &Bounds) -> Option<Side> {
+    if node.y + node.height <= bounds.min_y {
+        Some(Side::Top)
+    } else if node.y >= bounds.max_y {
+        Some(Side::Bottom)
+    } else if node.x + node.width <= bounds.min_x {
+        Some(Side::Left)
+    } else if node.x >= bounds.max_x {
+        Some(Side::Right)
+    } else {
+        None
+    }
+}
+
+fn repair_negative(layout: &mut GraphLayout, frame: &FrameDraft) -> bool {
+    let dx = if frame.x < 0 { -frame.x } else { 0 };
+    let dy = if frame.y < 0 { -frame.y } else { 0 };
+    if dx == 0 && dy == 0 {
+        return false;
+    }
+    translate_nodes(&mut layout.nodes, dx, dy);
+    for sg in &mut layout.subgraphs {
+        sg.x = (sg.x as isize + dx) as usize;
+        sg.y = (sg.y as isize + dy) as usize;
+    }
+    true
+}
+
+fn repair_clearance(
+    diagram: &GraphDiagram,
+    index: SubgraphIndex,
+    layout: &mut GraphLayout,
+    frame: &FrameDraft,
+) -> bool {
+    let nodes = layout.nodes.clone();
+    let closed = &diagram.subgraphs[index.get()].node_ids;
+    for node in &nodes {
+        if closed.iter().any(|id| id == &node.id) {
+            continue;
+        }
+        if overlaps_frame(frame, node) && separate_overlap(&diagram.direction, layout, frame, node)
+        {
+            return true;
+        }
+    }
+    match diagram.direction {
+        Direction::TopDown => {
+            for edge in &diagram.edges {
+                if edge.edge_type == EdgeType::Invisible {
+                    continue;
+                }
+                let from_in = closed.iter().any(|id| id == &edge.from);
+                let to_in = closed.iter().any(|id| id == &edge.to);
+                if from_in || !to_in {
+                    continue;
+                }
+                let Some(from) = nodes.iter().find(|node| node.id == edge.from) else {
+                    continue;
+                };
+                let Some(to) = nodes.iter().find(|node| node.id == edge.to) else {
+                    continue;
+                };
+                if from.y + from.height > to.y {
+                    continue;
+                }
+                let rows = edge.label.as_deref().map(line_count).unwrap_or(0);
+                let need = (from.y + from.height + rows) as isize;
+                if frame.y < need {
+                    let amount = (need - frame.y) as usize;
+                    let at = if frame.y > from.y as isize {
+                        frame.y as usize
+                    } else {
+                        from.y + from.height
+                    };
+                    open_gap(layout, Axis::Y, at, amount);
+                    return true;
+                }
+            }
+            for edge in &diagram.edges {
+                if edge.edge_type == EdgeType::Invisible {
+                    continue;
+                }
+                let from_in = closed.iter().any(|id| id == &edge.from);
+                let to_in = closed.iter().any(|id| id == &edge.to);
+                if !from_in || to_in {
+                    continue;
+                }
+                let Some(to) = nodes.iter().find(|node| node.id == edge.to) else {
+                    continue;
+                };
+                if (to.y as isize) < frame.y {
+                    continue;
+                }
+                let need = frame.bottom() + 1;
+                if (to.y as isize) < need {
+                    open_gap(layout, Axis::Y, to.y, (need - to.y as isize) as usize);
+                    return true;
+                }
+            }
+        }
+        Direction::LeftRight => {
+            for edge in &diagram.edges {
+                if edge.edge_type == EdgeType::Invisible {
+                    continue;
+                }
+                let from_in = closed.iter().any(|id| id == &edge.from);
+                let to_in = closed.iter().any(|id| id == &edge.to);
+                if !from_in || to_in {
+                    continue;
+                }
+                let Some(to) = nodes.iter().find(|node| node.id == edge.to) else {
+                    continue;
+                };
+                if (to.x as isize) < frame.x {
+                    continue;
+                }
+                let need = frame.right() + 1;
+                if (to.x as isize) < need {
+                    open_gap(layout, Axis::X, to.x, (need - to.x as isize) as usize);
+                    return true;
+                }
+            }
+        }
+    }
+    false
+}
+
+fn overlaps_frame(frame: &FrameDraft, node: &NodeLayout) -> bool {
+    let x = node.x as isize;
+    let y = node.y as isize;
+    frame.x < x + node.width as isize
+        && x < frame.right()
+        && frame.y < y + node.height as isize
+        && y < frame.bottom()
+}
+
+fn separate_overlap(
+    direction: &Direction,
+    layout: &mut GraphLayout,
+    frame: &FrameDraft,
+    node: &NodeLayout,
+) -> bool {
+    match direction {
+        Direction::TopDown => {
+            if (node.y as isize) < frame.y {
+                let amount = (node.y + node.height) as isize - frame.y;
+                if amount > 0 && frame.y >= 0 {
+                    open_gap(layout, Axis::Y, frame.y as usize, amount as usize);
+                    return true;
+                }
+            } else {
+                let amount = frame.bottom() - node.y as isize;
+                if amount > 0 {
+                    open_gap(layout, Axis::Y, node.y, amount as usize);
+                    return true;
+                }
+            }
+        }
+        Direction::LeftRight => {
+            if (node.x as isize) < frame.x {
+                let amount = (node.x + node.width) as isize - frame.x;
+                if amount > 0 && frame.x >= 0 {
+                    open_gap(layout, Axis::X, frame.x as usize, amount as usize);
+                    return true;
+                }
+            } else {
+                let amount = frame.right() - node.x as isize;
+                if amount > 0 {
+                    open_gap(layout, Axis::X, node.x, amount as usize);
+                    return true;
+                }
+            }
+        }
+    }
+    false
+}
+
+fn repair_title(
+    diagram: &GraphDiagram,
+    index: SubgraphIndex,
+    layout: &mut GraphLayout,
+    frame: &mut SubgraphLayout,
+) {
+    if diagram.direction != Direction::TopDown {
+        return;
+    }
+    let reserved = frame.x + SUBGRAPH_TITLE_TEXT_OFFSET + display_width(&frame.label) + 2;
+    let closed = &diagram.subgraphs[index.get()].node_ids;
+    let mut leftmost = None;
+    for edge in &diagram.edges {
+        if edge.edge_type == EdgeType::Invisible {
+            continue;
+        }
+        let from_in = closed.iter().any(|id| id == &edge.from);
+        let to_in = closed.iter().any(|id| id == &edge.to);
+        if from_in || !to_in {
+            continue;
+        }
+        let Some(from) = layout.nodes.iter().find(|node| node.id == edge.from) else {
+            continue;
+        };
+        let Some(to) = layout.nodes.iter().find(|node| node.id == edge.to) else {
+            continue;
+        };
+        if from.y + from.height > frame.y {
+            continue;
+        }
+        leftmost = Some(leftmost.map_or(to.center_x, |value: usize| value.min(to.center_x)));
+    }
+    let Some(leftmost) = leftmost else {
+        return;
+    };
+    let shift = reserved.saturating_sub(leftmost);
+    if shift == 0 {
+        return;
+    }
+    let descendants = descendant_ids(diagram, index);
+    for node in &mut layout.nodes {
+        let member = closed.iter().any(|id| id == &node.id);
+        if member || !flow_overlaps(&diagram.direction, node, frame) {
+            node.x += shift;
+            node.center_x += shift;
+        }
+    }
+    for sg in &mut layout.subgraphs {
+        if descendants.contains(&sg.id) {
+            sg.x += shift;
+        }
+    }
+    frame.width += shift;
+}
+
+fn flow_overlaps(direction: &Direction, node: &NodeLayout, frame: &SubgraphLayout) -> bool {
+    match direction {
+        Direction::TopDown => node.y < frame.y + frame.height && node.y + node.height > frame.y,
+        Direction::LeftRight => node.x < frame.x + frame.width && node.x + node.width > frame.x,
+    }
+}
+
+fn descendant_ids(diagram: &GraphDiagram, index: SubgraphIndex) -> HashSet<String> {
+    let mut ids = HashSet::new();
+    let mut stack = diagram.children(index);
+    while let Some(child) = stack.pop() {
+        ids.insert(diagram.subgraphs[child.get()].id.clone());
+        stack.extend(diagram.children(child));
+    }
+    ids
+}
+
+fn open_gap(layout: &mut GraphLayout, axis: Axis, at: usize, amount: usize) {
+    if amount == 0 {
+        return;
+    }
+    for node in &mut layout.nodes {
+        match axis {
+            Axis::X if node.x >= at => {
+                node.x += amount;
+                node.center_x += amount;
+            }
+            Axis::Y if node.y >= at => {
+                node.y += amount;
+                node.center_y += amount;
+            }
+            _ => {}
+        }
+    }
+    for sg in &mut layout.subgraphs {
+        match axis {
+            Axis::X if sg.x >= at => sg.x += amount,
+            Axis::X if sg.x + sg.width > at => sg.width += amount,
+            Axis::Y if sg.y >= at => sg.y += amount,
+            Axis::Y if sg.y + sg.height > at => sg.height += amount,
+            _ => {}
+        }
+    }
+}
+
+fn clear_label_columns(diagram: &GraphDiagram, layout: &mut GraphLayout) {
+    if diagram.direction != Direction::LeftRight {
+        return;
+    }
+    for _ in 0..48 {
+        let Some((at, amount)) = label_column_deficit(layout) else {
+            return;
+        };
+        open_gap(layout, Axis::X, at, amount);
+    }
+}
+
+fn label_column_deficit(layout: &GraphLayout) -> Option<(usize, usize)> {
+    for edge in &layout.edges {
+        if edge.route != EdgeRoute::Forward {
+            continue;
+        }
+        let Some(label) = edge.label.as_deref() else {
+            continue;
+        };
+        let Some(from) = layout.nodes.iter().find(|node| node.id == edge.from_id) else {
+            continue;
+        };
+        let Some(to) = layout.nodes.iter().find(|node| node.id == edge.to_id) else {
+            continue;
+        };
+        if from.center_y != to.center_y {
+            continue;
+        }
+        let uses_source = layout
+            .edges
+            .iter()
+            .filter(|other| {
+                other.route == EdgeRoute::Forward
+                    && other.label.is_some()
+                    && other.from_id == edge.from_id
+            })
+            .count()
+            <= 1;
+        let (start, end) = if uses_source {
+            (rank_gutter(layout, from), next_rank_x(layout, from, to))
+        } else {
+            (label_anchor(layout, to), to.x)
+        };
+        let width = multiline_width(label);
+        let available = end.saturating_sub(start);
+        let col = if width <= available {
+            start + (available - width) / 2
+        } else {
+            start
+        };
+        let label_end = col + width;
+        let row = from.center_y.saturating_sub(line_count(label));
+        let mut borders = Vec::new();
+        for sg in &layout.subgraphs {
+            if row < sg.y || row >= sg.y + sg.height {
+                continue;
+            }
+            for border in [sg.x, sg.x + sg.width - 1] {
+                if border > from.x + from.width && border < to.x {
+                    borders.push(border);
+                }
+            }
+        }
+        let Some(outermost) = borders.into_iter().min() else {
+            continue;
+        };
+        if label_end > outermost {
+            return Some((outermost, label_end - outermost));
+        }
+    }
+    None
+}
+
+fn rank_gutter(layout: &GraphLayout, node: &NodeLayout) -> usize {
+    layout
+        .nodes
+        .iter()
+        .filter(|other| other.x == node.x)
+        .map(|other| other.x + other.width)
+        .max()
+        .unwrap_or(node.x + node.width)
+}
+
+fn next_rank_x(layout: &GraphLayout, from: &NodeLayout, to: &NodeLayout) -> usize {
+    layout
+        .nodes
+        .iter()
+        .filter(|node| node.x > from.x)
+        .map(|node| node.x)
+        .min()
+        .unwrap_or(to.x)
+}
+
+fn label_anchor(layout: &GraphLayout, to: &NodeLayout) -> usize {
+    layout
+        .nodes
+        .iter()
+        .filter(|node| node.x < to.x)
+        .map(|node| node.x + node.width + 1)
+        .max()
+        .unwrap_or(0)
+}
+
+fn finish_routes(layout: &mut GraphLayout, diagram: &GraphDiagram) {
+    let endpoints = edge_endpoint_nodes(&layout.nodes, &layout.subgraphs);
+    assign_edge_routes(&diagram.direction, &endpoints, &mut layout.edges);
+    let (mut width, mut height) = base_extents(&layout.nodes, &layout.subgraphs);
+    if diagram.direction == Direction::TopDown {
+        width = width.max(td_labels_right(&layout.nodes, &diagram.edges));
+    }
+    for edge in &diagram.edges {
+        if edge.from == edge.to
+            && let Some(node) = layout.nodes.iter().find(|node| node.id == edge.from)
+        {
+            let label_w = edge
+                .label
+                .as_ref()
+                .map(|label| display_width(label))
+                .unwrap_or(0);
+            width = width.max(node.x + node.width + 2 + label_w);
+            height = height.max(node.y + node.height + 1);
+        }
+    }
+    reserve_back_edge_space(&diagram.direction, &layout.edges, &mut width, &mut height);
+    layout.width = width;
+    layout.height = height;
+    reserve_subgraph_entry_space(layout);
+    let (width, height) = base_extents(&layout.nodes, &layout.subgraphs);
+    layout.width = layout.width.max(width);
+    layout.height = layout.height.max(height);
+}
 #[cfg(test)]
 mod tests {
     use super::*;
