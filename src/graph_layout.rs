@@ -2240,7 +2240,7 @@ const SUBGRAPH_PAD_LEFT: usize = 2;
 const SUBGRAPH_PAD_RIGHT: usize = 2;
 const SUBGRAPH_PAD_TOP: usize = 1;
 const SUBGRAPH_PAD_BOTTOM: usize = 1;
-const MIN_FRAME_SEPARATION: usize = 2;
+const MIN_FRAME_SEPARATION: usize = SUBGRAPH_PAD_TOP + 1;
 const SUBGRAPH_TITLE_DECOR: usize = 6;
 const SUBGRAPH_TITLE_TEXT_OFFSET: usize = 3;
 

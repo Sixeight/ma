@@ -59,11 +59,18 @@ impl GraphDiagram {
     }
 
     pub(crate) fn innermost(&self, id: &str) -> Option<SubgraphIndex> {
-        self.subgraphs.iter().enumerate().find_map(|(i, sg)| {
-            sg.node_ids
+        let owners: Vec<SubgraphIndex> = self
+            .subgraphs
+            .iter()
+            .enumerate()
+            .filter(|(_, sg)| sg.node_ids.iter().any(|node| node == id))
+            .map(|(i, _)| SubgraphIndex::new(i))
+            .collect();
+        owners.iter().copied().find(|&idx| {
+            !self
+                .children(idx)
                 .iter()
-                .any(|node| node == id)
-                .then_some(SubgraphIndex::new(i))
+                .any(|child| owners.contains(child))
         })
     }
 
