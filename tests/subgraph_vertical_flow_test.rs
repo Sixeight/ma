@@ -298,17 +298,17 @@ fn boxes_from_render(lines: &[&str]) -> Vec<(usize, usize, usize, usize)> {
         let chars: Vec<char> = line.chars().collect();
         let mut col = 0;
         while col < chars.len() {
-            if chars[col] == '┌' {
-                if let Some(right) = chars[col + 1..].iter().position(|&ch| ch == '┐') {
-                    let right = col + 1 + right;
-                    if let Some(bottom) = ((row + 1)..lines.len()).find(|&end| {
-                        let end_chars: Vec<char> = lines[end].chars().collect();
-                        end_chars.get(col) == Some(&'└') && end_chars.get(right) == Some(&'┘')
-                    }) {
-                        boxes.push((row, bottom, col, right));
-                        col = right + 1;
-                        continue;
-                    }
+            if chars[col] == '┌'
+                && let Some(right) = chars[col + 1..].iter().position(|&ch| ch == '┐')
+            {
+                let right = col + 1 + right;
+                if let Some(bottom) = ((row + 1)..lines.len()).find(|&end| {
+                    let end_chars: Vec<char> = lines[end].chars().collect();
+                    end_chars.get(col) == Some(&'└') && end_chars.get(right) == Some(&'┘')
+                }) {
+                    boxes.push((row, bottom, col, right));
+                    col = right + 1;
+                    continue;
                 }
             }
             col += 1;

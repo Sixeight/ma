@@ -571,6 +571,27 @@ fn set_td_vertical(grid: &mut Grid, layout: &GraphLayout, row: usize, col: usize
     }
 }
 
+fn on_subgraph_side(layout: &GraphLayout, row: usize, col: usize) -> bool {
+    layout.subgraphs.iter().any(|sg| {
+        row > sg.y && row + 1 < sg.y + sg.height && (col == sg.x || col + 1 == sg.x + sg.width)
+    })
+}
+
+fn set_td_horizontal(grid: &mut Grid, layout: &GraphLayout, row: usize, col: usize, ch: char) {
+    if layout
+        .subgraphs
+        .iter()
+        .any(|sg| subgraph_title_text_at(layout, sg, row, col))
+    {
+        return;
+    }
+    if is_subgraph_border_row(layout, row) || on_subgraph_side(layout, row, col) {
+        grid.set_merged(row, col, ch, merge_box_drawing);
+    } else {
+        grid.set(row, col, ch);
+    }
+}
+
 fn redraw_subgraph_titles(grid: &mut Grid, layout: &GraphLayout) {
     for sg in &layout.subgraphs {
         draw_subgraph_title(
@@ -668,12 +689,12 @@ fn draw_td_single_edge_route(
         if from_cx < to_cx {
             grid.set_merged(to_above, from_cx, '└', merge_box_drawing);
             for col in (from_cx + 1)..to_cx {
-                grid.set(to_above, col, '─');
+                set_td_horizontal(grid, layout, to_above, col, '─');
             }
         } else {
             grid.set_merged(to_above, from_cx, '┘', merge_box_drawing);
             for col in (to_cx + 1)..from_cx {
-                grid.set(to_above, col, '─');
+                set_td_horizontal(grid, layout, to_above, col, '─');
             }
         }
     } else if !from_col_clear && to_above > route_start {
@@ -691,7 +712,7 @@ fn draw_td_single_edge_route(
 
         if gutter_col < grid.width() {
             for col in (from_cx + 1)..=gutter_col {
-                grid.set(route_start, col, '─');
+                set_td_horizontal(grid, layout, route_start, col, '─');
             }
             grid.set(route_start, gutter_col, '┐');
 
@@ -706,7 +727,7 @@ fn draw_td_single_edge_route(
             };
             grid.set_merged(to_above, gutter_col, turn, merge_box_drawing);
             for col in a..b {
-                grid.set(to_above, col, '─');
+                set_td_horizontal(grid, layout, to_above, col, '─');
             }
         }
     } else if edge.label.is_none() && from_cx != to_cx && to_above > from_below {
@@ -870,11 +891,11 @@ fn draw_td_edge(
         let min_cx = *child_centers.iter().min().unwrap();
         let max_cx = *child_centers.iter().max().unwrap();
 
-        grid.set(from_below, min_cx, '┌');
+        grid.set_merged(from_below, min_cx, '┌', merge_box_drawing);
         for col in (min_cx + 1)..max_cx {
-            grid.set(from_below, col, '─');
+            set_td_horizontal(grid, layout, from_below, col, '─');
         }
-        grid.set(from_below, max_cx, '┐');
+        grid.set_merged(from_below, max_cx, '┐', merge_box_drawing);
         grid.set(from_below, from_cx, '┴');
 
         for row in (from_below + 1)..to_above {
