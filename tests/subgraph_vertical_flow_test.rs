@@ -157,9 +157,7 @@ fn assert_label_off_horizontal(output: &str, label: &str) {
     let start = char_pos(lines[row], label);
     let end = start + label.chars().count();
     let chars: Vec<char> = lines[row].chars().collect();
-    let left = start
-        .checked_sub(1)
-        .and_then(|col| chars.get(col).copied());
+    let left = start.checked_sub(1).and_then(|col| chars.get(col).copied());
     let right = chars.get(end).copied();
     assert!(
         !matches!(left, Some('─' | '╌')),
@@ -173,7 +171,14 @@ fn assert_label_off_horizontal(output: &str, label: &str) {
 
 fn assert_arrowheads_off_border_rows(lines: &[&str], output: &str) {
     let mut border_rows = std::collections::HashSet::new();
-    for title in ["Processing", "Process", "Group", "Leftish", "Outer", "Inner"] {
+    for title in [
+        "Processing",
+        "Process",
+        "Group",
+        "Leftish",
+        "Outer",
+        "Inner",
+    ] {
         if lines.iter().any(|line| line.contains(title)) {
             let (top, bottom, _, _) = subgraph_frame(lines, title);
             border_rows.insert(top);
