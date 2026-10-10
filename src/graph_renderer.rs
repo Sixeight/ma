@@ -1039,6 +1039,23 @@ fn lr_column_hits_foreign_side(
     })
 }
 
+fn lr_vertical_hits_foreign_frame(
+    layout: &GraphLayout,
+    col: usize,
+    top: usize,
+    bottom: usize,
+    from: &NodeLayout,
+    to: &NodeLayout,
+) -> bool {
+    layout.subgraphs.iter().any(|sg| {
+        if node_inside_frame(from, sg) || node_inside_frame(to, sg) {
+            return false;
+        }
+        let y_hits = top < sg.y + sg.height && bottom > sg.y;
+        y_hits && col >= sg.x && col < sg.x + sg.width
+    })
+}
+
 fn enclosing_subgraph(layout: &GraphLayout, node: &NodeLayout) -> Option<usize> {
     layout.subgraphs.iter().position(|sg| {
         node.x >= sg.x
@@ -1577,6 +1594,8 @@ fn draw_lr_edge(
                         .unwrap_or(from_right + (to_left - from_right) / 2)
                 }
             });
+        let span_top = from.center_y.min(to.center_y);
+        let span_bottom = from.center_y.max(to.center_y);
         let crosses_frame =
             enclosing_subgraph(layout, from).is_some() != enclosing_subgraph(layout, to).is_some();
         if crosses_frame && to_left >= from_right + 2 {
@@ -1585,17 +1604,23 @@ fn draw_lr_edge(
                 && !route_crosses_node(
                     layout,
                     corner_col,
-                    from.center_y.min(to.center_y),
-                    from.center_y.max(to.center_y) + 1,
+                    span_top,
+                    span_bottom + 1,
                     &from.id,
                     &to.id,
+                )
+                && !lr_vertical_hits_foreign_frame(
+                    layout,
+                    corner_col,
+                    span_top,
+                    span_bottom,
+                    from,
+                    to,
                 )
             {
                 mid_col = corner_col;
             }
         }
-        let span_top = from.center_y.min(to.center_y);
-        let span_bottom = from.center_y.max(to.center_y);
         while mid_col > from_right
             && lr_column_hits_foreign_side(layout, mid_col, span_top, span_bottom, from, to)
         {
