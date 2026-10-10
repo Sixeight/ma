@@ -297,6 +297,25 @@ fn assert_outside_frame(lines: &[&str], needle: &str, left: usize, right: usize)
     );
 }
 
+fn assert_outside_subgraph_box(
+    lines: &[&str],
+    needle: &str,
+    title_row: usize,
+    bottom_row: usize,
+    left: usize,
+    right: usize,
+) {
+    let col = node_col(lines, needle);
+    let row = row_with(lines, needle);
+    let inside_x = col > left && col + needle.chars().count() <= right;
+    let inside_y = row > title_row && row < bottom_row;
+    assert!(
+        !inside_x || !inside_y,
+        "{needle} must sit outside the subgraph box:\n{}",
+        lines.join("\n")
+    );
+}
+
 fn assert_inside_frame(lines: &[&str], needle: &str, left: usize, right: usize) {
     let col = node_col(lines, needle);
     assert!(
@@ -552,4 +571,186 @@ fn top_entries_near_the_left_edge_keep_title_at_home() {
             "{step} must keep a top-entry stem:\n{output}"
         );
     }
+}
+
+const CASE_LR_INTERLEAVE: &str = r#"flowchart LR
+    subgraph G[Group]
+        A[InA]
+        B[InB]
+    end
+    A -->|go| X[OutX]
+    X -->|back| B
+"#;
+
+const CASE_LR_SHARE_COL: &str = r#"flowchart LR
+    subgraph G[Group]
+        A[InA] --> B[InB]
+    end
+    A -->|side| X[OutX]
+"#;
+
+fn is_horizontal_connector(ch: char) -> bool {
+    matches!(
+        ch,
+        '─' | '╌' | '>' | '<' | '┼' | '┬' | '┴' | '├' | '┤' | '┌' | '┐' | '└' | '┘'
+    )
+}
+
+fn row_has_horizontal(line: &str, col: usize) -> bool {
+    line.chars().nth(col).is_some_and(is_horizontal_connector)
+}
+
+fn assert_label_on_lr_edge(output: &str, label: &str, left: &str, right: &str) {
+    let lines: Vec<&str> = output.lines().collect();
+    assert_eq!(
+        output.matches(label).count(),
+        1,
+        "{label} must appear exactly once:\n{output}"
+    );
+    let label_col = node_col(&lines, label);
+    let left_col = node_col(&lines, left);
+    let right_col = node_col(&lines, right);
+    let (start, end) = if left_col < right_col {
+        (left_col, right_col)
+    } else {
+        (right_col, left_col)
+    };
+    assert!(
+        start < label_col && label_col < end,
+        "{label} must sit on the {left}-{right} edge, col {label_col}:\n{output}"
+    );
+    assert!(
+        label_touches_edge_path(&lines, label),
+        "{label} must sit on its edge path:\n{output}"
+    );
+}
+
+fn assert_arrowheads_isolated(lines: &[&str], output: &str) {
+    for (row, line) in lines.iter().enumerate() {
+        for (col, ch) in line.chars().enumerate() {
+            if ch == '>' || ch == '<' {
+                let above = glyph_at(lines, row.wrapping_sub(1), col);
+                let below = glyph_at(lines, row + 1, col);
+                assert!(
+                    !above.is_some_and(is_vertical_connector)
+                        && !below.is_some_and(is_vertical_connector),
+                    "{ch} at ({row},{col}) shares a column with a perpendicular segment:\n{output}"
+                );
+            }
+            if ch == '▼' || ch == '▲' {
+                let left = glyph_at(lines, row, col.saturating_sub(1));
+                let right = glyph_at(lines, row, col + 1);
+                assert!(
+                    left != Some('─') && right != Some('─'),
+                    "{ch} at ({row},{col}) shares a row with a perpendicular segment:\n{output}"
+                );
+            }
+        }
+    }
+}
+
+#[test]
+fn outer_node_ranks_between_lr_subgraph_members() {
+    let output = render(CASE_LR_INTERLEAVE).unwrap();
+    let lines: Vec<&str> = output.lines().collect();
+
+    let a_col = node_col(&lines, "InA");
+    let x_col = node_col(&lines, "OutX");
+    let b_col = node_col(&lines, "InB");
+    assert!(
+        a_col < x_col && x_col < b_col,
+        "OutX must rank between InA and InB, cols InA={a_col} OutX={x_col} InB={b_col}:\n{output}"
+    );
+
+    assert_title_at_home(&lines, "Group");
+    let (title_row, bottom_row, left, right) = subgraph_frame(&lines, "Group");
+    let a_row = row_with(&lines, "InA");
+    let b_row = row_with(&lines, "InB");
+    let x_row = row_with(&lines, "OutX");
+    assert!(title_row < a_row && a_row < bottom_row);
+    assert!(title_row < b_row && b_row < bottom_row);
+    assert_inside_frame(&lines, "InA", left, right);
+    assert_inside_frame(&lines, "InB", left, right);
+    assert_outside_subgraph_box(&lines, "OutX", title_row, bottom_row, left, right);
+    assert!(
+        left < x_col && x_col < right,
+        "OutX must sit above or below the subgraph, not left or right of it:\n{output}"
+    );
+    assert!(
+        x_row < title_row || x_row > bottom_row,
+        "OutX must sit outside the subgraph band:\n{output}"
+    );
+
+    assert_label_on_lr_edge(&output, "go", "InA", "OutX");
+    assert_label_on_lr_edge(&output, "back", "OutX", "InB");
+
+    let b_left = char_pos(lines[b_row], "InB") - 2;
+    let arrow_col = (0..b_left)
+        .rev()
+        .find(|&col| glyph_at(&lines, b_row, col) == Some('>'))
+        .unwrap_or_else(|| panic!("arrow left of InB:\n{output}"));
+    assert_eq!(
+        arrow_col + 1,
+        b_left,
+        "> must sit on its own column directly left of InB:\n{output}"
+    );
+    let arrow_neighbors = [
+        glyph_at(&lines, b_row.wrapping_sub(1), arrow_col),
+        glyph_at(&lines, b_row + 1, arrow_col),
+    ];
+    assert!(
+        arrow_neighbors
+            .iter()
+            .all(|ch| !ch.is_some_and(is_vertical_connector)),
+        "> must not share its column with a vertical run:\n{output}"
+    );
+    let turn = glyph_at(&lines, b_row, arrow_col.saturating_sub(1));
+    assert!(
+        matches!(turn, Some('┌' | '└')),
+        "vertical run must end in a corner left of >, got {turn:?}:\n{output}"
+    );
+    assert_arrowheads_isolated(&lines, &output);
+    assert_no_box_overlap(&output);
+}
+
+#[test]
+fn outer_node_shares_a_column_with_an_inner_node() {
+    let output = render(CASE_LR_SHARE_COL).unwrap();
+    let lines: Vec<&str> = output.lines().collect();
+
+    let b_col = node_col(&lines, "InB");
+    let x_col = node_col(&lines, "OutX");
+    assert_eq!(b_col, x_col, "OutX must share InB's column:\n{output}");
+
+    assert_title_at_home(&lines, "Group");
+    let (title_row, bottom_row, left, right) = subgraph_frame(&lines, "Group");
+    assert_inside_frame(&lines, "InA", left, right);
+    assert_inside_frame(&lines, "InB", left, right);
+    assert_outside_subgraph_box(&lines, "OutX", title_row, bottom_row, left, right);
+
+    let a_col = node_col(&lines, "InA");
+    let b_left = node_col(&lines, "InB");
+    assert!(a_col < b_left, "InA must stay left of InB:\n{output}");
+    assert_label_on_lr_edge(&output, "side", "InA", "OutX");
+
+    let a_row = row_with(&lines, "InA");
+    let a_right = char_pos(lines[a_row], "InA") + "InA".chars().count() + 2;
+    let stem_col = (a_right..b_left)
+        .find(|&col| {
+            glyph_at(&lines, a_row, col) == Some('┬') || glyph_at(&lines, a_row, col) == Some('┤')
+        })
+        .unwrap_or_else(|| panic!("InA right stem:\n{output}"));
+    let fork = glyph_at(&lines, a_row, stem_col);
+    assert!(
+        matches!(fork, Some('┬' | '┤' | '┼')),
+        "right/down split after InA must be ┬/┤/┼, got {fork:?}:\n{output}"
+    );
+    assert!(
+        (0..lines.len()).any(|row| row_has_horizontal(lines[row], stem_col)
+            || glyph_at(&lines, row, stem_col) == Some('▼')
+            || glyph_at(&lines, row, stem_col) == Some('│')),
+        "split after InA must continue toward OutX:\n{output}"
+    );
+    assert_arrowheads_isolated(&lines, &output);
+    assert_no_box_overlap(&output);
 }
