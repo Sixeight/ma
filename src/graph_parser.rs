@@ -554,6 +554,52 @@ mod tests {
     }
 
     #[test]
+    fn sibling_subgraphs_first_declaration_keeps_the_node() {
+        let diagram = parse_graph(
+            "flowchart TD\n\
+             subgraph Outer[Outer]\n\
+                 subgraph Left[Left]\n\
+                     Shared\n\
+                     LeftOnly\n\
+                 end\n\
+                 subgraph Right[Right]\n\
+                     Shared\n\
+                     RightOnly\n\
+                 end\n\
+             end\n",
+        )
+        .unwrap();
+
+        let left = diagram
+            .subgraphs
+            .iter()
+            .position(|sg| sg.id == "Left")
+            .map(SubgraphIndex::new)
+            .unwrap();
+        let right = diagram
+            .subgraphs
+            .iter()
+            .position(|sg| sg.id == "Right")
+            .map(SubgraphIndex::new)
+            .unwrap();
+        assert!(
+            diagram.subgraphs[left.get()]
+                .node_ids
+                .iter()
+                .any(|id| id == "Shared")
+        );
+        assert!(
+            !diagram.subgraphs[right.get()]
+                .node_ids
+                .iter()
+                .any(|id| id == "Shared")
+        );
+        assert_eq!(diagram.innermost("Shared"), Some(left));
+        assert_eq!(diagram.exclusive_members(right), vec!["RightOnly"]);
+        assert_eq!(diagram.exclusive_members(left), vec!["Shared", "LeftOnly"]);
+    }
+
+    #[test]
     fn referenced_node_keeps_its_original_subgraph_membership() {
         let diagram = parse_graph(
             "flowchart LR\n\

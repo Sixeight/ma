@@ -178,6 +178,9 @@ fn assert_arrowheads_off_border_rows(lines: &[&str], output: &str) {
         "Leftish",
         "Outer",
         "Inner",
+        "Middle",
+        "West",
+        "East",
     ] {
         if lines.iter().any(|line| line.contains(title)) {
             let (top, bottom, _, _) = subgraph_frame(lines, title);
@@ -1162,4 +1165,630 @@ fn nested_lr_inner_frame_sits_inside_outer() {
         start_col < inb_col && inb_col < outc_col,
         "Start must sit left of InB, and InB left of OutC:\n{output}"
     );
+}
+
+const CASE_TRIPLE_TD: &str = r#"flowchart TD
+    Start -->|in| Deep
+    subgraph Outer[Outer]
+        subgraph Middle[Middle]
+            subgraph Inner[Inner]
+                Deep
+            end
+            Deep -->|up| Lane
+            Lane
+        end
+        Lane -->|out| OutC
+        OutC
+    end
+"#;
+
+const CASE_TRIPLE_LR: &str = r#"flowchart LR
+    Start -->|in| Deep
+    subgraph Outer[Outer]
+        subgraph Middle[Middle]
+            subgraph Inner[Inner]
+                Deep
+            end
+            Deep -->|up| Lane
+            Lane
+        end
+        Lane -->|out| OutC
+        OutC
+    end
+"#;
+
+const CASE_SIBLINGS_TD: &str = r#"flowchart TD
+    Start -->|L| LeftA
+    Start -->|R| RightA
+    subgraph Outer[Outer]
+        subgraph West[West]
+            LeftA
+            LeftA --> LeftB
+            LeftB
+        end
+        subgraph East[East]
+            RightA
+            RightA --> RightB
+            RightB
+        end
+    end
+"#;
+
+const CASE_SIBLINGS_LR: &str = r#"flowchart LR
+    Start -->|L| LeftA
+    Start -->|R| RightA
+    subgraph Outer[Outer]
+        subgraph West[West]
+            LeftA
+            LeftA --> LeftB
+            LeftB
+        end
+        subgraph East[East]
+            RightA
+            RightA --> RightB
+            RightB
+        end
+    end
+"#;
+
+const CASE_NESTED_INTERLEAVE_TD: &str = r#"flowchart TD
+    subgraph Outer[Outer]
+        subgraph Inner[Inner]
+            A[InA]
+            B[InB]
+        end
+    end
+    A -->|go| X[OutX]
+    X -->|back| B
+"#;
+
+const CASE_NESTED_INTERLEAVE_LR: &str = r#"flowchart LR
+    subgraph Outer[Outer]
+        subgraph Inner[Inner]
+            A[InA]
+            B[InB]
+        end
+    end
+    A -->|go| X[OutX]
+    X -->|back| B
+"#;
+
+const CASE_SIBLING_CLAIM: &str = r#"flowchart TD
+    subgraph Outer[Outer]
+        subgraph West[West]
+            Shared
+            LeftOnly
+        end
+        subgraph East[East]
+            Shared
+            RightOnly
+        end
+    end
+    LeftOnly --> Shared
+    Shared --> RightOnly
+"#;
+
+fn assert_child_inside_parent(lines: &[&str], output: &str, parent: &str, child: &str) {
+    assert_title_at_home(lines, parent);
+    assert_title_at_home(lines, child);
+
+    let (p_top, p_bottom, p_left, p_right) = title_frame(lines, parent);
+    let (c_top, c_bottom, c_left, c_right) = title_frame(lines, child);
+
+    assert_ne!(
+        p_top, c_top,
+        "{child} title must not sit on the {parent} title row:\n{output}"
+    );
+    assert!(
+        c_top >= p_top + 1
+            && c_bottom + 1 <= p_bottom
+            && c_left >= p_left + 2
+            && c_right + 2 <= p_right,
+        "{child} must sit fully inside {parent} with one cell of padding:\n{output}"
+    );
+
+    let parent_border = perimeter(p_top, p_bottom, p_left, p_right);
+    let child_border = perimeter(c_top, c_bottom, c_left, c_right);
+    assert!(
+        parent_border.is_disjoint(&child_border),
+        "{parent} and {child} must not share border cells:\n{output}"
+    );
+}
+
+fn assert_sibling_frames(lines: &[&str], output: &str, left: &str, right: &str) {
+    assert_title_at_home(lines, left);
+    assert_title_at_home(lines, right);
+
+    let (l_top, l_bottom, l_left, l_right) = title_frame(lines, left);
+    let (r_top, r_bottom, r_left, r_right) = title_frame(lines, right);
+
+    let left_border = perimeter(l_top, l_bottom, l_left, l_right);
+    let right_border = perimeter(r_top, r_bottom, r_left, r_right);
+    assert!(
+        left_border.is_disjoint(&right_border),
+        "{left} and {right} must not share or overlap border cells:\n{output}"
+    );
+
+    let x_overlap = l_left < r_right && r_left < l_right;
+    let y_overlap = l_top < r_bottom && r_top < l_bottom;
+    assert!(
+        !x_overlap || !y_overlap,
+        "{left} and {right} frames must not overlap:\n{output}"
+    );
+
+    let gap = if r_left >= l_right {
+        r_left - l_right
+    } else if l_left >= r_right {
+        l_left - r_right
+    } else if r_top >= l_bottom {
+        r_top - l_bottom
+    } else if l_top >= r_bottom {
+        l_top - r_bottom
+    } else {
+        0
+    };
+    assert!(
+        gap >= 1,
+        "{left} and {right} must be separated by at least one cell:\n{output}"
+    );
+}
+
+fn assert_member_near_title(
+    lines: &[&str],
+    output: &str,
+    title: &str,
+    member: &str,
+    max_gap: usize,
+) {
+    let (top, bottom, left, right) = title_frame(lines, title);
+    let row = row_with(lines, member);
+    let col = node_col(lines, member);
+    assert!(
+        row > top && row < bottom && col > left && col + member.chars().count() <= right,
+        "{member} must sit inside {title}:\n{output}"
+    );
+    assert!(
+        row - top <= max_gap,
+        "{member} must sit just under {title}, not after a tall empty shaft ({row} - {top} > {max_gap}):\n{output}"
+    );
+}
+
+fn assert_td_chain_crossings(lines: &[&str], output: &str, titles: &[&str]) {
+    for title in titles {
+        let (top, _, left, right) = title_frame(lines, title);
+        assert_eq!(
+            horizontal_border_crossings(lines, top, left, right),
+            1,
+            "Start→Deep must cross the {title} top border once:\n{output}"
+        );
+    }
+}
+
+fn assert_lr_chain_crossings(lines: &[&str], output: &str, titles: &[&str]) {
+    for title in titles {
+        let (top, bottom, left, _) = title_frame(lines, title);
+        assert_eq!(
+            vertical_border_crossings(lines, left, top, bottom),
+            1,
+            "Start→Deep must cross the {title} left border once:\n{output}"
+        );
+    }
+}
+
+#[test]
+fn nested_td_three_levels_sit_inside_each_other() {
+    let output = render(CASE_TRIPLE_TD).unwrap();
+    let lines: Vec<&str> = output.lines().collect();
+
+    assert_child_inside_parent(&lines, &output, "Outer", "Middle");
+    assert_child_inside_parent(&lines, &output, "Middle", "Inner");
+    assert_eq!(
+        title_frame(&lines, "Inner").0,
+        title_frame(&lines, "Middle").0 + 1,
+        "Inner top must sit exactly one cell below Middle:\n{output}"
+    );
+    assert_eq!(
+        title_frame(&lines, "Middle").0,
+        title_frame(&lines, "Outer").0 + 1,
+        "Middle top must sit exactly one cell below Outer:\n{output}"
+    );
+
+    let (outer_top, outer_bottom, outer_left, outer_right) = title_frame(&lines, "Outer");
+    let (mid_top, mid_bottom, mid_left, mid_right) = title_frame(&lines, "Middle");
+    let (inner_top, inner_bottom, inner_left, inner_right) = title_frame(&lines, "Inner");
+
+    assert_outside_subgraph_box(
+        &lines,
+        "Start",
+        outer_top,
+        outer_bottom,
+        outer_left,
+        outer_right,
+    );
+    assert_inside_box(
+        &lines,
+        "Deep",
+        inner_top,
+        inner_bottom,
+        inner_left,
+        inner_right,
+    );
+    assert_inside_box(&lines, "Lane", mid_top, mid_bottom, mid_left, mid_right);
+    assert_outside_subgraph_box(
+        &lines,
+        "Lane",
+        inner_top,
+        inner_bottom,
+        inner_left,
+        inner_right,
+    );
+    assert_inside_box(
+        &lines,
+        "OutC",
+        outer_top,
+        outer_bottom,
+        outer_left,
+        outer_right,
+    );
+    assert_outside_subgraph_box(&lines, "OutC", mid_top, mid_bottom, mid_left, mid_right);
+
+    assert_td_chain_crossings(&lines, &output, &["Outer", "Middle", "Inner"]);
+    assert_eq!(
+        horizontal_border_crossings(&lines, inner_bottom, inner_left, inner_right),
+        1,
+        "Deep→Lane must cross the Inner bottom once:\n{output}"
+    );
+    assert_eq!(
+        horizontal_border_crossings(&lines, mid_bottom, mid_left, mid_right),
+        1,
+        "Lane→OutC must cross the Middle bottom once:\n{output}"
+    );
+    assert_eq!(
+        horizontal_border_crossings(&lines, outer_bottom, outer_left, outer_right),
+        0,
+        "OutC must stay inside Outer:\n{output}"
+    );
+
+    assert_arrowheads_off_border_rows(&lines, &output);
+    assert_label_on_edge(&output, "in", "Start", "Deep");
+    assert_label_on_edge(&output, "up", "Deep", "Lane");
+    assert_label_on_edge(&output, "out", "Lane", "OutC");
+    assert_no_box_overlap(&output);
+    assert_member_near_title(&lines, &output, "Inner", "Deep", 6);
+}
+
+#[test]
+fn nested_lr_three_levels_sit_inside_each_other() {
+    let output = render(CASE_TRIPLE_LR).unwrap();
+    let lines: Vec<&str> = output.lines().collect();
+
+    assert_child_inside_parent(&lines, &output, "Outer", "Middle");
+    assert_child_inside_parent(&lines, &output, "Middle", "Inner");
+    assert_eq!(
+        title_frame(&lines, "Inner").1 + 1,
+        title_frame(&lines, "Middle").1,
+        "LR Inner bottom must sit exactly one cell above Middle:\n{output}"
+    );
+    assert_eq!(
+        title_frame(&lines, "Middle").1 + 1,
+        title_frame(&lines, "Outer").1,
+        "LR Middle bottom must sit exactly one cell above Outer:\n{output}"
+    );
+
+    let (outer_top, outer_bottom, outer_left, outer_right) = title_frame(&lines, "Outer");
+    let (mid_top, mid_bottom, mid_left, mid_right) = title_frame(&lines, "Middle");
+    let (inner_top, inner_bottom, inner_left, inner_right) = title_frame(&lines, "Inner");
+
+    assert_outside_subgraph_box(
+        &lines,
+        "Start",
+        outer_top,
+        outer_bottom,
+        outer_left,
+        outer_right,
+    );
+    assert_inside_box(
+        &lines,
+        "Deep",
+        inner_top,
+        inner_bottom,
+        inner_left,
+        inner_right,
+    );
+    assert_inside_box(&lines, "Lane", mid_top, mid_bottom, mid_left, mid_right);
+    assert_outside_subgraph_box(
+        &lines,
+        "Lane",
+        inner_top,
+        inner_bottom,
+        inner_left,
+        inner_right,
+    );
+    assert_inside_box(
+        &lines,
+        "OutC",
+        outer_top,
+        outer_bottom,
+        outer_left,
+        outer_right,
+    );
+    assert_outside_subgraph_box(&lines, "OutC", mid_top, mid_bottom, mid_left, mid_right);
+
+    assert_lr_chain_crossings(&lines, &output, &["Outer", "Middle", "Inner"]);
+    assert_eq!(
+        vertical_border_crossings(&lines, inner_right, inner_top, inner_bottom),
+        1,
+        "Deep→Lane must cross the Inner right once:\n{output}"
+    );
+    assert_eq!(
+        vertical_border_crossings(&lines, mid_right, mid_top, mid_bottom),
+        1,
+        "Lane→OutC must cross the Middle right once:\n{output}"
+    );
+    assert_eq!(
+        vertical_border_crossings(&lines, outer_right, outer_top, outer_bottom),
+        0,
+        "OutC must stay inside Outer:\n{output}"
+    );
+
+    assert_label_on_lr_edge(&output, "in", "Start", "Deep");
+    assert_label_on_lr_edge(&output, "up", "Deep", "Lane");
+    assert_label_on_lr_edge(&output, "out", "Lane", "OutC");
+    assert_arrowheads_isolated(&lines, &output);
+    assert_no_box_overlap(&output);
+}
+
+#[test]
+fn sibling_subgraphs_inside_parent_td() {
+    let output = render(CASE_SIBLINGS_TD).unwrap();
+    let lines: Vec<&str> = output.lines().collect();
+
+    assert_child_inside_parent(&lines, &output, "Outer", "West");
+    assert_child_inside_parent(&lines, &output, "Outer", "East");
+    assert_sibling_frames(&lines, &output, "West", "East");
+    assert_member_near_title(&lines, &output, "West", "LeftA", 6);
+    assert_member_near_title(&lines, &output, "East", "RightA", 6);
+    assert_inside_box(
+        &lines,
+        "LeftB",
+        title_frame(&lines, "West").0,
+        title_frame(&lines, "West").1,
+        title_frame(&lines, "West").2,
+        title_frame(&lines, "West").3,
+    );
+    assert_inside_box(
+        &lines,
+        "RightB",
+        title_frame(&lines, "East").0,
+        title_frame(&lines, "East").1,
+        title_frame(&lines, "East").2,
+        title_frame(&lines, "East").3,
+    );
+    assert_arrowheads_off_border_rows(&lines, &output);
+    assert_label_on_edge(&output, "L", "Start", "LeftA");
+    assert_label_on_edge(&output, "R", "Start", "RightA");
+    assert_no_box_overlap(&output);
+    assert!(
+        lines.len() < 40,
+        "sibling frames must stay compact:\n{output}"
+    );
+}
+
+#[test]
+fn sibling_subgraphs_inside_parent_lr() {
+    let output = render(CASE_SIBLINGS_LR).unwrap();
+    let lines: Vec<&str> = output.lines().collect();
+
+    assert_child_inside_parent(&lines, &output, "Outer", "West");
+    assert_child_inside_parent(&lines, &output, "Outer", "East");
+    assert_sibling_frames(&lines, &output, "West", "East");
+    assert_inside_box(
+        &lines,
+        "LeftA",
+        title_frame(&lines, "West").0,
+        title_frame(&lines, "West").1,
+        title_frame(&lines, "West").2,
+        title_frame(&lines, "West").3,
+    );
+    assert_inside_box(
+        &lines,
+        "RightB",
+        title_frame(&lines, "East").0,
+        title_frame(&lines, "East").1,
+        title_frame(&lines, "East").2,
+        title_frame(&lines, "East").3,
+    );
+    assert_label_on_lr_edge(&output, "L", "Start", "LeftA");
+    assert_label_on_lr_edge(&output, "R", "Start", "RightA");
+    assert_arrowheads_isolated(&lines, &output);
+    assert_no_box_overlap(&output);
+}
+
+#[test]
+fn nested_td_outer_node_interleaves_with_inner_members() {
+    let output = render(CASE_NESTED_INTERLEAVE_TD).unwrap();
+    let lines: Vec<&str> = output.lines().collect();
+
+    assert_child_inside_parent(&lines, &output, "Outer", "Inner");
+
+    let a_row = row_with(&lines, "InA");
+    let x_row = row_with(&lines, "OutX");
+    let b_row = row_with(&lines, "InB");
+    assert!(
+        a_row < x_row && x_row < b_row,
+        "OutX must rank between InA and InB, rows InA={a_row} OutX={x_row} InB={b_row}:\n{output}"
+    );
+
+    let (outer_top, outer_bottom, outer_left, outer_right) = title_frame(&lines, "Outer");
+    let (inner_top, inner_bottom, inner_left, inner_right) = title_frame(&lines, "Inner");
+    assert_inside_box(
+        &lines,
+        "InA",
+        inner_top,
+        inner_bottom,
+        inner_left,
+        inner_right,
+    );
+    assert_inside_box(
+        &lines,
+        "InB",
+        inner_top,
+        inner_bottom,
+        inner_left,
+        inner_right,
+    );
+    assert_outside_subgraph_box(
+        &lines,
+        "OutX",
+        inner_top,
+        inner_bottom,
+        inner_left,
+        inner_right,
+    );
+    assert_outside_subgraph_box(
+        &lines,
+        "OutX",
+        outer_top,
+        outer_bottom,
+        outer_left,
+        outer_right,
+    );
+    assert!(
+        outer_top < x_row && x_row < outer_bottom,
+        "OutX must sit beside the nested frames, not above or below them:\n{output}"
+    );
+
+    assert_label_on_edge(&output, "go", "InA", "OutX");
+    assert_label_on_edge(&output, "back", "OutX", "InB");
+    assert_arrowheads_off_border_rows(&lines, &output);
+    assert_no_box_overlap(&output);
+    assert_member_near_title(&lines, &output, "Inner", "InA", 6);
+    assert!(
+        lines.len() < 40,
+        "nested interleave must stay compact:\n{output}"
+    );
+}
+
+#[test]
+fn nested_lr_outer_node_interleaves_with_inner_members() {
+    let output = render(CASE_NESTED_INTERLEAVE_LR).unwrap();
+    let lines: Vec<&str> = output.lines().collect();
+
+    assert_child_inside_parent(&lines, &output, "Outer", "Inner");
+
+    let a_col = node_col(&lines, "InA");
+    let x_col = node_col(&lines, "OutX");
+    let b_col = node_col(&lines, "InB");
+    assert!(
+        a_col < x_col && x_col < b_col,
+        "OutX must rank between InA and InB, cols InA={a_col} OutX={x_col} InB={b_col}:\n{output}"
+    );
+
+    let (outer_top, outer_bottom, outer_left, outer_right) = title_frame(&lines, "Outer");
+    let (inner_top, inner_bottom, inner_left, inner_right) = title_frame(&lines, "Inner");
+    assert_inside_box(
+        &lines,
+        "InA",
+        inner_top,
+        inner_bottom,
+        inner_left,
+        inner_right,
+    );
+    assert_inside_box(
+        &lines,
+        "InB",
+        inner_top,
+        inner_bottom,
+        inner_left,
+        inner_right,
+    );
+    assert_outside_subgraph_box(
+        &lines,
+        "OutX",
+        inner_top,
+        inner_bottom,
+        inner_left,
+        inner_right,
+    );
+    assert_outside_subgraph_box(
+        &lines,
+        "OutX",
+        outer_top,
+        outer_bottom,
+        outer_left,
+        outer_right,
+    );
+    assert!(
+        outer_left < x_col && x_col < outer_right,
+        "OutX must sit above or below the nested frames, not left or right of them:\n{output}"
+    );
+    assert!(
+        x_row_outside_band(&lines, "OutX", outer_top, outer_bottom),
+        "OutX must sit outside the Outer band:\n{output}"
+    );
+
+    assert_label_on_lr_edge(&output, "go", "InA", "OutX");
+    assert_label_on_lr_edge(&output, "back", "OutX", "InB");
+    assert_arrowheads_isolated(&lines, &output);
+    assert_no_box_overlap(&output);
+    assert!(
+        lines
+            .iter()
+            .map(|line| line.chars().count())
+            .max()
+            .unwrap_or(0)
+            < 80,
+        "nested LR interleave must stay compact:\n{output}"
+    );
+}
+
+fn x_row_outside_band(lines: &[&str], needle: &str, top: usize, bottom: usize) -> bool {
+    let row = row_with(lines, needle);
+    row < top || row > bottom
+}
+
+#[test]
+fn sibling_claim_first_declaration_keeps_shared_in_left() {
+    let output = render(CASE_SIBLING_CLAIM).unwrap();
+    let lines: Vec<&str> = output.lines().collect();
+
+    assert_child_inside_parent(&lines, &output, "Outer", "West");
+    assert_child_inside_parent(&lines, &output, "Outer", "East");
+    assert_sibling_frames(&lines, &output, "West", "East");
+
+    let (left_top, left_bottom, left_left, left_right) = title_frame(&lines, "West");
+    let (right_top, right_bottom, right_left, right_right) = title_frame(&lines, "East");
+    assert_inside_box(
+        &lines,
+        "Shared",
+        left_top,
+        left_bottom,
+        left_left,
+        left_right,
+    );
+    assert_inside_box(
+        &lines,
+        "LeftOnly",
+        left_top,
+        left_bottom,
+        left_left,
+        left_right,
+    );
+    assert_outside_subgraph_box(
+        &lines,
+        "Shared",
+        right_top,
+        right_bottom,
+        right_left,
+        right_right,
+    );
+    assert_inside_box(
+        &lines,
+        "RightOnly",
+        right_top,
+        right_bottom,
+        right_left,
+        right_right,
+    );
+    assert_no_box_overlap(&output);
 }
