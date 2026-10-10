@@ -31,6 +31,7 @@ pub struct Subgraph {
     pub label: String,
     pub node_ids: Vec<String>,
     pub(crate) parent: Option<SubgraphIndex>,
+    pub direction: Option<Direction>,
 }
 
 impl GraphDiagram {
@@ -83,6 +84,54 @@ impl GraphDiagram {
             .filter(|id| self.innermost(id) == Some(index))
             .map(String::as_str)
             .collect()
+    }
+
+    pub(crate) fn member_links_outside(&self, index: SubgraphIndex) -> bool {
+        let Some(sg) = self.subgraphs.get(index.get()) else {
+            return false;
+        };
+        let members: std::collections::HashSet<&str> =
+            sg.node_ids.iter().map(String::as_str).collect();
+        let nodes: std::collections::HashSet<&str> =
+            self.nodes.iter().map(|node| node.id.as_str()).collect();
+        self.edges.iter().any(|edge| {
+            let from_member = members.contains(edge.from.as_str());
+            let to_member = members.contains(edge.to.as_str());
+            if from_member == to_member {
+                return false;
+            }
+            let outside = if from_member {
+                edge.to.as_str()
+            } else {
+                edge.from.as_str()
+            };
+            nodes.contains(outside) && !members.contains(outside)
+        })
+    }
+
+    pub(crate) fn honors_direction(&self, index: SubgraphIndex) -> bool {
+        self.subgraphs
+            .get(index.get())
+            .is_some_and(|sg| sg.direction.is_some() && !self.member_links_outside(index))
+    }
+
+    pub(crate) fn any_honored_direction(&self) -> bool {
+        (0..self.subgraphs.len()).any(|i| self.honors_direction(SubgraphIndex::new(i)))
+    }
+
+    pub(crate) fn effective_direction(&self, index: SubgraphIndex) -> Direction {
+        if self.honors_direction(index)
+            && let Some(dir) = self
+                .subgraphs
+                .get(index.get())
+                .and_then(|sg| sg.direction.clone())
+        {
+            return dir;
+        }
+        match self.parent(index) {
+            Some(parent) => self.effective_direction(parent),
+            None => self.direction.clone(),
+        }
     }
 
     pub(crate) fn contains_frame(&self, ancestor: SubgraphIndex, index: SubgraphIndex) -> bool {

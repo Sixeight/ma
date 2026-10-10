@@ -44,6 +44,8 @@ fn render_td(layout: &GraphLayout) -> String {
         let to = node_map[edge.to_id.as_str()];
         if is_subgraph_entry(edge, &layout.subgraphs) {
             draw_td_subgraph_entry(&mut grid, from, to, edge, layout);
+        } else if flow_of(layout, from, to) == Direction::LeftRight {
+            draw_lr_edge(&mut grid, from, to, edge, layout);
         } else {
             draw_td_edge(&mut grid, from, to, edge, layout);
         }
@@ -97,7 +99,9 @@ fn render_lr(layout: &GraphLayout) -> String {
         }
         let from = node_map[edge.from_id.as_str()];
         let to = node_map[edge.to_id.as_str()];
-        if let Some(placement) = draw_lr_edge(&mut grid, from, to, edge, layout)
+        if flow_of(layout, from, to) == Direction::TopDown {
+            draw_td_edge(&mut grid, from, to, edge, layout);
+        } else if let Some(placement) = draw_lr_edge(&mut grid, from, to, edge, layout)
             && let Some(label) = edge.label.as_deref()
         {
             labels.push((label, placement));
@@ -122,8 +126,11 @@ fn render_lr(layout: &GraphLayout) -> String {
 
     for edge in &layout.edges {
         if edge.route == EdgeRoute::Forward && has_arrow_head(edge.edge_type) {
+            let from = node_map[edge.from_id.as_str()];
             let to = node_map[edge.to_id.as_str()];
-            grid.set(to.center_y, to.x - 1, '>');
+            if flow_of(layout, from, to) == Direction::LeftRight {
+                grid.set(to.center_y, to.x - 1, '>');
+            }
         }
     }
 
@@ -164,13 +171,21 @@ fn draw_nodes_over_edges(grid: &mut Grid, layout: &GraphLayout) {
     }
 }
 
+fn flow_of(layout: &GraphLayout, from: &NodeLayout, to: &NodeLayout) -> Direction {
+    crate::graph_layout::edge_flow_direction(&layout.direction, &layout.subgraphs, from, to)
+}
+
 fn draw_edge_ports(grid: &mut Grid, layout: &GraphLayout) {
     for edge in &layout.edges {
         let from = layout.nodes.iter().find(|node| node.id == edge.from_id);
         let to = layout.nodes.iter().find(|node| node.id == edge.to_id);
 
         match edge.route {
-            EdgeRoute::Forward if layout.direction == Direction::TopDown => {
+            EdgeRoute::Forward
+                if from.is_some_and(|from| {
+                    to.is_some_and(|to| flow_of(layout, from, to) == Direction::TopDown)
+                }) =>
+            {
                 if let Some(from) = from {
                     if is_subgraph_entry(edge, &layout.subgraphs) {
                         grid.set(from.center_y, from.x + from.width - 1, '├');
@@ -831,7 +846,7 @@ fn draw_td_edge(
 
     // The geometry below assumes the target sits ahead of the source, which is
     // what routing every other edge through a gutter lane guarantees.
-    debug_assert!(!is_back_edge(&layout.direction, from, to));
+    debug_assert!(!is_back_edge(&flow_of(layout, from, to), from, to));
 
     let edge_type = edge.edge_type;
     let from_cx = from.center_x;
@@ -849,14 +864,14 @@ fn draw_td_edge(
         .iter()
         .filter(|e| e.from_id == from.id && e.from_id != e.to_id)
         .filter_map(|e| layout.nodes.iter().find(|n| n.id == e.to_id))
-        .filter(|n| !is_back_edge(&layout.direction, from, n))
+        .filter(|n| !is_back_edge(&flow_of(layout, from, n), from, n))
         .collect();
     let forward_parents: Vec<&NodeLayout> = layout
         .edges
         .iter()
         .filter(|e| e.to_id == to.id && e.from_id != e.to_id)
         .filter_map(|e| layout.nodes.iter().find(|n| n.id == e.from_id))
-        .filter(|n| !is_back_edge(&layout.direction, n, to))
+        .filter(|n| !is_back_edge(&flow_of(layout, n, to), n, to))
         .collect();
     let sibling_count = forward_children.len();
     let parent_count = forward_parents.len();
@@ -1518,7 +1533,7 @@ fn draw_lr_edge(
 
     // The geometry below assumes the target sits ahead of the source, which is
     // what routing every other edge through a gutter lane guarantees.
-    debug_assert!(!is_back_edge(&layout.direction, from, to));
+    debug_assert!(!is_back_edge(&flow_of(layout, from, to), from, to));
 
     let from_right = from.x + from.width;
     let to_left = to.x;
