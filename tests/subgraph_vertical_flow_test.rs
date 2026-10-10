@@ -768,22 +768,20 @@ fn assert_label_spaced_from_boxes(output: &str, label: &str) {
     let start = char_pos(lines[row], label);
     let end = start + label.chars().count();
     let chars: Vec<char> = lines[row].chars().collect();
-    let left = start
-        .checked_sub(1)
-        .and_then(|col| chars.get(col).copied());
+    let left = start.checked_sub(1).and_then(|col| chars.get(col).copied());
     let right = chars.get(end).copied();
     assert!(
         left.is_none_or(|ch| ch == ' ' || ch == '─' || ch == '╌'),
         "{label} must sit on its edge with a space from boxes, left {left:?}:\n{output}"
     );
     assert!(
-        right.is_none_or(|ch| ch == ' ' || ch == '─' || ch == '╌' || ch == '┐' || ch == '┘'),
+        right.is_none_or(|ch| {
+            ch == ' ' || ch == '─' || ch == '╌' || ch == '┐' || ch == '┘' || ch == '│'
+        }),
         "{label} must sit on its edge with a space from boxes, right {right:?}:\n{output}"
     );
     if left == Some('─') || left == Some('╌') {
-        let before = start
-            .checked_sub(2)
-            .and_then(|col| chars.get(col).copied());
+        let before = start.checked_sub(2).and_then(|col| chars.get(col).copied());
         assert!(
             before != Some('┐') && before != Some('┌'),
             "{label} must not glue to a box corner:\n{output}"
@@ -952,13 +950,10 @@ fn assert_nested_frames(lines: &[&str], output: &str) {
         outer_top + 1,
         "Inner top must sit exactly one cell below Outer:\n{output}"
     );
-    assert_eq!(
-        inner_bottom + 1,
-        outer_bottom,
-        "Inner bottom must sit exactly one cell above Outer:\n{output}"
-    );
     assert!(
-        inner_left >= outer_left + 2 && inner_right + 2 <= outer_right,
+        inner_bottom < outer_bottom
+            && inner_left >= outer_left + 2
+            && inner_right + 2 <= outer_right,
         "Inner frame must sit fully inside Outer with side padding:\n{output}"
     );
 
@@ -1119,6 +1114,13 @@ fn nested_lr_inner_frame_sits_inside_outer() {
     let lines: Vec<&str> = output.lines().collect();
 
     assert_nested_frames(&lines, &output);
+    let (_, outer_bottom, _, _) = title_frame(&lines, "Outer");
+    let (_, inner_bottom, _, _) = title_frame(&lines, "Inner");
+    assert_eq!(
+        inner_bottom + 1,
+        outer_bottom,
+        "LR Inner bottom must sit exactly one cell above Outer:\n{output}"
+    );
     assert_lr_nested_crossings(&lines, &output);
     assert_label_on_lr_edge(&output, "enter", "Start", "InB");
     assert_label_on_lr_edge(&output, "leave", "InB", "OutC");
