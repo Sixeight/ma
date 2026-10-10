@@ -2240,7 +2240,6 @@ const SUBGRAPH_PAD_LEFT: usize = 2;
 const SUBGRAPH_PAD_RIGHT: usize = 2;
 const SUBGRAPH_PAD_TOP: usize = 1;
 const SUBGRAPH_PAD_BOTTOM: usize = 1;
-/// `PAD_TOP` is the title row, so a nested border needs a cell of its own.
 const MIN_FRAME_SEPARATION: usize = 2;
 const SUBGRAPH_TITLE_DECOR: usize = 6;
 const SUBGRAPH_TITLE_TEXT_OFFSET: usize = 3;

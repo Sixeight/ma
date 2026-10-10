@@ -58,7 +58,6 @@ impl GraphDiagram {
             .collect()
     }
 
-    /// Lowest subgraph index whose closed `node_ids` contain `id`.
     pub(crate) fn innermost(&self, id: &str) -> Option<SubgraphIndex> {
         self.subgraphs.iter().enumerate().find_map(|(i, sg)| {
             sg.node_ids
