@@ -24,7 +24,7 @@ fn render_td(layout: &GraphLayout) -> String {
         .collect();
 
     for sg in &layout.subgraphs {
-        draw_subgraph(&mut grid, sg, layout);
+        draw_subgraph(&mut grid, sg);
     }
 
     for node in &layout.nodes {
@@ -81,7 +81,7 @@ fn render_lr(layout: &GraphLayout) -> String {
         .collect();
 
     for sg in &layout.subgraphs {
-        draw_subgraph(&mut grid, sg, layout);
+        draw_subgraph(&mut grid, sg);
     }
 
     for node in &layout.nodes {
@@ -295,85 +295,31 @@ fn draw_hexagon(grid: &mut Grid, x: usize, y: usize, width: usize, height: usize
     grid.set(bottom, x + width - 2, '╱');
 }
 
-fn subgraph_entry_cols(layout: &GraphLayout, sg: &SubgraphLayout) -> Vec<usize> {
-    layout
-        .nodes
-        .iter()
-        .filter(|node| {
-            node.x >= sg.x
-                && node.x + node.width <= sg.x + sg.width
-                && node.y >= sg.y
-                && node.y + node.height <= sg.y + sg.height
-        })
-        .filter(|node| {
-            layout.edges.iter().any(|edge| {
-                edge.to_id == node.id
-                    && layout
-                        .nodes
-                        .iter()
-                        .any(|from| from.id == edge.from_id && from.y + from.height <= sg.y)
-            })
-        })
-        .map(|node| node.center_x)
-        .collect()
-}
-
-fn subgraph_title_col(layout: &GraphLayout, sg: &SubgraphLayout) -> usize {
-    let title_w = display_width(&sg.label);
-    let min_col = sg.x + 3;
-    let max_start = (sg.x + sg.width).saturating_sub(2 + title_w);
-    if max_start < min_col {
-        return min_col;
-    }
-    let blocked = subgraph_entry_cols(layout, sg);
-    let candidates: Vec<usize> = (min_col..=max_start)
-        .filter(|start| {
-            let end = start + title_w;
-            blocked.iter().all(|col| *col < *start || *col >= end)
-        })
-        .collect();
-    candidates
-        .iter()
-        .copied()
-        .find(|start| {
-            !blocked.contains(&start.saturating_sub(1)) && !blocked.contains(&(start + title_w))
-        })
-        .or_else(|| candidates.first().copied())
-        .unwrap_or(min_col)
-}
-
-fn draw_subgraph_title(
-    grid: &mut Grid,
-    sg: &SubgraphLayout,
-    title_col: usize,
-    entry_cols: &[usize],
-) {
+fn draw_subgraph_title(grid: &mut Grid, sg: &SubgraphLayout) {
+    let title_col = subgraph_title_col(sg);
     let title_w = display_width(&sg.label);
     let left_space = title_col.saturating_sub(1);
-    if title_col > sg.x + 1 && !entry_cols.contains(&left_space) {
+    if title_col > sg.x + 1 {
         grid.set(sg.y, left_space, ' ');
     }
     grid.write_str(sg.y, title_col, &sg.label);
     let right_space = title_col + title_w;
-    if right_space < sg.x + sg.width - 1 && !entry_cols.contains(&right_space) {
+    if right_space < sg.x + sg.width - 1 {
         grid.set(sg.y, right_space, ' ');
     }
 }
 
-fn draw_subgraph(grid: &mut Grid, sg: &SubgraphLayout, layout: &GraphLayout) {
+fn draw_subgraph(grid: &mut Grid, sg: &SubgraphLayout) {
     let x = sg.x;
     let y = sg.y;
     let w = sg.width;
     let h = sg.height;
-    let entry_cols = subgraph_entry_cols(layout, sg);
-    let title_col = subgraph_title_col(layout, sg);
-
     grid.set(y, x, '┌');
     for col in (x + 1)..(x + w - 1) {
         grid.set(y, col, '─');
     }
     grid.set(y, x + w - 1, '┐');
-    draw_subgraph_title(grid, sg, title_col, &entry_cols);
+    draw_subgraph_title(grid, sg);
 
     for row in (y + 1)..(y + h - 1) {
         grid.set(row, x, '│');
@@ -542,16 +488,11 @@ fn is_subgraph_border_row(layout: &GraphLayout, row: usize) -> bool {
         .any(|sg| row == sg.y || row == sg.y + sg.height - 1)
 }
 
-fn subgraph_title_text_at(
-    layout: &GraphLayout,
-    sg: &SubgraphLayout,
-    row: usize,
-    col: usize,
-) -> bool {
+fn subgraph_title_text_at(sg: &SubgraphLayout, row: usize, col: usize) -> bool {
     if row != sg.y {
         return false;
     }
-    let start = subgraph_title_col(layout, sg);
+    let start = subgraph_title_col(sg);
     let end = start + display_width(&sg.label);
     col >= start && col < end
 }
@@ -560,7 +501,7 @@ fn set_td_vertical(grid: &mut Grid, layout: &GraphLayout, row: usize, col: usize
     if layout
         .subgraphs
         .iter()
-        .any(|sg| subgraph_title_text_at(layout, sg, row, col))
+        .any(|sg| subgraph_title_text_at(sg, row, col))
     {
         return;
     }
@@ -599,7 +540,7 @@ fn set_td_horizontal(grid: &mut Grid, layout: &GraphLayout, row: usize, col: usi
     if layout
         .subgraphs
         .iter()
-        .any(|sg| subgraph_title_text_at(layout, sg, row, col))
+        .any(|sg| subgraph_title_text_at(sg, row, col))
     {
         return;
     }
@@ -612,12 +553,7 @@ fn set_td_horizontal(grid: &mut Grid, layout: &GraphLayout, row: usize, col: usi
 
 fn redraw_subgraph_titles(grid: &mut Grid, layout: &GraphLayout) {
     for sg in &layout.subgraphs {
-        draw_subgraph_title(
-            grid,
-            sg,
-            subgraph_title_col(layout, sg),
-            &subgraph_entry_cols(layout, sg),
-        );
+        draw_subgraph_title(grid, sg);
     }
 }
 
@@ -785,7 +721,7 @@ fn draw_td_single_edge_route(
     if !layout
         .subgraphs
         .iter()
-        .any(|sg| subgraph_title_text_at(layout, sg, to_above, to_cx))
+        .any(|sg| subgraph_title_text_at(sg, to_above, to_cx))
     {
         if has_arrow_head(edge_type) {
             grid.set(to_above, to_cx, '▼');
@@ -956,7 +892,7 @@ fn draw_td_edge(
             if !layout
                 .subgraphs
                 .iter()
-                .any(|sg| subgraph_title_text_at(layout, sg, to_above, to_cx))
+                .any(|sg| subgraph_title_text_at(sg, to_above, to_cx))
             {
                 grid.set(to_above, to_cx, '▼');
             }
