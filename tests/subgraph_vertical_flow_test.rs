@@ -141,6 +141,48 @@ fn case_a_start_decision_processing_merge_end_vertical_flow() {
     }
 }
 
+fn line_width(line: &str) -> usize {
+    line.chars().count()
+}
+
+fn render_width(output: &str) -> usize {
+    output.lines().map(line_width).max().unwrap_or(0)
+}
+
+fn node_box_left(lines: &[&str], needle: &str) -> usize {
+    let row = row_with(lines, needle);
+    let text_col = char_pos(lines[row], needle);
+    let chars: Vec<char> = lines[row].chars().collect();
+    (0..text_col)
+        .rev()
+        .find(|&col| chars[col] == '│')
+        .unwrap_or_else(|| panic!("box left of {needle}:\n{}", lines.join("\n")))
+}
+
+#[test]
+fn case_a_pinned_title_stays_compact() {
+    let output = render(CASE_A).unwrap();
+    let lines: Vec<&str> = output.lines().collect();
+
+    assert_title_at_home(&lines, "Processing");
+    let (title_row, bottom_row, left, right) = subgraph_frame(&lines, "Processing");
+    let step1_row = row_with(&lines, "Step 1");
+    assert!(title_row < step1_row && step1_row < bottom_row);
+    assert_inside_frame(&lines, "Step 1", left, right);
+
+    let box_left = node_box_left(&lines, "Step 1");
+    assert_eq!(
+        box_left,
+        left + 2,
+        "Step 1 must sit at the normal left pad, not shifted off the title:\n{output}"
+    );
+    assert!(
+        render_width(&output) <= 40,
+        "Case A must stay compact with a pinned title, width {}:\n{output}",
+        render_width(&output)
+    );
+}
+
 #[test]
 fn case_b_subgraph_to_external_node_forward_edge() {
     let output = render(CASE_B).unwrap();
@@ -268,14 +310,21 @@ fn title_reserved_cols(title_line: &str, title: &str) -> (usize, usize) {
 }
 
 fn assert_stem_misses_title(lines: &[&str], title: &str, step: &str) {
-    let title_line = lines[row_with(lines, title)];
+    let title_row = row_with(lines, title);
+    let title_line = lines[title_row];
     let step_row = row_with(lines, step);
     let col = char_pos(lines[step_row], step) + step.chars().count() / 2;
     let (reserved_start, reserved_end) = title_reserved_cols(title_line, title);
-    assert!(
-        col < reserved_start || col >= reserved_end,
-        "{step} stem col {col} must miss title reserved [{reserved_start},{reserved_end}): {title_line:?}"
-    );
+    if col >= reserved_start && col < reserved_end {
+        assert_entries_cross_after_title(lines, title);
+        assert!(
+            ((title_row + 1)..step_row).any(|row| column_has_vertical(lines[row], col)
+                || lines[row].chars().nth(col) == Some('▼')),
+            "{step} stem must continue below the title at col {col}:\n{}",
+            lines.join("\n")
+        );
+        return;
+    }
     let ch = title_line.chars().nth(col);
     assert!(
         matches!(ch, Some('┼' | '┬' | '│')),
@@ -713,6 +762,66 @@ fn outer_node_ranks_between_lr_subgraph_members() {
     assert_no_box_overlap(&output);
 }
 
+fn assert_label_spaced_from_boxes(output: &str, label: &str) {
+    let lines: Vec<&str> = output.lines().collect();
+    let row = row_with(&lines, label);
+    let start = char_pos(lines[row], label);
+    let end = start + label.chars().count();
+    let chars: Vec<char> = lines[row].chars().collect();
+    let left = start
+        .checked_sub(1)
+        .and_then(|col| chars.get(col).copied());
+    let right = chars.get(end).copied();
+    assert!(
+        left.is_none_or(|ch| ch == ' ' || ch == '─' || ch == '╌'),
+        "{label} must sit on its edge with a space from boxes, left {left:?}:\n{output}"
+    );
+    assert!(
+        right.is_none_or(|ch| ch == ' ' || ch == '─' || ch == '╌' || ch == '┐' || ch == '┘'),
+        "{label} must sit on its edge with a space from boxes, right {right:?}:\n{output}"
+    );
+    if left == Some('─') || left == Some('╌') {
+        let before = start
+            .checked_sub(2)
+            .and_then(|col| chars.get(col).copied());
+        assert!(
+            before != Some('┐') && before != Some('┌'),
+            "{label} must not glue to a box corner:\n{output}"
+        );
+    }
+}
+
+#[test]
+fn lr_interleave_labels_sit_on_the_edge_with_space() {
+    let output = render(CASE_LR_INTERLEAVE).unwrap();
+    assert!(
+        !output.contains("┐go") && !output.contains("┌─────┐go"),
+        "go must not glue to the InA box:\n{output}"
+    );
+    assert!(
+        !output.contains("┐back") && !output.contains("┌──────┐back"),
+        "back must not glue to the OutX box:\n{output}"
+    );
+    assert_label_on_lr_edge(&output, "go", "InA", "OutX");
+    assert_label_on_lr_edge(&output, "back", "OutX", "InB");
+    assert_label_spaced_from_boxes(&output, "go");
+    assert_label_spaced_from_boxes(&output, "back");
+}
+
+#[test]
+fn lr_interleave_outx_has_no_extra_rows() {
+    let output = render(CASE_LR_INTERLEAVE).unwrap();
+    let lines: Vec<&str> = output.lines().collect();
+    let (_, bottom_row, _, _) = subgraph_frame(&lines, "Group");
+    let x_row = row_with(&lines, "OutX");
+    let x_top = x_row - 1;
+    assert_eq!(
+        x_top,
+        bottom_row + 1,
+        "OutX must sit one row below the frame, no extra empty rows:\n{output}"
+    );
+}
+
 #[test]
 fn outer_node_shares_a_column_with_an_inner_node() {
     let output = render(CASE_LR_SHARE_COL).unwrap();
@@ -838,12 +947,19 @@ fn assert_nested_frames(lines: &[&str], output: &str) {
         "Outer title must not sit on the Inner title row:\n{output}"
     );
 
+    assert_eq!(
+        inner_top,
+        outer_top + 1,
+        "Inner top must sit exactly one cell below Outer:\n{output}"
+    );
+    assert_eq!(
+        inner_bottom + 1,
+        outer_bottom,
+        "Inner bottom must sit exactly one cell above Outer:\n{output}"
+    );
     assert!(
-        inner_top >= outer_top + 2
-            && inner_bottom + 2 <= outer_bottom
-            && inner_left >= outer_left + 2
-            && inner_right + 2 <= outer_right,
-        "Inner frame must sit fully inside Outer with at least one cell of padding:\n{output}"
+        inner_left >= outer_left + 2 && inner_right + 2 <= outer_right,
+        "Inner frame must sit fully inside Outer with side padding:\n{output}"
     );
 
     let outer_border = perimeter(outer_top, outer_bottom, outer_left, outer_right);
