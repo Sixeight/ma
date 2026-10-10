@@ -79,20 +79,11 @@ fn case_a_start_decision_processing_merge_end_vertical_flow() {
     );
     assert!(merge_row < end_row, "Merge must render above End");
 
-    let title_line = lines[processing_row];
-    assert!(
-        title_line.contains("Processing"),
-        "subgraph title must be intact on one row, got {title_line:?}"
-    );
-    let title_at = title_line
-        .find("Processing")
-        .expect("Processing on title row");
-    let title_end = title_at + "Processing".len();
-    let title_span = &title_line[title_at..title_end];
-    assert_eq!(
-        title_span, "Processing",
-        "entry edges must not cut the subgraph title: {title_line:?}"
-    );
+    assert_title_at_home(&lines, "Processing");
+    assert_entries_cross_after_title(&lines, "Processing");
+    for step in ["Step 1", "Step 2", "Step 3"] {
+        assert_stem_misses_title(&lines, "Processing", step);
+    }
 
     assert!(output.contains("Yes"), "edge label Yes present");
     assert!(output.contains("No"), "edge label No present");
@@ -241,6 +232,54 @@ fn assert_title_intact(lines: &[&str], title: &str) {
         1,
         "title must appear on exactly one row:\n{}",
         lines.join("\n")
+    );
+}
+
+fn assert_title_at_home(lines: &[&str], title: &str) {
+    assert_title_intact(lines, title);
+    let title_line = lines[row_with(lines, title)];
+    let home = format!("┌─ {title} ─");
+    assert!(
+        title_line.contains(&home),
+        "title must sit at its normal ┌─ Title ─ position: {title_line:?}"
+    );
+    let title_at = title_line.find(title).expect("title text");
+    for ch in title_line[title_at..title_at + title.len()].chars() {
+        assert!(
+            !matches!(ch, '┼' | '│' | '▼' | '┬' | '┴'),
+            "entry glyph {ch:?} must not sit inside the title: {title_line:?}"
+        );
+    }
+}
+
+fn assert_entries_cross_after_title(lines: &[&str], title: &str) {
+    let title_line = lines[row_with(lines, title)];
+    let title_at = title_line.find(title).expect("title text");
+    let after = &title_line[title_at + title.len()..];
+    assert!(
+        after.contains('┼') || after.contains('┬') || after.contains('│'),
+        "entry edges must cross the top border after the title: {title_line:?}"
+    );
+}
+
+fn title_reserved_cols(title_line: &str, title: &str) -> (usize, usize) {
+    let start = char_pos(title_line, title);
+    (start.saturating_sub(1), start + title.chars().count() + 2)
+}
+
+fn assert_stem_misses_title(lines: &[&str], title: &str, step: &str) {
+    let title_line = lines[row_with(lines, title)];
+    let step_row = row_with(lines, step);
+    let col = char_pos(lines[step_row], step) + step.chars().count() / 2;
+    let (reserved_start, reserved_end) = title_reserved_cols(title_line, title);
+    assert!(
+        col < reserved_start || col >= reserved_end,
+        "{step} stem col {col} must miss title reserved [{reserved_start},{reserved_end}): {title_line:?}"
+    );
+    let ch = title_line.chars().nth(col);
+    assert!(
+        matches!(ch, Some('┼' | '┬' | '│')),
+        "{step} must cross the top border at col {col}, got {ch:?}: {title_line:?}"
     );
 }
 
@@ -466,4 +505,51 @@ fn outer_node_shares_a_row_with_an_inner_node() {
         "down/right split under InA must be ├/┬/┼, got {fork:?}:\n{output}"
     );
     assert_no_box_overlap(&output);
+}
+
+const CASE_LEFT_EDGE_ENTRIES: &str = r#"graph TD
+    Src --> A
+    Src --> B
+    subgraph Leftish
+        A[AA]
+        B[BB]
+    end
+"#;
+
+#[test]
+fn top_entries_near_the_left_edge_keep_title_at_home() {
+    let output = render(CASE_LEFT_EDGE_ENTRIES).unwrap();
+    let lines: Vec<&str> = output.lines().collect();
+
+    assert_title_at_home(&lines, "Leftish");
+    assert_entries_cross_after_title(&lines, "Leftish");
+    for step in ["AA", "BB"] {
+        assert_stem_misses_title(&lines, "Leftish", step);
+    }
+
+    let src_row = row_with(&lines, "Src");
+    let title_row = row_with(&lines, "Leftish");
+    let aa_row = row_with(&lines, "AA");
+    let bb_row = row_with(&lines, "BB");
+    assert!(src_row < title_row, "Src must sit above the subgraph");
+    assert!(
+        title_row < aa_row && title_row < bb_row,
+        "AA and BB must sit below the title:\n{output}"
+    );
+
+    let (title_row, bottom_row, left, right) = subgraph_frame(&lines, "Leftish");
+    assert!(title_row < aa_row && aa_row < bottom_row);
+    assert!(title_row < bb_row && bb_row < bottom_row);
+    assert_inside_frame(&lines, "AA", left, right);
+    assert_inside_frame(&lines, "BB", left, right);
+
+    for step in ["AA", "BB"] {
+        let step_row = row_with(&lines, step);
+        let col = char_pos(lines[step_row], step) + step.chars().count() / 2;
+        assert!(
+            (title_row..step_row).any(|row| column_has_vertical(lines[row], col)
+                || lines[row].chars().nth(col) == Some('▼')),
+            "{step} must keep a top-entry stem:\n{output}"
+        );
+    }
 }
