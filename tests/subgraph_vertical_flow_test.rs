@@ -1198,8 +1198,8 @@ const CASE_TRIPLE_LR: &str = r#"flowchart LR
 "#;
 
 const CASE_SIBLINGS_TD: &str = r#"flowchart TD
-    Start -->|L| LeftA
-    Start -->|R| RightA
+    Start -->|toW| LeftA
+    Start -->|toE| RightA
     subgraph Outer[Outer]
         subgraph West[West]
             LeftA
@@ -1215,8 +1215,8 @@ const CASE_SIBLINGS_TD: &str = r#"flowchart TD
 "#;
 
 const CASE_SIBLINGS_LR: &str = r#"flowchart LR
-    Start -->|L| LeftA
-    Start -->|R| RightA
+    Start -->|toW| LeftA
+    Start -->|toE| RightA
     subgraph Outer[Outer]
         subgraph West[West]
             LeftA
@@ -1280,10 +1280,7 @@ fn assert_child_inside_parent(lines: &[&str], output: &str, parent: &str, child:
         "{child} title must not sit on the {parent} title row:\n{output}"
     );
     assert!(
-        c_top >= p_top + 1
-            && c_bottom + 1 <= p_bottom
-            && c_left >= p_left + 2
-            && c_right + 2 <= p_right,
+        c_top > p_top && c_bottom < p_bottom && c_left >= p_left + 2 && c_right + 2 <= p_right,
         "{child} must sit fully inside {parent} with one cell of padding:\n{output}"
     );
 
@@ -1322,10 +1319,8 @@ fn assert_sibling_frames(lines: &[&str], output: &str, left: &str, right: &str) 
         l_left - r_right
     } else if r_top >= l_bottom {
         r_top - l_bottom
-    } else if l_top >= r_bottom {
-        l_top - r_bottom
     } else {
-        0
+        l_top.saturating_sub(r_bottom)
     };
     assert!(
         gap >= 1,
@@ -1565,8 +1560,8 @@ fn sibling_subgraphs_inside_parent_td() {
         title_frame(&lines, "East").3,
     );
     assert_arrowheads_off_border_rows(&lines, &output);
-    assert_label_on_edge(&output, "L", "Start", "LeftA");
-    assert_label_on_edge(&output, "R", "Start", "RightA");
+    assert_label_on_edge(&output, "toW", "Start", "LeftA");
+    assert_label_on_edge(&output, "toE", "Start", "RightA");
     assert_no_box_overlap(&output);
     assert!(
         lines.len() < 40,
@@ -1598,8 +1593,8 @@ fn sibling_subgraphs_inside_parent_lr() {
         title_frame(&lines, "East").2,
         title_frame(&lines, "East").3,
     );
-    assert_label_on_lr_edge(&output, "L", "Start", "LeftA");
-    assert_label_on_lr_edge(&output, "R", "Start", "RightA");
+    assert_label_on_lr_edge(&output, "toW", "Start", "LeftA");
+    assert_label_on_lr_edge(&output, "toE", "Start", "RightA");
     assert_arrowheads_isolated(&lines, &output);
     assert_no_box_overlap(&output);
 }

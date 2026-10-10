@@ -2970,6 +2970,7 @@ fn wrap_one(diagram: &GraphDiagram, index: SubgraphIndex, layout: &mut GraphLayo
         }
     }
     layout.subgraphs.push(frame);
+    separate_peer_frames(diagram, index, layout);
 }
 
 fn strictly_contains(outer: &SubgraphLayout, inner: &SubgraphLayout) -> bool {
@@ -2983,27 +2984,18 @@ fn strictly_contains(outer: &SubgraphLayout, inner: &SubgraphLayout) -> bool {
         && inner_right + MIN_FRAME_SEPARATION <= outer_right
 }
 
-fn fit_frame(
+fn content_bounds(
     diagram: &GraphDiagram,
     index: SubgraphIndex,
     layout: &GraphLayout,
-) -> Option<FrameDraft> {
+) -> Option<Bounds> {
     let exclusive = diagram.exclusive_members(index);
     let members: Vec<&NodeLayout> = layout
         .nodes
         .iter()
         .filter(|node| exclusive.iter().any(|id| *id == node.id))
         .collect();
-    let child_ids: Vec<&str> = diagram
-        .children(index)
-        .iter()
-        .map(|child| diagram.subgraphs[child.get()].id.as_str())
-        .collect();
-    let children: Vec<&SubgraphLayout> = layout
-        .subgraphs
-        .iter()
-        .filter(|sg| child_ids.contains(&sg.id.as_str()))
-        .collect();
+    let children = child_frames(diagram, index, layout);
     if members.is_empty() && children.is_empty() {
         return None;
     }
@@ -3026,7 +3018,33 @@ fn fit_frame(
             child.y + child.height,
         );
     }
-    let bounds = bounds?;
+    bounds
+}
+
+fn child_frames<'a>(
+    diagram: &GraphDiagram,
+    index: SubgraphIndex,
+    layout: &'a GraphLayout,
+) -> Vec<&'a SubgraphLayout> {
+    let child_ids: Vec<&str> = diagram
+        .children(index)
+        .iter()
+        .map(|child| diagram.subgraphs[child.get()].id.as_str())
+        .collect();
+    layout
+        .subgraphs
+        .iter()
+        .filter(|sg| child_ids.contains(&sg.id.as_str()))
+        .collect()
+}
+
+fn fit_frame(
+    diagram: &GraphDiagram,
+    index: SubgraphIndex,
+    layout: &GraphLayout,
+) -> Option<FrameDraft> {
+    let bounds = content_bounds(diagram, index, layout)?;
+    let children = child_frames(diagram, index, layout);
     let crosses = crossing_sides(diagram, index, layout, &bounds);
     let left = side_inset(
         Side::Left,
@@ -3203,11 +3221,28 @@ fn repair_clearance(
 ) -> bool {
     let nodes = layout.nodes.clone();
     let closed = &diagram.subgraphs[index.get()].node_ids;
+    let Some(content) = content_bounds(diagram, index, layout) else {
+        return false;
+    };
+    let neighbors: Vec<&NodeLayout> = nodes
+        .iter()
+        .filter(|node| {
+            !closed.iter().any(|id| id == &node.id)
+                && overlaps_frame(frame, node)
+                && flow_overlaps_content(&diagram.direction, &content, node)
+        })
+        .collect();
+    if !neighbors.is_empty() && push_neighbors_aside(&diagram.direction, layout, frame, &neighbors)
+    {
+        return true;
+    }
     for node in &nodes {
         if closed.iter().any(|id| id == &node.id) {
             continue;
         }
-        if overlaps_frame(frame, node) && separate_overlap(&diagram.direction, layout, frame, node)
+        if overlaps_frame(frame, node)
+            && !flow_overlaps_content(&diagram.direction, &content, node)
+            && separate_overlap(&diagram.direction, layout, frame, node)
         {
             return true;
         }
@@ -3232,8 +3267,19 @@ fn repair_clearance(
                 if from.y + from.height > to.y {
                     continue;
                 }
+                if flow_overlaps_content(&diagram.direction, &content, from) {
+                    continue;
+                }
                 let rows = edge.label.as_deref().map(line_count).unwrap_or(0);
-                let need = (from.y + from.height + rows) as isize;
+                let branches = diagram
+                    .edges
+                    .iter()
+                    .filter(|other| {
+                        other.from == edge.from && other.edge_type != EdgeType::Invisible
+                    })
+                    .count();
+                let fork = usize::from(branches > 1);
+                let need = (from.y + from.height + rows + fork) as isize;
                 if frame.y < need {
                     let amount = (need - frame.y) as usize;
                     let at = if frame.y > from.y as isize {
@@ -3257,6 +3303,9 @@ fn repair_clearance(
                 let Some(to) = nodes.iter().find(|node| node.id == edge.to) else {
                     continue;
                 };
+                if flow_overlaps_content(&diagram.direction, &content, to) {
+                    continue;
+                }
                 if (to.y as isize) < frame.y {
                     continue;
                 }
@@ -3280,6 +3329,9 @@ fn repair_clearance(
                 let Some(to) = nodes.iter().find(|node| node.id == edge.to) else {
                     continue;
                 };
+                if flow_overlaps_content(&diagram.direction, &content, to) {
+                    continue;
+                }
                 if (to.x as isize) < frame.x {
                     continue;
                 }
@@ -3292,6 +3344,257 @@ fn repair_clearance(
         }
     }
     false
+}
+
+fn flow_overlaps_content(direction: &Direction, content: &Bounds, node: &NodeLayout) -> bool {
+    match direction {
+        Direction::TopDown => node.y < content.max_y && node.y + node.height > content.min_y,
+        Direction::LeftRight => node.x < content.max_x && node.x + node.width > content.min_x,
+    }
+}
+
+fn push_neighbors_aside(
+    direction: &Direction,
+    layout: &mut GraphLayout,
+    frame: &FrameDraft,
+    neighbors: &[&NodeLayout],
+) -> bool {
+    let mid = match direction {
+        Direction::TopDown => frame.x + frame.width as isize / 2,
+        Direction::LeftRight => frame.y + frame.height as isize / 2,
+    };
+    let (right, left): (Vec<&NodeLayout>, Vec<&NodeLayout>) =
+        neighbors.iter().copied().partition(|node| {
+            let at = match direction {
+                Direction::TopDown => node.center_x as isize,
+                Direction::LeftRight => node.center_y as isize,
+            };
+            at >= mid
+        });
+    if let Some(amount) = cross_push_amount(direction, frame, &right, true) {
+        translate_ids(
+            layout,
+            &right.iter().map(|node| node.id.clone()).collect(),
+            amount,
+        );
+        return true;
+    }
+    if let Some(amount) = cross_push_amount(direction, frame, &left, false) {
+        translate_ids(
+            layout,
+            &left.iter().map(|node| node.id.clone()).collect(),
+            amount,
+        );
+        return true;
+    }
+    false
+}
+
+fn cross_push_amount(
+    direction: &Direction,
+    frame: &FrameDraft,
+    nodes: &[&NodeLayout],
+    push_positive: bool,
+) -> Option<(isize, isize)> {
+    if nodes.is_empty() {
+        return None;
+    }
+    let amount = if push_positive {
+        nodes
+            .iter()
+            .map(|node| match direction {
+                Direction::TopDown => frame.right() - node.x as isize,
+                Direction::LeftRight => frame.bottom() - node.y as isize,
+            })
+            .max()?
+    } else {
+        nodes
+            .iter()
+            .map(|node| match direction {
+                Direction::TopDown => node.x as isize + node.width as isize - frame.x,
+                Direction::LeftRight => node.y as isize + node.height as isize - frame.y,
+            })
+            .max()?
+    };
+    if amount <= 0 {
+        return None;
+    }
+    let signed = if push_positive { amount } else { -amount };
+    Some(match direction {
+        Direction::TopDown => (signed, 0),
+        Direction::LeftRight => (0, signed),
+    })
+}
+
+fn translate_ids(layout: &mut GraphLayout, ids: &HashSet<String>, delta: (isize, isize)) {
+    let (dx, dy) = delta;
+    if dx == 0 && dy == 0 {
+        return;
+    }
+    let extra_x = layout
+        .nodes
+        .iter()
+        .filter(|node| ids.contains(&node.id))
+        .map(|node| -(node.x as isize + dx))
+        .max()
+        .unwrap_or(0)
+        .max(0);
+    let extra_y = layout
+        .nodes
+        .iter()
+        .filter(|node| ids.contains(&node.id))
+        .map(|node| -(node.y as isize + dy))
+        .max()
+        .unwrap_or(0)
+        .max(0);
+    for node in &mut layout.nodes {
+        let mut nx = node.x as isize;
+        let mut ny = node.y as isize;
+        if ids.contains(&node.id) {
+            nx += dx;
+            ny += dy;
+        }
+        nx += extra_x;
+        ny += extra_y;
+        node.x = nx as usize;
+        node.y = ny as usize;
+        node.center_x =
+            (node.center_x as isize + dx * isize::from(ids.contains(&node.id)) + extra_x) as usize;
+        node.center_y =
+            (node.center_y as isize + dy * isize::from(ids.contains(&node.id)) + extra_y) as usize;
+    }
+    for sg in &mut layout.subgraphs {
+        let mut x = sg.x as isize;
+        let mut y = sg.y as isize;
+        if ids.contains(&sg.id) {
+            x += dx;
+            y += dy;
+        }
+        x += extra_x;
+        y += extra_y;
+        sg.x = x as usize;
+        sg.y = y as usize;
+    }
+}
+
+fn separate_peer_frames(diagram: &GraphDiagram, index: SubgraphIndex, layout: &mut GraphLayout) {
+    let current_id = diagram.subgraphs[index.get()].id.clone();
+    let descendants = descendant_ids(diagram, index);
+    loop {
+        let Some(current) = layout
+            .subgraphs
+            .iter()
+            .find(|sg| sg.id == current_id)
+            .cloned()
+        else {
+            return;
+        };
+        let mut moved = false;
+        let peers: Vec<SubgraphLayout> = layout
+            .subgraphs
+            .iter()
+            .filter(|sg| {
+                sg.id != current_id
+                    && !descendants.contains(&sg.id)
+                    && layout_index(diagram, &sg.id).is_some_and(|peer| {
+                        !diagram.contains_frame(index, peer) && !diagram.contains_frame(peer, index)
+                    })
+            })
+            .cloned()
+            .collect();
+        for peer in peers {
+            let Some(delta) = peer_shift(&diagram.direction, &current, &peer) else {
+                continue;
+            };
+            let mut ids = cluster_ids(diagram, index);
+            ids.insert(current_id.clone());
+            translate_ids(layout, &ids, delta);
+            moved = true;
+            break;
+        }
+        if !moved {
+            return;
+        }
+    }
+}
+
+fn layout_index(diagram: &GraphDiagram, id: &str) -> Option<SubgraphIndex> {
+    diagram
+        .subgraphs
+        .iter()
+        .position(|sg| sg.id == id)
+        .map(SubgraphIndex::new)
+}
+
+fn cluster_ids(diagram: &GraphDiagram, index: SubgraphIndex) -> HashSet<String> {
+    let mut ids: HashSet<String> = diagram
+        .exclusive_members(index)
+        .into_iter()
+        .map(str::to_string)
+        .collect();
+    let mut stack = diagram.children(index);
+    while let Some(child) = stack.pop() {
+        ids.extend(
+            diagram
+                .exclusive_members(child)
+                .into_iter()
+                .map(str::to_string),
+        );
+        ids.insert(diagram.subgraphs[child.get()].id.clone());
+        stack.extend(diagram.children(child));
+    }
+    ids
+}
+
+fn peer_shift(
+    direction: &Direction,
+    current: &SubgraphLayout,
+    peer: &SubgraphLayout,
+) -> Option<(isize, isize)> {
+    let cur_right = current.x + current.width;
+    let cur_bottom = current.y + current.height;
+    let peer_right = peer.x + peer.width;
+    let peer_bottom = peer.y + peer.height;
+    let x_overlap = current.x < peer_right && peer.x < cur_right;
+    let y_overlap = current.y < peer_bottom && peer.y < cur_bottom;
+    match direction {
+        Direction::TopDown => {
+            if !y_overlap {
+                return None;
+            }
+            if current.x >= peer.x {
+                let gap = current.x as isize - peer_right as isize + 1;
+                if gap >= 2 {
+                    return None;
+                }
+                Some((2 - gap, 0))
+            } else {
+                let gap = peer.x as isize - cur_right as isize + 1;
+                if gap >= 2 {
+                    return None;
+                }
+                Some((gap - 2, 0))
+            }
+        }
+        Direction::LeftRight => {
+            if !x_overlap {
+                return None;
+            }
+            if current.y >= peer.y {
+                let gap = current.y as isize - peer_bottom as isize + 1;
+                if gap >= 2 {
+                    return None;
+                }
+                Some((0, 2 - gap))
+            } else {
+                let gap = peer.y as isize - cur_bottom as isize + 1;
+                if gap >= 2 {
+                    return None;
+                }
+                Some((0, gap - 2))
+            }
+        }
+    }
 }
 
 fn overlaps_frame(frame: &FrameDraft, node: &NodeLayout) -> bool {
