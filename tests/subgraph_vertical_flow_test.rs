@@ -141,14 +141,6 @@ fn case_a_start_decision_processing_merge_end_vertical_flow() {
     }
 }
 
-fn line_width(line: &str) -> usize {
-    line.chars().count()
-}
-
-fn render_width(output: &str) -> usize {
-    output.lines().map(line_width).max().unwrap_or(0)
-}
-
 fn node_box_left(lines: &[&str], needle: &str) -> usize {
     let row = row_with(lines, needle);
     let text_col = char_pos(lines[row], needle);
@@ -159,27 +151,64 @@ fn node_box_left(lines: &[&str], needle: &str) -> usize {
         .unwrap_or_else(|| panic!("box left of {needle}:\n{}", lines.join("\n")))
 }
 
+fn assert_label_off_horizontal(output: &str, label: &str) {
+    let lines: Vec<&str> = output.lines().collect();
+    let row = row_with(&lines, label);
+    let start = char_pos(lines[row], label);
+    let end = start + label.chars().count();
+    let chars: Vec<char> = lines[row].chars().collect();
+    let left = start
+        .checked_sub(1)
+        .and_then(|col| chars.get(col).copied());
+    let right = chars.get(end).copied();
+    assert!(
+        !matches!(left, Some('─' | '╌')),
+        "{label} must not sit on a horizontal segment, left {left:?}:\n{output}"
+    );
+    assert!(
+        !matches!(right, Some('─' | '╌')),
+        "{label} must not sit on a horizontal segment, right {right:?}:\n{output}"
+    );
+}
+
+fn assert_arrowheads_off_border_rows(lines: &[&str], output: &str) {
+    let mut border_rows = std::collections::HashSet::new();
+    for title in ["Processing", "Process", "Group", "Leftish", "Outer", "Inner"] {
+        if lines.iter().any(|line| line.contains(title)) {
+            let (top, bottom, _, _) = subgraph_frame(lines, title);
+            border_rows.insert(top);
+            border_rows.insert(bottom);
+        }
+    }
+    for row in border_rows {
+        let line = lines[row];
+        assert!(
+            !line.contains('▼') && !line.contains('▲'),
+            "arrowhead must not sit on a frame border or title row {row}: {line:?}\n{output}"
+        );
+    }
+}
+
 #[test]
-fn case_a_pinned_title_stays_compact() {
+fn case_a_entry_stems_go_straight_down() {
     let output = render(CASE_A).unwrap();
     let lines: Vec<&str> = output.lines().collect();
 
     assert_title_at_home(&lines, "Processing");
-    let (title_row, bottom_row, left, right) = subgraph_frame(&lines, "Processing");
-    let step1_row = row_with(&lines, "Step 1");
-    assert!(title_row < step1_row && step1_row < bottom_row);
-    assert_inside_frame(&lines, "Step 1", left, right);
+    assert_entries_cross_after_title(&lines, "Processing");
+    for step in ["Step 1", "Step 2", "Step 3"] {
+        assert_stem_misses_title(&lines, "Processing", step);
+    }
+    for label in ["Yes", "No", "Maybe"] {
+        assert_label_off_horizontal(&output, label);
+    }
+    assert_arrowheads_off_border_rows(&lines, &output);
 
-    let box_left = node_box_left(&lines, "Step 1");
+    let gap12 = node_box_left(&lines, "Step 2") - node_box_left(&lines, "Step 1");
+    let gap23 = node_box_left(&lines, "Step 3") - node_box_left(&lines, "Step 2");
     assert_eq!(
-        box_left,
-        left + 2,
-        "Step 1 must sit at the normal left pad, not shifted off the title:\n{output}"
-    );
-    assert!(
-        render_width(&output) <= 40,
-        "Case A must stay compact with a pinned title, width {}:\n{output}",
-        render_width(&output)
+        gap12, gap23,
+        "inner boxes must stay evenly spaced:\n{output}"
     );
 }
 
@@ -310,21 +339,14 @@ fn title_reserved_cols(title_line: &str, title: &str) -> (usize, usize) {
 }
 
 fn assert_stem_misses_title(lines: &[&str], title: &str, step: &str) {
-    let title_row = row_with(lines, title);
-    let title_line = lines[title_row];
+    let title_line = lines[row_with(lines, title)];
     let step_row = row_with(lines, step);
     let col = char_pos(lines[step_row], step) + step.chars().count() / 2;
     let (reserved_start, reserved_end) = title_reserved_cols(title_line, title);
-    if col >= reserved_start && col < reserved_end {
-        assert_entries_cross_after_title(lines, title);
-        assert!(
-            ((title_row + 1)..step_row).any(|row| column_has_vertical(lines[row], col)
-                || lines[row].chars().nth(col) == Some('▼')),
-            "{step} stem must continue below the title at col {col}:\n{}",
-            lines.join("\n")
-        );
-        return;
-    }
+    assert!(
+        col < reserved_start || col >= reserved_end,
+        "{step} stem col {col} must miss title reserved [{reserved_start},{reserved_end}): {title_line:?}"
+    );
     let ch = title_line.chars().nth(col);
     assert!(
         matches!(ch, Some('┼' | '┬' | '│')),
@@ -1094,6 +1116,7 @@ fn nested_td_inner_frame_sits_inside_outer() {
     let lines: Vec<&str> = output.lines().collect();
 
     assert_nested_frames(&lines, &output);
+    assert_arrowheads_off_border_rows(&lines, &output);
     assert_td_nested_crossings(&lines, &output);
     assert_label_on_edge(&output, "enter", "Start", "InB");
     assert_label_on_edge(&output, "leave", "InB", "OutC");
