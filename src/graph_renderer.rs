@@ -146,6 +146,7 @@ fn render_lr(layout: &GraphLayout) -> String {
         drawn_labels.push((row, col, label_end));
     }
     draw_edge_ports(&mut grid, layout);
+    redraw_subgraph_titles(&mut grid, layout);
 
     grid.render()
 }
@@ -534,6 +535,17 @@ fn on_subgraph_side(layout: &GraphLayout, row: usize, col: usize) -> bool {
     layout.subgraphs.iter().any(|sg| {
         row > sg.y && row + 1 < sg.y + sg.height && (col == sg.x || col + 1 == sg.x + sg.width)
     })
+}
+
+fn set_lr_cell(grid: &mut Grid, layout: &GraphLayout, row: usize, col: usize, ch: char) {
+    if layout
+        .subgraphs
+        .iter()
+        .any(|sg| subgraph_title_text_at(sg, row, col))
+    {
+        return;
+    }
+    grid.set_merged(row, col, ch, merge_box_drawing);
 }
 
 fn set_td_horizontal(grid: &mut Grid, layout: &GraphLayout, row: usize, col: usize, ch: char) {
@@ -1458,7 +1470,7 @@ fn draw_lr_edge(
         // Straight horizontal
         let row = from.center_y;
         for col in from_right..to_left {
-            grid.set_merged(row, col, horiz, merge_box_drawing);
+            set_lr_cell(grid, layout, row, col, horiz);
         }
         if has_arrow_head(edge.edge_type) {
             grid.set(row, to_left - 1, '>');
@@ -1499,7 +1511,7 @@ fn draw_lr_edge(
                     other.from_id == edge.from_id
                 }
         });
-        let mid_col = crosses_subgraphs
+        let mut mid_col = crosses_subgraphs
             .map(|(from_sg, to_sg)| {
                 let gap_start = from_sg.x + from_sg.width;
                 gap_start + (to_sg.x.saturating_sub(gap_start)) / 2
@@ -1524,31 +1536,45 @@ fn draw_lr_edge(
                         .unwrap_or(from_right + (to_left - from_right) / 2)
                 }
             });
+        let crosses_frame =
+            enclosing_subgraph(layout, from).is_some() != enclosing_subgraph(layout, to).is_some();
+        if crosses_frame && to_left >= from_right + 2 {
+            let corner_col = to_left - 2;
+            if corner_col >= from_right
+                && !route_crosses_node(
+                    layout,
+                    corner_col,
+                    from.center_y.min(to.center_y),
+                    from.center_y.max(to.center_y) + 1,
+                    &from.id,
+                    &to.id,
+                )
+            {
+                mid_col = corner_col;
+            }
+        }
         let vert = td_vertical_connector(edge.edge_type);
 
-        // Horizontal from source to midpoint
         for col in from_right..mid_col {
-            grid.set(from.center_y, col, horiz);
+            set_lr_cell(grid, layout, from.center_y, col, horiz);
         }
 
-        // Corners and vertical segment
         if from.center_y < to.center_y {
-            grid.set_merged(from.center_y, mid_col, '┐', merge_box_drawing);
+            set_lr_cell(grid, layout, from.center_y, mid_col, '┐');
             for row in (from.center_y + 1)..to.center_y {
-                grid.set_merged(row, mid_col, vert, merge_box_drawing);
+                set_lr_cell(grid, layout, row, mid_col, vert);
             }
-            grid.set_merged(to.center_y, mid_col, '└', merge_box_drawing);
+            set_lr_cell(grid, layout, to.center_y, mid_col, '└');
         } else {
-            grid.set_merged(from.center_y, mid_col, '┘', merge_box_drawing);
+            set_lr_cell(grid, layout, from.center_y, mid_col, '┘');
             for row in (to.center_y + 1)..from.center_y {
-                grid.set_merged(row, mid_col, vert, merge_box_drawing);
+                set_lr_cell(grid, layout, row, mid_col, vert);
             }
-            grid.set_merged(to.center_y, mid_col, '┌', merge_box_drawing);
+            set_lr_cell(grid, layout, to.center_y, mid_col, '┌');
         }
 
-        // Horizontal from midpoint to target
         for col in (mid_col + 1)..to_left {
-            grid.set(to.center_y, col, horiz);
+            set_lr_cell(grid, layout, to.center_y, col, horiz);
         }
         if has_arrow_head(edge.edge_type) {
             grid.set(to.center_y, to_left - 1, '>');

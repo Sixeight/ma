@@ -600,10 +600,6 @@ fn row_has_horizontal(line: &str, col: usize) -> bool {
     line.chars().nth(col).is_some_and(is_horizontal_connector)
 }
 
-fn node_center_col(lines: &[&str], needle: &str) -> usize {
-    node_col(lines, needle) + needle.chars().count() / 2
-}
-
 fn assert_label_on_lr_edge(output: &str, label: &str, left: &str, right: &str) {
     let lines: Vec<&str> = output.lines().collect();
     assert_eq!(
@@ -722,8 +718,8 @@ fn outer_node_shares_a_column_with_an_inner_node() {
     let output = render(CASE_LR_SHARE_COL).unwrap();
     let lines: Vec<&str> = output.lines().collect();
 
-    let b_col = node_center_col(&lines, "InB");
-    let x_col = node_center_col(&lines, "OutX");
+    let b_col = node_col(&lines, "InB");
+    let x_col = node_col(&lines, "OutX");
     assert_eq!(b_col, x_col, "OutX must share InB's column:\n{output}");
 
     assert_title_at_home(&lines, "Group");
