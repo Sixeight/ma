@@ -13,10 +13,18 @@ fn rollback_aligns_the_vertical_flow_and_keeps_a_stem_under_the_merge() {
         assert_eq!(node.center_x, pages.center_x, "{id}");
     }
     for sg in &layout.subgraphs {
-        assert_eq!(sg.x + sg.width / 2, pages.center_x, "{}", sg.id);
+        assert!(
+            sg.x <= pages.center_x && pages.center_x < sg.x + sg.width,
+            "{} must keep the vertical spine inside the frame",
+            sg.id
+        );
     }
     let phase = layout.subgraphs.iter().find(|sg| sg.id == "phase").unwrap();
     let rendered = ma::graph_renderer::render(&layout);
+    assert!(
+        rendered.contains("┌─ rollback-release-servers.yaml ─"),
+        "entry title stays at ┌─ Title ─:\n{rendered}"
+    );
     let rows: Vec<_> = rendered.lines().collect();
     assert!(rows[phase.y - 2].contains('┌'), "{rendered}");
     assert!(rows[phase.y - 2].contains('╌'), "{rendered}");

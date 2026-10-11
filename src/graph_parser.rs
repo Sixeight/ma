@@ -7,7 +7,7 @@ use crate::graph_ast::*;
 
 pub fn parse_graph(input: &str) -> Result<GraphDiagram, String> {
     let mut input = input;
-    graph_diagram(&mut input).map_err(|_| {
+    let diagram = graph_diagram(&mut input).map_err(|_| {
         let context = input.lines().next().unwrap_or("").trim();
         let context_display = if context.len() > 40 {
             format!("{}...", &context[..40])
@@ -15,7 +15,9 @@ pub fn parse_graph(input: &str) -> Result<GraphDiagram, String> {
             context.to_string()
         };
         format!("syntax error in graph diagram: unexpected `{context_display}`")
-    })
+    })?;
+    validate_subgraph_forest(&diagram)?;
+    Ok(diagram)
 }
 
 fn graph_diagram(input: &mut &str) -> winnow::Result<GraphDiagram> {
@@ -69,33 +71,68 @@ fn collect_line(
             add_node(nodes, decl);
         }
         GraphLine::SubgraphBlock(id, label, inner_lines) => {
-            let mut sg_node_ids: Vec<String> = Vec::new();
+            let mut direct_node_ids: Vec<String> = Vec::new();
+            let mut direction = None;
+            let child_start = subgraphs.len();
             for inner in inner_lines {
                 match &inner {
                     GraphLine::Edge(_, from_decl, to_decl) => {
-                        add_subgraph_node_id(&mut sg_node_ids, subgraphs, from_decl);
-                        add_subgraph_node_id(&mut sg_node_ids, subgraphs, to_decl);
+                        add_subgraph_node_id(&mut direct_node_ids, subgraphs, from_decl);
+                        add_subgraph_node_id(&mut direct_node_ids, subgraphs, to_decl);
                     }
                     GraphLine::Edges(items) => {
                         for (_, from_decl, to_decl) in items {
-                            add_subgraph_node_id(&mut sg_node_ids, subgraphs, from_decl);
-                            add_subgraph_node_id(&mut sg_node_ids, subgraphs, to_decl);
+                            add_subgraph_node_id(&mut direct_node_ids, subgraphs, from_decl);
+                            add_subgraph_node_id(&mut direct_node_ids, subgraphs, to_decl);
                         }
                     }
                     GraphLine::Node(decl) => {
-                        add_subgraph_node_id(&mut sg_node_ids, subgraphs, decl);
+                        add_subgraph_node_id(&mut direct_node_ids, subgraphs, decl);
                     }
+                    GraphLine::Direction(dir) => direction = Some(dir.clone()),
                     GraphLine::SubgraphBlock(_, _, _) => {}
                 }
                 collect_line(inner, nodes, edges, subgraphs);
             }
-            subgraphs.push(Subgraph {
+            close_subgraph(
                 id,
                 label,
-                node_ids: sg_node_ids,
-            });
+                direct_node_ids,
+                direction,
+                child_start,
+                subgraphs,
+            );
+        }
+        GraphLine::Direction(_) => {}
+    }
+}
+
+fn close_subgraph(
+    id: String,
+    label: String,
+    mut direct_node_ids: Vec<String>,
+    direction: Option<Direction>,
+    child_start: usize,
+    subgraphs: &mut Vec<Subgraph>,
+) {
+    let parent_index = SubgraphIndex::new(subgraphs.len());
+    for child in subgraphs.iter_mut().skip(child_start) {
+        for node_id in &child.node_ids {
+            if !direct_node_ids.contains(node_id) {
+                direct_node_ids.push(node_id.clone());
+            }
+        }
+        if child.parent.is_none() {
+            child.parent = Some(parent_index);
         }
     }
+    subgraphs.push(Subgraph {
+        id,
+        label,
+        node_ids: direct_node_ids,
+        parent: None,
+        direction,
+    });
 }
 
 fn add_subgraph_node_id(
@@ -128,6 +165,7 @@ enum GraphLine {
     Edges(Vec<(Edge, NodeDecl, NodeDecl)>),
     Node(NodeDecl),
     SubgraphBlock(String, String, Vec<GraphLine>),
+    Direction(Direction),
 }
 
 fn graph_line(input: &mut &str) -> winnow::Result<Option<GraphLine>> {
@@ -139,6 +177,7 @@ fn graph_line(input: &mut &str) -> winnow::Result<Option<GraphLine>> {
 
     let result = alt((
         blank_line.map(|_| None),
+        direction_statement.map(|dir| Some(GraphLine::Direction(dir))),
         directive_line.map(|_| None),
         subgraph_block.map(Some),
         edge_line.map(Some),
@@ -209,6 +248,15 @@ fn directive_line(input: &mut &str) -> winnow::Result<()> {
     let _ = take_while(0.., |c: char| c != '\n' && c != '\r').parse_next(input)?;
     opt(line_ending).parse_next(input)?;
     Ok(())
+}
+
+fn direction_statement(input: &mut &str) -> winnow::Result<Direction> {
+    "direction".parse_next(input)?;
+    space1.parse_next(input)?;
+    let dir = direction.parse_next(input)?;
+    let _ = take_while(0.., |c: char| c != '\n' && c != '\r').parse_next(input)?;
+    opt(line_ending).parse_next(input)?;
+    Ok(dir)
 }
 
 fn direction(input: &mut &str) -> winnow::Result<Direction> {
@@ -347,6 +395,7 @@ fn edge_type(input: &mut &str) -> winnow::Result<EdgeType> {
         "-.-".value(EdgeType::DottedLink),
         "==>".value(EdgeType::ThickArrow),
         "===".value(EdgeType::ThickLink),
+        "--->".value(EdgeType::Arrow),
         "-->".value(EdgeType::Arrow),
         "---".value(EdgeType::OpenLink),
     ))
@@ -526,6 +575,52 @@ mod tests {
         assert_eq!(diagram.edges[0].to, "beta-step");
         assert_eq!(diagram.edges[1].from, "beta-step");
         assert_eq!(diagram.edges[1].to, "gamma-step");
+    }
+
+    #[test]
+    fn sibling_subgraphs_first_declaration_keeps_the_node() {
+        let diagram = parse_graph(
+            "flowchart TD\n\
+             subgraph Outer[Outer]\n\
+                 subgraph Left[Left]\n\
+                     Shared\n\
+                     LeftOnly\n\
+                 end\n\
+                 subgraph Right[Right]\n\
+                     Shared\n\
+                     RightOnly\n\
+                 end\n\
+             end\n",
+        )
+        .unwrap();
+
+        let left = diagram
+            .subgraphs
+            .iter()
+            .position(|sg| sg.id == "Left")
+            .map(SubgraphIndex::new)
+            .unwrap();
+        let right = diagram
+            .subgraphs
+            .iter()
+            .position(|sg| sg.id == "Right")
+            .map(SubgraphIndex::new)
+            .unwrap();
+        assert!(
+            diagram.subgraphs[left.get()]
+                .node_ids
+                .iter()
+                .any(|id| id == "Shared")
+        );
+        assert!(
+            !diagram.subgraphs[right.get()]
+                .node_ids
+                .iter()
+                .any(|id| id == "Shared")
+        );
+        assert_eq!(diagram.innermost("Shared"), Some(left));
+        assert_eq!(diagram.exclusive_members(right), vec!["RightOnly"]);
+        assert_eq!(diagram.exclusive_members(left), vec!["Shared", "LeftOnly"]);
     }
 
     #[test]
@@ -818,6 +913,42 @@ mod tests {
     }
 
     #[test]
+    fn parse_nested_subgraph_closes_membership() {
+        let nested = parse_graph(
+            "flowchart TD\n\
+             Start -->|enter| InB\n\
+             subgraph Outer[Outer]\n\
+                 subgraph Inner[Inner]\n\
+                     InB\n\
+                 end\n\
+                 InB -->|leave| OutC\n\
+                 OutC\n\
+             end\n",
+        )
+        .unwrap();
+
+        let inner = SubgraphIndex::new(0);
+        let outer = SubgraphIndex::new(1);
+        assert_eq!(nested.subgraphs[0].id, "Inner");
+        assert_eq!(nested.subgraphs[0].parent, Some(outer));
+        assert!(nested.subgraphs[1].node_ids.iter().any(|id| id == "InB"));
+        assert!(nested.subgraphs[1].node_ids.iter().any(|id| id == "OutC"));
+        assert_eq!(nested.subgraphs[1].id, "Outer");
+        assert_eq!(nested.subgraphs[1].parent, None);
+        assert_eq!(nested.roots(), vec![outer]);
+        assert_eq!(nested.children(outer), vec![inner]);
+        assert_eq!(nested.exclusive_members(inner), vec!["InB"]);
+        assert_eq!(nested.exclusive_members(outer), vec!["OutC"]);
+        assert_eq!(nested.innermost("Start"), None);
+        assert!(nested.is_nested());
+
+        let flat =
+            parse_graph("graph TD\n    subgraph Backend\n        A --> B\n    end\n").unwrap();
+        assert!(flat.subgraphs.iter().all(|sg| sg.parent.is_none()));
+        assert!(!flat.is_nested());
+    }
+
+    #[test]
     fn parse_subgraph_basic() {
         let input = "graph TD\n    subgraph Backend\n        A --> B\n    end\n";
         let diagram = parse_graph(input).unwrap();
@@ -929,5 +1060,15 @@ mod tests {
         let diagram = parse_graph(input).unwrap();
         assert_eq!(diagram.nodes.len(), 2);
         assert_eq!(diagram.edges.len(), 1);
+        assert_eq!(diagram.subgraphs[0].direction, Some(Direction::LeftRight));
+    }
+
+    #[test]
+    fn parse_subgraph_direction_last_wins() {
+        let diagram = parse_graph(
+            "flowchart TD\n    subgraph Cluster\n        direction LR\n        A --> B\n        direction TB\n    end\n",
+        )
+        .unwrap();
+        assert_eq!(diagram.subgraphs[0].direction, Some(Direction::TopDown));
     }
 }
