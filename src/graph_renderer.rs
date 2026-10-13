@@ -32,6 +32,7 @@ fn render_td(layout: &GraphLayout) -> String {
     }
 
     let lane_count = back_edge_lane_count(&layout.edges);
+    let star = forward_star(layout);
 
     // Forward edges first, then back edges, then self-loops on top: each pass
     // may cross the previous one, and the later route is the one that must stay
@@ -47,7 +48,7 @@ fn render_td(layout: &GraphLayout) -> String {
         } else if flow_of(layout, from, to) == Direction::LeftRight {
             draw_lr_edge(&mut grid, from, to, edge, layout);
         } else {
-            draw_td_edge(&mut grid, from, to, edge, layout);
+            draw_td_edge(&mut grid, from, to, edge, layout, &star);
         }
     }
     for edge in &layout.edges {
@@ -91,6 +92,7 @@ fn render_lr(layout: &GraphLayout) -> String {
     }
 
     let lane_count = back_edge_lane_count(&layout.edges);
+    let star = forward_star(layout);
     let mut labels = Vec::new();
 
     for edge in &layout.edges {
@@ -100,7 +102,7 @@ fn render_lr(layout: &GraphLayout) -> String {
         let from = node_map[edge.from_id.as_str()];
         let to = node_map[edge.to_id.as_str()];
         if flow_of(layout, from, to) == Direction::TopDown {
-            draw_td_edge(&mut grid, from, to, edge, layout);
+            draw_td_edge(&mut grid, from, to, edge, layout, &star);
         } else if let Some(placement) = draw_lr_edge(&mut grid, from, to, edge, layout)
             && let Some(label) = edge.label.as_deref()
         {
@@ -179,6 +181,38 @@ fn draw_nodes_over_edges(grid: &mut Grid, layout: &GraphLayout) {
 
 fn flow_of(layout: &GraphLayout, from: &NodeLayout, to: &NodeLayout) -> Direction {
     crate::graph_layout::edge_flow_direction(&layout.direction, &layout.subgraphs, from, to)
+}
+
+struct ForwardStar<'a> {
+    children: HashMap<&'a str, Vec<&'a NodeLayout>>,
+    parents: HashMap<&'a str, Vec<&'a NodeLayout>>,
+}
+
+fn forward_star(layout: &GraphLayout) -> ForwardStar<'_> {
+    let nodes: HashMap<&str, &NodeLayout> = layout
+        .nodes
+        .iter()
+        .map(|node| (node.id.as_str(), node))
+        .collect();
+    let mut children: HashMap<&str, Vec<&NodeLayout>> = HashMap::new();
+    let mut parents: HashMap<&str, Vec<&NodeLayout>> = HashMap::new();
+    for edge in &layout.edges {
+        if edge.from_id == edge.to_id {
+            continue;
+        }
+        let Some(&from) = nodes.get(edge.from_id.as_str()) else {
+            continue;
+        };
+        let Some(&to) = nodes.get(edge.to_id.as_str()) else {
+            continue;
+        };
+        if is_back_edge(&flow_of(layout, from, to), from, to) {
+            continue;
+        }
+        children.entry(from.id.as_str()).or_default().push(to);
+        parents.entry(to.id.as_str()).or_default().push(from);
+    }
+    ForwardStar { children, parents }
 }
 
 fn draw_edge_ports(grid: &mut Grid, layout: &GraphLayout) {
@@ -844,6 +878,7 @@ fn draw_td_edge(
     to: &NodeLayout,
     edge: &EdgeLayout,
     layout: &GraphLayout,
+    star: &ForwardStar<'_>,
 ) {
     if from.id == to.id {
         draw_td_self_loop(grid, from, edge);
@@ -863,22 +898,17 @@ fn draw_td_edge(
 
     grid.set(bottom_row, from_cx, '┬');
 
-    // Back edges are routed through the gutter, so they take no part in the
-    // fan-out bar or the fan-in bar drawn for the forward edges.
-    let forward_children: Vec<&NodeLayout> = layout
-        .edges
-        .iter()
-        .filter(|e| e.from_id == from.id && e.from_id != e.to_id)
-        .filter_map(|e| layout.nodes.iter().find(|n| n.id == e.to_id))
-        .filter(|n| !is_back_edge(&flow_of(layout, from, n), from, n))
-        .collect();
-    let forward_parents: Vec<&NodeLayout> = layout
-        .edges
-        .iter()
-        .filter(|e| e.to_id == to.id && e.from_id != e.to_id)
-        .filter_map(|e| layout.nodes.iter().find(|n| n.id == e.from_id))
-        .filter(|n| !is_back_edge(&flow_of(layout, n, to), n, to))
-        .collect();
+    let empty: &[&NodeLayout] = &[];
+    let forward_children = star
+        .children
+        .get(from.id.as_str())
+        .map(Vec::as_slice)
+        .unwrap_or(empty);
+    let forward_parents = star
+        .parents
+        .get(to.id.as_str())
+        .map(Vec::as_slice)
+        .unwrap_or(empty);
     let sibling_count = forward_children.len();
     let parent_count = forward_parents.len();
 

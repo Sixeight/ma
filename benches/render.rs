@@ -1,11 +1,4 @@
-//! In-process wall-time bench of `ma::render` over fixture and generated diagrams.
-//!
-//! Times the library path only. No CLI parse, no stdin or stdout in the timed region.
-//!
-//! Usage:
-//!   python3 scripts/bench_inputs.py benches/inputs
-//!   cargo bench --bench render -- --dir benches/inputs
-//!   cargo bench --bench render -- --dir benches/inputs --once subgraphs_200
+//! In-process wall-time of `ma::render`. Run via `scripts/run_bench.sh`.
 
 use std::alloc::{GlobalAlloc, Layout, System};
 use std::fs;
@@ -245,13 +238,15 @@ fn main() {
 
     let generated = read_dir_mmd(&dir.join("generated"), "generated");
     let mut fixtures = read_dir_mmd(&dir.join("fixtures"), "fixture");
-    fixtures.retain(|case| match render_once(&case.input) {
-        Ok(_) => true,
-        Err(err) => {
-            eprintln!("skip {}: {err}", case.name);
-            false
-        }
-    });
+    if once.is_none() {
+        fixtures.retain(|case| match render_once(&case.input) {
+            Ok(_) => true,
+            Err(err) => {
+                eprintln!("skip {}: {err}", case.name);
+                false
+            }
+        });
+    }
     if list {
         for case in generated.iter().chain(fixtures.iter()) {
             println!("{}  {} bytes", case.name, case.input.len());
