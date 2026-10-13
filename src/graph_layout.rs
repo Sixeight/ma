@@ -1652,6 +1652,10 @@ fn layout_with_subgraphs(diagram: &GraphDiagram) -> Result<GraphLayout, String> 
         stack_subgraphs(diagram, layout, usize::MAX)
     } else {
         clear_entry_title_collisions(&mut layout);
+        pad_lr_frame_entry_labels(&mut layout);
+        let (width, height) = base_extents(&layout.nodes, &layout.subgraphs);
+        layout.width = layout.width.max(width);
+        layout.height = layout.height.max(height);
         Ok(layout)
     }
 }
@@ -1784,6 +1788,55 @@ fn frame_member_ids(diagram: &GraphDiagram) -> HashSet<&str> {
         .iter()
         .flat_map(|sg| sg.node_ids.iter().map(String::as_str))
         .collect()
+}
+
+fn pad_lr_frame_entry_labels(layout: &mut GraphLayout) {
+    if layout.direction != Direction::LeftRight {
+        return;
+    }
+    let mut order: Vec<usize> = (0..layout.subgraphs.len()).collect();
+    order.sort_by_key(|&i| layout.subgraphs[i].x);
+    for i in order {
+        let sg_x = layout.subgraphs[i].x;
+        let mut widest = 0;
+        let mut from_right = None;
+        for edge in &layout.edges {
+            if edge.route != EdgeRoute::Forward {
+                continue;
+            }
+            let Some(label) = edge.label.as_deref() else {
+                continue;
+            };
+            let Some(from) = layout.nodes.iter().find(|node| node.id == edge.from_id) else {
+                continue;
+            };
+            let Some(to) = layout.nodes.iter().find(|node| node.id == edge.to_id) else {
+                continue;
+            };
+            if !node_in_subgraph(to, &layout.subgraphs[i])
+                || node_in_subgraph(from, &layout.subgraphs[i])
+            {
+                continue;
+            }
+            if from.x + from.width > sg_x {
+                continue;
+            }
+            widest = widest.max(multiline_width(label));
+            let right = from.x + from.width;
+            from_right = Some(from_right.map_or(right, |value: usize| value.max(right)));
+        }
+        if widest == 0 {
+            continue;
+        }
+        let Some(from_right) = from_right else {
+            continue;
+        };
+        let available = sg_x.saturating_sub(from_right);
+        let needed = widest + 3;
+        if available < needed {
+            open_gap(layout, Axis::X, sg_x, needed - available);
+        }
+    }
 }
 
 fn align_lr_bare_to_targets(
