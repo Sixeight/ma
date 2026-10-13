@@ -763,6 +763,103 @@ fn place_rank_nodes(
     }
 }
 
+fn td_decls_width(decls: &[&NodeDecl], edges: &[Edge], node_gap: usize) -> usize {
+    if decls.is_empty() {
+        return 0;
+    }
+    decls
+        .iter()
+        .map(|decl| box_width(&decl.label, decl.shape).max(td_label_width(&decl.id, edges) + 2))
+        .sum::<usize>()
+        + decls.len().saturating_sub(1) * node_gap
+}
+
+fn incoming_parent_center(
+    diagram: &GraphDiagram,
+    nodes: &[NodeLayout],
+    child_id: &str,
+    axis: impl Fn(&NodeLayout) -> usize,
+) -> Option<usize> {
+    let mut fallback = None;
+    let mut from_member = None;
+    for edge in &diagram.edges {
+        if edge.to != child_id {
+            continue;
+        }
+        let Some(from) = nodes.iter().find(|node| node.id == edge.from) else {
+            continue;
+        };
+        let value = axis(from);
+        fallback = Some(value);
+        if diagram
+            .subgraphs
+            .iter()
+            .any(|sg| sg.node_ids.contains(&edge.from))
+        {
+            from_member = Some(value);
+        }
+    }
+    from_member.or(fallback)
+}
+
+fn shift_band_members(
+    diagram: &GraphDiagram,
+    nodes: &mut [NodeLayout],
+    sg_index: usize,
+    dx: usize,
+    dy: usize,
+) {
+    if dx == 0 && dy == 0 {
+        return;
+    }
+    let ids = &diagram.subgraphs[sg_index].node_ids;
+    for node in nodes {
+        if ids.contains(&node.id) {
+            node.x += dx;
+            node.y += dy;
+            node.center_x += dx;
+            node.center_y += dy;
+        }
+    }
+}
+
+fn place_outers_right_of_row_bands(
+    diagram: &GraphDiagram,
+    nodes: &mut [NodeLayout],
+    bands: &[SubgraphRowBand],
+    covering: &[usize],
+    outers: &[&NodeDecl],
+) {
+    let frame_right = covering
+        .iter()
+        .map(|&index| {
+            let sg = &diagram.subgraphs[bands[index].sg_index];
+            let min_x = nodes
+                .iter()
+                .filter(|node| sg.node_ids.contains(&node.id))
+                .map(|node| node.x)
+                .min()
+                .unwrap_or(0);
+            let max_right = nodes
+                .iter()
+                .filter(|node| sg.node_ids.contains(&node.id))
+                .map(|node| node.x + node.width)
+                .max()
+                .unwrap_or(0);
+            let title_width = display_width(&sg.label) + SUBGRAPH_TITLE_DECOR;
+            let x = min_x.saturating_sub(SUBGRAPH_PAD_LEFT);
+            x + (max_right + SUBGRAPH_PAD_RIGHT - x).max(title_width)
+        })
+        .max()
+        .unwrap_or(0);
+    for decl in outers {
+        if let Some(node) = nodes.iter_mut().find(|node| node.id == decl.id) {
+            node.x = frame_right;
+            node.center_x = node.x + node.width / 2;
+        }
+    }
+}
+
 fn apply_td_bands(
     diagram: &GraphDiagram,
     ranks: &HashMap<String, usize>,
@@ -771,7 +868,7 @@ fn apply_td_bands(
     node_to_subgraph: &HashMap<&str, usize>,
     node_gap: usize,
 ) -> Vec<SubgraphLayout> {
-    let bands = pack_subgraph_bands(diagram, ranks, ranks_nodes, node_gap);
+    let mut bands = pack_subgraph_bands(diagram, ranks, ranks_nodes, node_gap);
     let pack_width = bands
         .iter()
         .map(|band| band.x + band.width)
@@ -815,29 +912,68 @@ fn apply_td_bands(
         if outers.is_empty() {
             continue;
         }
-        let covering: Vec<&SubgraphBand> = bands
+        let covering: Vec<usize> = bands
             .iter()
-            .filter(|band| rank >= band.min_rank && rank <= band.max_rank)
+            .enumerate()
+            .filter(|(_, band)| rank >= band.min_rank && rank <= band.max_rank)
+            .map(|(index, _)| index)
             .collect();
-        let start = if covering.is_empty() {
-            let total: usize = outers
+        if covering.is_empty() {
+            let total = td_decls_width(&outers, &diagram.edges, node_gap);
+            let start = pack_width.saturating_sub(total) / 2;
+            place_rank_nodes(nodes, &outers, start, node_gap, &diagram.edges);
+            continue;
+        }
+
+        let cover_left = covering
+            .iter()
+            .map(|&index| bands[index].x)
+            .min()
+            .unwrap_or(0);
+        let cover_right = covering
+            .iter()
+            .map(|&index| bands[index].x + bands[index].width)
+            .max()
+            .unwrap_or(0);
+        let mid = cover_left + (cover_right - cover_left) / 2;
+        let mut left_outers = Vec::new();
+        let mut right_outers = Vec::new();
+        for outer in &outers {
+            let parent = incoming_parent_center(diagram, nodes, &outer.id, |node| node.center_x)
+                .unwrap_or(mid);
+            if parent < mid {
+                left_outers.push(*outer);
+            } else {
+                right_outers.push(*outer);
+            }
+        }
+
+        if !left_outers.is_empty() && !right_outers.is_empty() {
+            let left_width = td_decls_width(&left_outers, &diagram.edges, node_gap);
+            let shift = (left_width + SUBGRAPH_GAP).saturating_sub(cover_left);
+            if shift > 0 {
+                for &index in &covering {
+                    bands[index].x += shift;
+                    shift_band_members(diagram, nodes, bands[index].sg_index, shift, 0);
+                }
+            }
+            place_rank_nodes(nodes, &left_outers, 0, node_gap, &diagram.edges);
+            let right_start = covering
                 .iter()
-                .map(|node| {
-                    box_width(&node.label, node.shape)
-                        .max(td_label_width(&node.id, &diagram.edges) + 2)
-                })
-                .sum::<usize>()
-                + outers.len().saturating_sub(1) * node_gap;
-            pack_width.saturating_sub(total) / 2
-        } else {
-            covering
-                .iter()
-                .map(|band| band.x + band.width)
+                .map(|&index| bands[index].x + bands[index].width)
                 .max()
                 .unwrap_or(0)
-                + SUBGRAPH_GAP
-        };
-        place_rank_nodes(nodes, &outers, start, node_gap, &diagram.edges);
+                + SUBGRAPH_GAP;
+            place_rank_nodes(nodes, &right_outers, right_start, node_gap, &diagram.edges);
+        } else {
+            place_rank_nodes(
+                nodes,
+                &outers,
+                cover_right + SUBGRAPH_GAP,
+                node_gap,
+                &diagram.edges,
+            );
+        }
     }
 
     bands
@@ -857,7 +993,15 @@ fn apply_td_bands(
                 .map(|node| node.y + node.height)
                 .max()
                 .unwrap();
-            let y = min_y.saturating_sub(SUBGRAPH_PAD_TOP);
+            let incoming_from_above = diagram.edges.iter().any(|edge| {
+                sg.node_ids.iter().any(|id| id == &edge.to)
+                    && !sg.node_ids.iter().any(|id| id == &edge.from)
+                    && nodes
+                        .iter()
+                        .any(|node| node.id == edge.from && node.y + node.height <= min_y)
+            });
+            let top_pad = SUBGRAPH_PAD_TOP + usize::from(incoming_from_above);
+            let y = min_y.saturating_sub(top_pad);
             Some(SubgraphLayout {
                 id: sg.id.clone(),
                 label: sg.label.clone(),
@@ -1050,7 +1194,7 @@ fn apply_lr_bands(
     node_to_subgraph: &HashMap<&str, usize>,
     place_y: bool,
 ) -> Vec<SubgraphLayout> {
-    let bands = pack_subgraph_row_bands(diagram, ranks, ranks_nodes);
+    let mut bands = pack_subgraph_row_bands(diagram, ranks, ranks_nodes);
     let pack_height = bands
         .iter()
         .map(|band| band.y + band.height)
@@ -1092,25 +1236,76 @@ fn apply_lr_bands(
             if outers.is_empty() {
                 continue;
             }
-            let covering: Vec<&SubgraphRowBand> = bands
+            let covering: Vec<usize> = bands
                 .iter()
-                .filter(|band| rank >= band.min_rank && rank <= band.max_rank)
+                .enumerate()
+                .filter(|(_, band)| rank >= band.min_rank && rank <= band.max_rank)
+                .map(|(index, _)| index)
                 .collect();
-            let start = if covering.is_empty() {
+            if covering.is_empty() {
                 let total: usize = outers
                     .iter()
                     .map(|node| box_height(&node.label, node.shape))
                     .sum::<usize>()
                     + outers.len().saturating_sub(1) * LR_NODE_VERTICAL_GAP;
-                pack_height.saturating_sub(total) / 2
-            } else {
-                covering
+                let start = pack_height.saturating_sub(total) / 2;
+                place_rank_nodes_y(nodes, &outers, start);
+                continue;
+            }
+
+            let cover_top = covering
+                .iter()
+                .map(|&index| bands[index].y)
+                .min()
+                .unwrap_or(0);
+            let cover_bottom = covering
+                .iter()
+                .map(|&index| bands[index].y + bands[index].height)
+                .max()
+                .unwrap_or(0);
+            let mid = cover_top + (cover_bottom - cover_top) / 2;
+            let mut above_outers = Vec::new();
+            let mut below_outers = Vec::new();
+            for outer in &outers {
+                let parent =
+                    incoming_parent_center(diagram, nodes, &outer.id, |node| node.center_y)
+                        .unwrap_or(mid);
+                if parent < mid {
+                    above_outers.push(*outer);
+                } else {
+                    below_outers.push(*outer);
+                }
+            }
+
+            if !above_outers.is_empty() && !below_outers.is_empty() {
+                place_rank_nodes_y(nodes, &above_outers, 0);
+                let above_bottom = above_outers
                     .iter()
-                    .map(|band| band.y + band.height)
+                    .filter_map(|decl| {
+                        nodes
+                            .iter()
+                            .find(|node| node.id == decl.id)
+                            .map(|node| node.y + node.height)
+                    })
                     .max()
-                    .unwrap_or(0)
-            };
-            place_rank_nodes_y(nodes, &outers, start);
+                    .unwrap_or(0);
+                let shift = above_bottom.saturating_sub(cover_top);
+                if shift > 0 {
+                    for &index in &covering {
+                        bands[index].y += shift;
+                        shift_band_members(diagram, nodes, bands[index].sg_index, 0, shift);
+                    }
+                }
+                let below_start = covering
+                    .iter()
+                    .map(|&index| bands[index].y + bands[index].height)
+                    .max()
+                    .unwrap_or(0);
+                place_rank_nodes_y(nodes, &below_outers, below_start);
+                place_outers_right_of_row_bands(diagram, nodes, &bands, &covering, &outers);
+            } else {
+                place_rank_nodes_y(nodes, &outers, cover_bottom);
+            }
         }
     }
 
@@ -1126,6 +1321,7 @@ fn apply_lr_bands(
                 return None;
             }
             let min_x = members.iter().map(|node| node.x).min().unwrap();
+            let min_y = members.iter().map(|node| node.y).min().unwrap();
             let max_right = members
                 .iter()
                 .map(|node| node.x + node.width)
@@ -1138,7 +1334,7 @@ fn apply_lr_bands(
                 id: sg.id.clone(),
                 label: sg.label.clone(),
                 x,
-                y: band.y,
+                y: min_y.saturating_sub(SUBGRAPH_PAD_TOP),
                 width,
                 height: band.height,
                 direction: diagram.effective_direction(SubgraphIndex::new(band.sg_index)),
