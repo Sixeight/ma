@@ -134,10 +134,18 @@ fn draw_er_edge(
         let gap = to_left - from_right;
         let lines = split_br(label);
         let max_w = multiline_width(label);
-        let left_marker_len = left_cardinality_str(left_card).len();
-        if gap > max_w + left_marker_len + 1 {
-            let label_col =
-                from_right + left_marker_len + 1 + (gap - max_w - left_marker_len - 1) / 2;
+        let left_marker_len = display_width(left_cardinality_str(left_card));
+        let right_marker_len = display_width(right_cardinality_str(right_card));
+        // Keep ≥1 line char on each side of the label, and account for both
+        // cardinality markers. The previous formula reserved only the left
+        // marker + 1, so labels drifted one column toward the right marker.
+        if let Some(label_col) = padded_label_col(
+            from_right,
+            gap,
+            max_w,
+            left_marker_len + 1,
+            right_marker_len + 1,
+        ) {
             let start_row = if lines.len() > 1 {
                 from_cy.saturating_sub(lines.len() / 2)
             } else {
@@ -216,6 +224,17 @@ fn draw_er_edge(
     }
 }
 
+fn padded_label_col(
+    start: usize,
+    gap: usize,
+    max_w: usize,
+    left_pad: usize,
+    right_pad: usize,
+) -> Option<usize> {
+    let reserved = left_pad.saturating_add(max_w).saturating_add(right_pad);
+    (gap >= reserved).then_some(start + left_pad + (gap - reserved) / 2)
+}
+
 fn left_cardinality_str(card: Cardinality) -> &'static str {
     match card {
         Cardinality::ExactlyOne => "||",
@@ -266,7 +285,7 @@ mod tests {
         let output = render(&layout);
         let expected = "\
 ┌───┐          ┌───┐
-│ A │||───r1─||│ B │
+│ A │||──r1──||│ B │
 └───┘          └───┘";
         assert_eq!(output, expected);
     }
