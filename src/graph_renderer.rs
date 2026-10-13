@@ -143,6 +143,7 @@ fn render_lr(layout: &GraphLayout) -> String {
 
     let mut drawn_labels: Vec<(usize, usize, usize)> = Vec::new();
     for (label, (row, start, end)) in labels {
+        let row = lift_lr_label_off_geometry(layout, label, row, start, end);
         if !draw_lr_label_if_fits(&mut grid, label, row, start, end, &drawn_labels) {
             continue;
         }
@@ -1414,6 +1415,51 @@ fn draw_lr_label(grid: &mut Grid, label: &str, row: usize, start: usize, end: us
     let top = row.saturating_sub(lines.len());
     for (offset, line) in lines.iter().enumerate() {
         grid.write_str(top + offset, col, line);
+    }
+}
+
+fn lr_label_rect_hits_geometry(
+    layout: &GraphLayout,
+    top: usize,
+    lines: usize,
+    col: usize,
+    width: usize,
+) -> bool {
+    let bottom = top + lines;
+    let right = col + width;
+    let hits_node = layout.nodes.iter().any(|node| {
+        top < node.y + node.height && bottom > node.y && col < node.x + node.width && right > node.x
+    });
+    let hits_frame = layout
+        .subgraphs
+        .iter()
+        .any(|sg| top < sg.y + sg.height && bottom > sg.y && col < sg.x + sg.width && right > sg.x);
+    hits_node || hits_frame
+}
+
+fn lift_lr_label_off_geometry(
+    layout: &GraphLayout,
+    label: &str,
+    row: usize,
+    start: usize,
+    end: usize,
+) -> usize {
+    let lines = split_br(label).len();
+    let label_width = multiline_width(label);
+    let available_width = end.saturating_sub(start);
+    let col = if label_width <= available_width {
+        start + (available_width - label_width) / 2
+    } else {
+        start
+    };
+    let top = row.saturating_sub(lines);
+    if top > 0
+        && lr_label_rect_hits_geometry(layout, top, lines, col, label_width)
+        && !lr_label_rect_hits_geometry(layout, top - 1, lines, col, label_width)
+    {
+        top - 1 + lines
+    } else {
+        row
     }
 }
 

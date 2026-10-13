@@ -1186,6 +1186,46 @@ fn place_rank_nodes_y(nodes: &mut [NodeLayout], decls: &[&NodeDecl], start_y: us
     }
 }
 
+fn covering_outer_label_pad(edges: &[Edge], node_id: &str) -> usize {
+    let Some(from) = edges
+        .iter()
+        .find(|edge| edge.to == node_id && edge.label.is_some())
+        .map(|edge| edge.from.as_str())
+    else {
+        return 0;
+    };
+    let labeled_from_same = edges
+        .iter()
+        .filter(|edge| edge.from == from && edge.label.is_some())
+        .count();
+    if labeled_from_same <= 1 {
+        return 0;
+    }
+    edges
+        .iter()
+        .filter(|edge| edge.to == node_id && edge.label.is_some())
+        .filter_map(|edge| edge.label.as_deref().map(line_count))
+        .max()
+        .unwrap_or(0)
+}
+
+fn place_rank_nodes_y_with_label_pad(
+    nodes: &mut [NodeLayout],
+    decls: &[&NodeDecl],
+    start_y: usize,
+    edges: &[Edge],
+) {
+    let mut y = start_y;
+    for decl in decls {
+        y += covering_outer_label_pad(edges, &decl.id);
+        if let Some(node) = nodes.iter_mut().find(|node| node.id == decl.id) {
+            node.y = y;
+            node.center_y = y + node.height / 2;
+            y += node.height + LR_NODE_VERTICAL_GAP;
+        }
+    }
+}
+
 fn apply_lr_bands(
     diagram: &GraphDiagram,
     ranks: &HashMap<String, usize>,
@@ -1301,10 +1341,15 @@ fn apply_lr_bands(
                     .map(|&index| bands[index].y + bands[index].height)
                     .max()
                     .unwrap_or(0);
-                place_rank_nodes_y(nodes, &below_outers, below_start);
+                place_rank_nodes_y_with_label_pad(
+                    nodes,
+                    &below_outers,
+                    below_start,
+                    &diagram.edges,
+                );
                 place_outers_right_of_row_bands(diagram, nodes, &bands, &covering, &outers);
             } else {
-                place_rank_nodes_y(nodes, &outers, cover_bottom);
+                place_rank_nodes_y_with_label_pad(nodes, &outers, cover_bottom, &diagram.edges);
             }
         }
     }
