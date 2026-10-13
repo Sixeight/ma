@@ -1092,10 +1092,27 @@ fn enclosing_subgraph(layout: &GraphLayout, node: &NodeLayout) -> Option<usize> 
     })
 }
 
-fn clip_lr_label_end(layout: &GraphLayout, to: &NodeLayout, end: usize) -> usize {
-    enclosing_subgraph(layout, to)
-        .map(|index| layout.subgraphs[index].x.min(end))
-        .unwrap_or(end)
+fn clip_lr_entry_label_end(
+    layout: &GraphLayout,
+    from: &NodeLayout,
+    to: &NodeLayout,
+    end: usize,
+) -> usize {
+    let Some(index) = enclosing_subgraph(layout, to) else {
+        return end;
+    };
+    if layout
+        .subgraphs
+        .iter()
+        .any(|sg| node_inside_frame(from, sg))
+    {
+        return end;
+    }
+    let border = layout.subgraphs[index].x;
+    if from.x + from.width > border {
+        return end;
+    }
+    border.min(end)
 }
 
 /// The source end of a back edge: out of the bottom of the box, along the gap
@@ -1580,7 +1597,7 @@ fn draw_lr_edge(
         } else {
             (lr_label_start(layout, to).max(from_right + 1), to_left)
         };
-        Some((row, start, clip_lr_label_end(layout, to, end)))
+        Some((row, start, clip_lr_entry_label_end(layout, from, to, end)))
     } else {
         // L-shaped routing: horizontal → corner → vertical → corner → horizontal
         let from_subgraph = layout.subgraphs.iter().find(|subgraph| {
@@ -1719,7 +1736,7 @@ fn draw_lr_edge(
                 mid_col,
             )
         };
-        let end = clip_lr_label_end(layout, to, placement.2);
+        let end = clip_lr_entry_label_end(layout, from, to, placement.2);
         (end > placement.1).then_some((placement.0, placement.1, end))
     }
 }

@@ -1814,7 +1814,7 @@ fn pad_lr_frame_entry_labels(layout: &mut GraphLayout) {
                 continue;
             };
             if !node_in_subgraph(to, &layout.subgraphs[i])
-                || node_in_subgraph(from, &layout.subgraphs[i])
+                || layout.subgraphs.iter().any(|sg| node_in_subgraph(from, sg))
             {
                 continue;
             }

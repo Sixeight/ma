@@ -469,7 +469,7 @@ fn assert_node_box_intact(lines: &[&str], output: &str, needle: &str) {
 }
 
 fn assert_lr_side_entries(lines: &[&str], output: &str, title: &str, steps: &[&str]) {
-    let (top, bottom, left, right) = subgraph_frame(lines, title);
+    let (_top, _bottom, left, right) = subgraph_frame(lines, title);
     let mut rows = Vec::new();
     for step in steps {
         let step_row = row_with(lines, step);
