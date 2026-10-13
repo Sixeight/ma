@@ -17,7 +17,10 @@ pub fn render(layout: &ErLayout) -> String {
     }
 
     for node in &layout.nodes {
-        let incoming_edges = target_edges.get(node.name.as_str()).map(|v| v.len()).unwrap_or(0);
+        let incoming_edges = target_edges
+            .get(node.name.as_str())
+            .map(|v| v.len())
+            .unwrap_or(0);
         let extra_height = if incoming_edges > 1 {
             incoming_edges - 1
         } else {
@@ -33,12 +36,15 @@ pub fn render(layout: &ErLayout) -> String {
         ) {
             let edges_to_target = &target_edges[edge.to.as_str()];
             let target_y = if edges_to_target.len() > 1 {
-                let edge_index = edges_to_target.iter().position(|e| std::ptr::eq(*e, edge)).unwrap();
+                let edge_index = edges_to_target
+                    .iter()
+                    .position(|e| std::ptr::eq(*e, edge))
+                    .unwrap();
                 to.y + 1 + edge_index
             } else {
                 to.center_y
             };
-            
+
             draw_er_edge(
                 &mut grid,
                 from,
@@ -76,7 +82,7 @@ fn draw_box_with_height(grid: &mut Grid, node: &ErNodeLayout, extra_height: usiz
         grid.set(row, x, '│');
         grid.set(row, x + w - 1, '│');
     }
-    
+
     grid.write_str(y + 1, x + 2, node.alias.as_deref().unwrap_or(&node.name));
 
     if node.attributes.is_empty() {
@@ -186,13 +192,14 @@ fn draw_er_edge(
         if to_left >= 2 {
             grid.write_str(from_cy, to_left - 2, right_cardinality_str(right_card));
         }
-        
+
         let gap = to_left - from_right;
         let lines = split_br(label);
         let max_w = multiline_width(label);
         let left_marker_len = left_cardinality_str(left_card).len();
         if gap > max_w + left_marker_len + 1 {
-            let label_col = from_right + left_marker_len + 1 + (gap - max_w - left_marker_len - 1) / 2;
+            let label_col =
+                from_right + left_marker_len + 1 + (gap - max_w - left_marker_len - 1) / 2;
             let start_row = if lines.len() > 1 {
                 from_cy.saturating_sub(lines.len() / 2)
             } else {
@@ -205,60 +212,61 @@ fn draw_er_edge(
         }
     } else {
         let corner_col = to_left - 3;
-        
+
         for col in from_right..corner_col {
             grid.set(from_cy, col, h_char);
         }
         grid.write_str(from_cy, from_right, left_cardinality_str(left_card));
-        
+
         let (min_y, max_y) = if from_cy < to_cy {
             (from_cy, to_cy)
         } else {
             (to_cy, from_cy)
         };
-        
+
         for y in (min_y + 1)..max_y {
             grid.set_merged(y, corner_col, '│', |old, _new| {
                 if old == '│' { '│' } else { '│' }
             });
         }
-        
-        grid.set_merged(from_cy, corner_col, 
+
+        grid.set_merged(
+            from_cy,
+            corner_col,
             if from_cy < to_cy { '┐' } else { '┘' },
-            |old, new| {
-                match old {
-                    '│' => '┤',
-                    '┐' | '┘' | '┤' => '┤',
-                    _ => new,
-                }
-            }
+            |old, new| match old {
+                '│' => '┤',
+                '┐' | '┘' | '┤' => '┤',
+                _ => new,
+            },
         );
-        
-        grid.set_merged(to_cy, corner_col,
+
+        grid.set_merged(
+            to_cy,
+            corner_col,
             if from_cy < to_cy { '└' } else { '┌' },
-            |old, new| {
-                match old {
-                    '│' => '├',
-                    '└' | '┌' | '├' => '├',
-                    _ => new,
-                }
-            }
+            |old, new| match old {
+                '│' => '├',
+                '└' | '┌' | '├' => '├',
+                _ => new,
+            },
         );
-        
+
         for col in (corner_col + 1)..to_left {
             grid.set(to_cy, col, h_char);
         }
-        
+
         if to_left >= 2 {
             grid.write_str(to_cy, to_left - 2, right_cardinality_str(right_card));
         }
-        
+
         let h_gap = corner_col - from_right;
         let lines = split_br(label);
         let max_w = multiline_width(label);
         let left_marker_len = left_cardinality_str(left_card).len();
         if h_gap > max_w + left_marker_len + 1 {
-            let label_col = from_right + left_marker_len + 1 + (h_gap - max_w - left_marker_len - 1) / 2;
+            let label_col =
+                from_right + left_marker_len + 1 + (h_gap - max_w - left_marker_len - 1) / 2;
             let start_row = if lines.len() > 1 {
                 from_cy.saturating_sub(lines.len() / 2)
             } else {

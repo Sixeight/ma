@@ -74,7 +74,7 @@ fn group_entities_by_target<'a>(
 ) -> Vec<&'a Entity> {
     let next_rank = current_rank + 1;
     let mut groups: HashMap<&str, Vec<&'a Entity>> = HashMap::new();
-    
+
     for &entity in entities {
         let target = diagram
             .relationships
@@ -84,10 +84,10 @@ fn group_entities_by_target<'a>(
             .unwrap_or("");
         groups.entry(target).or_default().push(entity);
     }
-    
+
     let mut result = Vec::new();
     let mut seen = std::collections::HashSet::new();
-    
+
     for &entity in entities {
         if seen.contains(&entity.name) {
             continue;
@@ -98,7 +98,7 @@ fn group_entities_by_target<'a>(
             .find(|r| r.from == entity.name && ranks.get(r.to.as_str()) == Some(&next_rank))
             .map(|r| r.to.as_str())
             .unwrap_or("");
-        
+
         for &e in &groups[target] {
             if seen.insert(&e.name) {
                 result.push(e);
@@ -118,9 +118,9 @@ fn center_align_targets(
         .enumerate()
         .map(|(i, n)| (n.name.clone(), i))
         .collect();
-    
+
     let mut adjustments: Vec<(usize, usize)> = Vec::new();
-    
+
     for target_name in nodes.iter().map(|n| n.name.clone()).collect::<Vec<_>>() {
         let sources: Vec<&str> = diagram
             .relationships
@@ -128,16 +128,16 @@ fn center_align_targets(
             .filter(|r| r.to == target_name)
             .map(|r| r.from.as_str())
             .collect();
-        
+
         if sources.is_empty() {
             continue;
         }
-        
+
         let target_rank = match ranks.get(target_name.as_str()) {
             Some(&r) => r,
             None => continue,
         };
-        
+
         let source_centers: Vec<usize> = sources
             .iter()
             .filter_map(|&src| {
@@ -150,21 +150,21 @@ fn center_align_targets(
                 }
             })
             .collect();
-        
+
         if source_centers.is_empty() {
             continue;
         }
-        
+
         let min_cy = *source_centers.iter().min().unwrap();
         let max_cy = *source_centers.iter().max().unwrap();
         let avg_cy = (min_cy + max_cy) / 2;
-        
+
         let target_idx = node_map[&target_name];
         let target_height = nodes[target_idx].height;
         let new_y = avg_cy.saturating_sub(target_height / 2);
         adjustments.push((target_idx, new_y));
     }
-    
+
     for (idx, new_y) in adjustments {
         nodes[idx].y = new_y;
         nodes[idx].center_y = new_y + nodes[idx].height / 2;
@@ -190,7 +190,7 @@ fn compute_with_gap(diagram: &ErDiagram, min_gap: usize) -> Result<ErLayout, Str
 
     for (rank, rank_entities) in ranks_entities.iter().enumerate() {
         let grouped_entities = group_entities_by_target(rank_entities, diagram, &ranks, rank);
-        
+
         let mut y = 0;
         for entity in grouped_entities {
             let w = entity_width(entity);
@@ -309,7 +309,6 @@ fn compute_rank<'a>(
     ranks.insert(id, rank);
     rank
 }
-
 
 #[cfg(test)]
 mod tests {
@@ -444,9 +443,9 @@ mod tests {
         };
         let layout = compute(&diagram).unwrap();
         let rendered = crate::er_renderer::render(&layout);
-        
+
         let mut edges_connect_to_target = false;
-        
+
         for line in rendered.lines() {
             if line.contains("TARGET") {
                 if line.contains("o{│") || line.contains("|{│") {
@@ -455,7 +454,7 @@ mod tests {
                 }
             }
         }
-        
+
         assert!(
             edges_connect_to_target,
             "No edge connects to TARGET box. Render:\n{}",
@@ -488,10 +487,10 @@ mod tests {
         };
         let layout = compute(&diagram).unwrap();
         let rendered = crate::er_renderer::render(&layout);
-        
+
         let has_one_or_many = rendered.contains("|{");
         let has_zero_or_many = rendered.contains("o{");
-        
+
         assert!(
             has_one_or_many,
             "ORDER→LINE_ITEM (one-or-many |{{) marker not found in render:\n{}",
@@ -502,7 +501,7 @@ mod tests {
             "PRODUCT→LINE_ITEM (zero-or-many o{{) marker not found in render:\n{}",
             rendered
         );
-        
+
         let one_many_count = rendered.matches("|{").count();
         let zero_many_count = rendered.matches("o{").count();
         assert_eq!(
@@ -532,7 +531,7 @@ mod tests {
         };
         let layout = compute(&diagram).unwrap();
         let rendered = crate::er_renderer::render(&layout);
-        
+
         assert!(
             !rendered.contains("||label"),
             "Label should not be adjacent to || marker. Render:\n{}",
