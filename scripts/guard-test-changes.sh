@@ -10,7 +10,7 @@
 set -euo pipefail
 
 trailer_ok() {
-  git interpret-trailers --parse --no-divider | grep -q '^Test-Change:'
+  grep -q '^Test-Change:'
 }
 
 commit_has_trailer() {

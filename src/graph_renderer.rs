@@ -1597,7 +1597,8 @@ fn draw_lr_edge(
         } else {
             (lr_label_start(layout, to).max(from_right + 1), to_left)
         };
-        Some((row, start, clip_lr_entry_label_end(layout, from, to, end)))
+        let end = clip_lr_entry_label_end(layout, from, to, end);
+        (end > start).then_some((row, start, end))
     } else {
         // L-shaped routing: horizontal → corner → vertical → corner → horizontal
         let from_subgraph = layout.subgraphs.iter().find(|subgraph| {

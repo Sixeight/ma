@@ -52,7 +52,7 @@ text = "\n\n".join(parts) if parts else command
 sys.stdout.write(text)
 PY
 
-if git interpret-trailers --parse --no-divider <"$tmp" | grep -q '^Test-Change:'; then
+if grep -q '^Test-Change:' "$tmp"; then
   allow
 fi
 
