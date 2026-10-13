@@ -381,6 +381,25 @@ fn assert_outside_frame(lines: &[&str], needle: &str, left: usize, right: usize)
     );
 }
 
+fn assert_outside_subgraph_box(
+    lines: &[&str],
+    needle: &str,
+    title_row: usize,
+    bottom_row: usize,
+    left: usize,
+    right: usize,
+) {
+    let col = char_pos(lines[row_with(lines, needle)], needle);
+    let row = row_with(lines, needle);
+    let inside_x = col > left && col + needle.chars().count() <= right;
+    let inside_y = row > title_row && row < bottom_row;
+    assert!(
+        !inside_x || !inside_y,
+        "{needle} must sit outside the subgraph box:\n{}",
+        lines.join("\n")
+    );
+}
+
 fn assert_even_box_gaps(lines: &[&str], output: &str, names: &[&str]) {
     let mut lefts: Vec<usize> = names
         .iter()
@@ -634,7 +653,7 @@ fn lr_three_outers_same_side_keep_spacing() {
     assert_title_at_home(&lines, "Cluster");
     let inb_left = node_box_left(&lines, "InB");
     for name in ["OutX", "OutY", "OutZ"] {
-        assert_outside_frame(&lines, name, left, right);
+        assert_outside_subgraph_box(&lines, name, title_row, bottom, left, right);
         let row = row_with(&lines, name);
         assert!(
             row < title_row || row > bottom,
