@@ -2133,39 +2133,67 @@ fn stack_subgraphs(
         )
         .max()
         .unwrap_or(0);
+    let ordered: Vec<(String, usize)> = groups
+        .nodes
+        .iter()
+        .map(|node| (node.id.clone(), ranks[&node.id]))
+        .collect();
     let mut y_offset = 0;
-
-    for group in groups.nodes {
-        if let Some(sg_layout) = layout.subgraphs.iter_mut().find(|sg| sg.id == group.id) {
-            if sg_layout.width > max_width {
-                return Err(format!("graph diagram too wide for {max_width} columns"));
-            }
-            let old_x = sg_layout.x;
-            let old_y = sg_layout.y;
-            let x_offset = center_x - sg_layout.width / 2;
-            for node in layout.nodes.iter_mut().filter(|node| {
-                node_to_subgraph
-                    .get(node.id.as_str())
-                    .is_some_and(|index| diagram.subgraphs[*index].id == group.id)
-            }) {
-                node.x = node.x - old_x + x_offset;
-                node.y = node.y - old_y + y_offset;
-                node.center_x = node.center_x - old_x + x_offset;
-                node.center_y = node.center_y - old_y + y_offset;
-            }
-            sg_layout.x = x_offset;
-            sg_layout.y = y_offset;
-            y_offset += sg_layout.height + TD_RANK_SPACING;
-        } else if let Some(node) = layout.nodes.iter_mut().find(|node| node.id == group.id) {
-            if node.width > max_width {
-                return Err(format!("graph diagram too wide for {max_width} columns"));
-            }
-            node.x = center_x - node.width / 2;
-            node.y = y_offset;
-            node.center_x = center_x;
-            node.center_y = y_offset + node.height / 2;
-            y_offset += node.height + TD_RANK_SPACING;
+    let mut i = 0;
+    while i < ordered.len() {
+        let rank = ordered[i].1;
+        let mut j = i + 1;
+        while j < ordered.len() && ordered[j].1 == rank {
+            j += 1;
         }
+        let run: Vec<String> = ordered[i..j].iter().map(|(id, _)| id.clone()).collect();
+        let all_bare = run
+            .iter()
+            .all(|id| layout.subgraphs.iter().all(|sg| sg.id != *id));
+        if all_bare {
+            place_bare_stack_rank(&mut layout, &run, y_offset, center_x, max_width)?;
+            let bottom = run
+                .iter()
+                .filter_map(|id| layout.nodes.iter().find(|node| node.id == *id))
+                .map(|node| node.y + node.height)
+                .max()
+                .unwrap_or(y_offset);
+            y_offset = bottom + TD_RANK_SPACING;
+        } else {
+            for id in &run {
+                if let Some(sg_layout) = layout.subgraphs.iter_mut().find(|sg| sg.id == *id) {
+                    if sg_layout.width > max_width {
+                        return Err(format!("graph diagram too wide for {max_width} columns"));
+                    }
+                    let old_x = sg_layout.x;
+                    let old_y = sg_layout.y;
+                    let x_offset = center_x - sg_layout.width / 2;
+                    for node in layout.nodes.iter_mut().filter(|node| {
+                        node_to_subgraph
+                            .get(node.id.as_str())
+                            .is_some_and(|index| diagram.subgraphs[*index].id == *id)
+                    }) {
+                        node.x = node.x - old_x + x_offset;
+                        node.y = node.y - old_y + y_offset;
+                        node.center_x = node.center_x - old_x + x_offset;
+                        node.center_y = node.center_y - old_y + y_offset;
+                    }
+                    sg_layout.x = x_offset;
+                    sg_layout.y = y_offset;
+                    y_offset += sg_layout.height + TD_RANK_SPACING;
+                } else if let Some(node) = layout.nodes.iter_mut().find(|node| node.id == *id) {
+                    if node.width > max_width {
+                        return Err(format!("graph diagram too wide for {max_width} columns"));
+                    }
+                    node.x = center_x - node.width / 2;
+                    node.y = y_offset;
+                    node.center_x = center_x;
+                    node.center_y = y_offset + node.height / 2;
+                    y_offset += node.height + TD_RANK_SPACING;
+                }
+            }
+        }
+        i = j;
     }
 
     layout.direction = Direction::TopDown;
@@ -2182,6 +2210,7 @@ fn stack_subgraphs(
     layout.height = height;
     reserve_subgraph_entry_space(&mut layout);
     clear_entry_title_collisions(&mut layout);
+    align_top_entry_columns(diagram, &mut layout);
     let (width, height) = base_extents(&layout.nodes, &layout.subgraphs);
     layout.width = layout.width.max(width);
     layout.height = layout.height.max(height);
@@ -2189,6 +2218,118 @@ fn stack_subgraphs(
         return Err(format!("graph diagram too wide for {max_width} columns"));
     }
     Ok(layout)
+}
+
+fn place_bare_stack_rank(
+    layout: &mut GraphLayout,
+    ids: &[String],
+    y: usize,
+    center_x: usize,
+    max_width: usize,
+) -> Result<(), String> {
+    let mut total = 0;
+    for id in ids {
+        let Some(node) = layout.nodes.iter().find(|node| node.id == *id) else {
+            continue;
+        };
+        if node.width > max_width {
+            return Err(format!("graph diagram too wide for {max_width} columns"));
+        }
+        if total > 0 {
+            total += TD_NODE_GAP;
+        }
+        total += node.width;
+    }
+    let mut x = center_x.saturating_sub(total / 2);
+    for id in ids {
+        let Some(node) = layout.nodes.iter_mut().find(|node| node.id == *id) else {
+            continue;
+        };
+        node.x = x;
+        node.y = y;
+        node.center_x = x + node.width / 2;
+        node.center_y = y + node.height / 2;
+        x += node.width + TD_NODE_GAP;
+    }
+    Ok(())
+}
+
+fn align_top_entry_columns(diagram: &GraphDiagram, layout: &mut GraphLayout) {
+    let node_to_subgraph = node_to_subgraph_index(diagram);
+    let mut assignments: Vec<(usize, usize)> = Vec::new();
+    for (src_i, src) in layout.nodes.iter().enumerate() {
+        if node_to_subgraph.contains_key(src.id.as_str()) {
+            continue;
+        }
+        let targets: Vec<&NodeLayout> = diagram
+            .edges
+            .iter()
+            .filter(|edge| {
+                edge.from == src.id && edge.to != src.id && edge.edge_type != EdgeType::Invisible
+            })
+            .filter_map(|edge| layout.nodes.iter().find(|node| node.id == edge.to))
+            .filter(|target| node_to_subgraph.contains_key(target.id.as_str()))
+            .collect();
+        if targets.len() != 1 {
+            continue;
+        }
+        let target = targets[0];
+        let unique_source = diagram
+            .edges
+            .iter()
+            .filter(|edge| {
+                edge.to == target.id
+                    && edge.from != edge.to
+                    && edge.edge_type != EdgeType::Invisible
+            })
+            .count()
+            == 1;
+        if !unique_source {
+            continue;
+        }
+        let Some(&sg_index) = node_to_subgraph.get(target.id.as_str()) else {
+            continue;
+        };
+        let Some(sg) = layout
+            .subgraphs
+            .iter()
+            .find(|sg| sg.id == diagram.subgraphs[sg_index].id)
+        else {
+            continue;
+        };
+        if src.y + src.height > sg.y {
+            continue;
+        }
+        assignments.push((src_i, target.center_x));
+    }
+    if assignments.is_empty() {
+        return;
+    }
+    let mut bump = 0;
+    for &(src_i, center_x) in &assignments {
+        let width = layout.nodes[src_i].width;
+        if center_x < width / 2 {
+            bump = bump.max(width / 2 - center_x);
+        }
+    }
+    if bump > 0 {
+        for node in &mut layout.nodes {
+            node.x += bump;
+            node.center_x += bump;
+        }
+        for sg in &mut layout.subgraphs {
+            sg.x += bump;
+        }
+        for assignment in &mut assignments {
+            assignment.1 += bump;
+        }
+        layout.width += bump;
+    }
+    for (src_i, center_x) in assignments {
+        let node = &mut layout.nodes[src_i];
+        node.x = center_x - node.width / 2;
+        node.center_x = center_x;
+    }
 }
 
 fn td_label_width(node_id: &str, edges: &[Edge]) -> usize {
