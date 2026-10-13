@@ -763,6 +763,103 @@ fn place_rank_nodes(
     }
 }
 
+fn td_decls_width(decls: &[&NodeDecl], edges: &[Edge], node_gap: usize) -> usize {
+    if decls.is_empty() {
+        return 0;
+    }
+    decls
+        .iter()
+        .map(|decl| box_width(&decl.label, decl.shape).max(td_label_width(&decl.id, edges) + 2))
+        .sum::<usize>()
+        + decls.len().saturating_sub(1) * node_gap
+}
+
+fn incoming_parent_center(
+    diagram: &GraphDiagram,
+    nodes: &[NodeLayout],
+    child_id: &str,
+    axis: impl Fn(&NodeLayout) -> usize,
+) -> Option<usize> {
+    let mut fallback = None;
+    let mut from_member = None;
+    for edge in &diagram.edges {
+        if edge.to != child_id {
+            continue;
+        }
+        let Some(from) = nodes.iter().find(|node| node.id == edge.from) else {
+            continue;
+        };
+        let value = axis(from);
+        fallback = Some(value);
+        if diagram
+            .subgraphs
+            .iter()
+            .any(|sg| sg.node_ids.contains(&edge.from))
+        {
+            from_member = Some(value);
+        }
+    }
+    from_member.or(fallback)
+}
+
+fn shift_band_members(
+    diagram: &GraphDiagram,
+    nodes: &mut [NodeLayout],
+    sg_index: usize,
+    dx: usize,
+    dy: usize,
+) {
+    if dx == 0 && dy == 0 {
+        return;
+    }
+    let ids = &diagram.subgraphs[sg_index].node_ids;
+    for node in nodes {
+        if ids.contains(&node.id) {
+            node.x += dx;
+            node.y += dy;
+            node.center_x += dx;
+            node.center_y += dy;
+        }
+    }
+}
+
+fn place_outers_right_of_row_bands(
+    diagram: &GraphDiagram,
+    nodes: &mut [NodeLayout],
+    bands: &[SubgraphRowBand],
+    covering: &[usize],
+    outers: &[&NodeDecl],
+) {
+    let frame_right = covering
+        .iter()
+        .map(|&index| {
+            let sg = &diagram.subgraphs[bands[index].sg_index];
+            let min_x = nodes
+                .iter()
+                .filter(|node| sg.node_ids.contains(&node.id))
+                .map(|node| node.x)
+                .min()
+                .unwrap_or(0);
+            let max_right = nodes
+                .iter()
+                .filter(|node| sg.node_ids.contains(&node.id))
+                .map(|node| node.x + node.width)
+                .max()
+                .unwrap_or(0);
+            let title_width = display_width(&sg.label) + SUBGRAPH_TITLE_DECOR;
+            let x = min_x.saturating_sub(SUBGRAPH_PAD_LEFT);
+            x + (max_right + SUBGRAPH_PAD_RIGHT - x).max(title_width)
+        })
+        .max()
+        .unwrap_or(0);
+    for decl in outers {
+        if let Some(node) = nodes.iter_mut().find(|node| node.id == decl.id) {
+            node.x = frame_right;
+            node.center_x = node.x + node.width / 2;
+        }
+    }
+}
+
 fn apply_td_bands(
     diagram: &GraphDiagram,
     ranks: &HashMap<String, usize>,
@@ -771,7 +868,7 @@ fn apply_td_bands(
     node_to_subgraph: &HashMap<&str, usize>,
     node_gap: usize,
 ) -> Vec<SubgraphLayout> {
-    let bands = pack_subgraph_bands(diagram, ranks, ranks_nodes, node_gap);
+    let mut bands = pack_subgraph_bands(diagram, ranks, ranks_nodes, node_gap);
     let pack_width = bands
         .iter()
         .map(|band| band.x + band.width)
@@ -815,29 +912,68 @@ fn apply_td_bands(
         if outers.is_empty() {
             continue;
         }
-        let covering: Vec<&SubgraphBand> = bands
+        let covering: Vec<usize> = bands
             .iter()
-            .filter(|band| rank >= band.min_rank && rank <= band.max_rank)
+            .enumerate()
+            .filter(|(_, band)| rank >= band.min_rank && rank <= band.max_rank)
+            .map(|(index, _)| index)
             .collect();
-        let start = if covering.is_empty() {
-            let total: usize = outers
+        if covering.is_empty() {
+            let total = td_decls_width(&outers, &diagram.edges, node_gap);
+            let start = pack_width.saturating_sub(total) / 2;
+            place_rank_nodes(nodes, &outers, start, node_gap, &diagram.edges);
+            continue;
+        }
+
+        let cover_left = covering
+            .iter()
+            .map(|&index| bands[index].x)
+            .min()
+            .unwrap_or(0);
+        let cover_right = covering
+            .iter()
+            .map(|&index| bands[index].x + bands[index].width)
+            .max()
+            .unwrap_or(0);
+        let mid = cover_left + (cover_right - cover_left) / 2;
+        let mut left_outers = Vec::new();
+        let mut right_outers = Vec::new();
+        for outer in &outers {
+            let parent = incoming_parent_center(diagram, nodes, &outer.id, |node| node.center_x)
+                .unwrap_or(mid);
+            if parent < mid {
+                left_outers.push(*outer);
+            } else {
+                right_outers.push(*outer);
+            }
+        }
+
+        if !left_outers.is_empty() && !right_outers.is_empty() {
+            let left_width = td_decls_width(&left_outers, &diagram.edges, node_gap);
+            let shift = (left_width + SUBGRAPH_GAP).saturating_sub(cover_left);
+            if shift > 0 {
+                for &index in &covering {
+                    bands[index].x += shift;
+                    shift_band_members(diagram, nodes, bands[index].sg_index, shift, 0);
+                }
+            }
+            place_rank_nodes(nodes, &left_outers, 0, node_gap, &diagram.edges);
+            let right_start = covering
                 .iter()
-                .map(|node| {
-                    box_width(&node.label, node.shape)
-                        .max(td_label_width(&node.id, &diagram.edges) + 2)
-                })
-                .sum::<usize>()
-                + outers.len().saturating_sub(1) * node_gap;
-            pack_width.saturating_sub(total) / 2
-        } else {
-            covering
-                .iter()
-                .map(|band| band.x + band.width)
+                .map(|&index| bands[index].x + bands[index].width)
                 .max()
                 .unwrap_or(0)
-                + SUBGRAPH_GAP
-        };
-        place_rank_nodes(nodes, &outers, start, node_gap, &diagram.edges);
+                + SUBGRAPH_GAP;
+            place_rank_nodes(nodes, &right_outers, right_start, node_gap, &diagram.edges);
+        } else {
+            place_rank_nodes(
+                nodes,
+                &outers,
+                cover_right + SUBGRAPH_GAP,
+                node_gap,
+                &diagram.edges,
+            );
+        }
     }
 
     bands
@@ -857,7 +993,15 @@ fn apply_td_bands(
                 .map(|node| node.y + node.height)
                 .max()
                 .unwrap();
-            let y = min_y.saturating_sub(SUBGRAPH_PAD_TOP);
+            let incoming_from_above = diagram.edges.iter().any(|edge| {
+                sg.node_ids.iter().any(|id| id == &edge.to)
+                    && !sg.node_ids.iter().any(|id| id == &edge.from)
+                    && nodes
+                        .iter()
+                        .any(|node| node.id == edge.from && node.y + node.height <= min_y)
+            });
+            let top_pad = SUBGRAPH_PAD_TOP + usize::from(incoming_from_above);
+            let y = min_y.saturating_sub(top_pad);
             Some(SubgraphLayout {
                 id: sg.id.clone(),
                 label: sg.label.clone(),
@@ -1042,6 +1186,46 @@ fn place_rank_nodes_y(nodes: &mut [NodeLayout], decls: &[&NodeDecl], start_y: us
     }
 }
 
+fn covering_outer_label_pad(edges: &[Edge], node_id: &str) -> usize {
+    let Some(from) = edges
+        .iter()
+        .find(|edge| edge.to == node_id && edge.label.is_some())
+        .map(|edge| edge.from.as_str())
+    else {
+        return 0;
+    };
+    let labeled_from_same = edges
+        .iter()
+        .filter(|edge| edge.from == from && edge.label.is_some())
+        .count();
+    if labeled_from_same <= 1 {
+        return 0;
+    }
+    edges
+        .iter()
+        .filter(|edge| edge.to == node_id && edge.label.is_some())
+        .filter_map(|edge| edge.label.as_deref().map(line_count))
+        .max()
+        .unwrap_or(0)
+}
+
+fn place_rank_nodes_y_with_label_pad(
+    nodes: &mut [NodeLayout],
+    decls: &[&NodeDecl],
+    start_y: usize,
+    edges: &[Edge],
+) {
+    let mut y = start_y;
+    for decl in decls {
+        y += covering_outer_label_pad(edges, &decl.id);
+        if let Some(node) = nodes.iter_mut().find(|node| node.id == decl.id) {
+            node.y = y;
+            node.center_y = y + node.height / 2;
+            y += node.height + LR_NODE_VERTICAL_GAP;
+        }
+    }
+}
+
 fn apply_lr_bands(
     diagram: &GraphDiagram,
     ranks: &HashMap<String, usize>,
@@ -1050,7 +1234,7 @@ fn apply_lr_bands(
     node_to_subgraph: &HashMap<&str, usize>,
     place_y: bool,
 ) -> Vec<SubgraphLayout> {
-    let bands = pack_subgraph_row_bands(diagram, ranks, ranks_nodes);
+    let mut bands = pack_subgraph_row_bands(diagram, ranks, ranks_nodes);
     let pack_height = bands
         .iter()
         .map(|band| band.y + band.height)
@@ -1092,25 +1276,81 @@ fn apply_lr_bands(
             if outers.is_empty() {
                 continue;
             }
-            let covering: Vec<&SubgraphRowBand> = bands
+            let covering: Vec<usize> = bands
                 .iter()
-                .filter(|band| rank >= band.min_rank && rank <= band.max_rank)
+                .enumerate()
+                .filter(|(_, band)| rank >= band.min_rank && rank <= band.max_rank)
+                .map(|(index, _)| index)
                 .collect();
-            let start = if covering.is_empty() {
+            if covering.is_empty() {
                 let total: usize = outers
                     .iter()
                     .map(|node| box_height(&node.label, node.shape))
                     .sum::<usize>()
                     + outers.len().saturating_sub(1) * LR_NODE_VERTICAL_GAP;
-                pack_height.saturating_sub(total) / 2
-            } else {
-                covering
+                let start = pack_height.saturating_sub(total) / 2;
+                place_rank_nodes_y(nodes, &outers, start);
+                continue;
+            }
+
+            let cover_top = covering
+                .iter()
+                .map(|&index| bands[index].y)
+                .min()
+                .unwrap_or(0);
+            let cover_bottom = covering
+                .iter()
+                .map(|&index| bands[index].y + bands[index].height)
+                .max()
+                .unwrap_or(0);
+            let mid = cover_top + (cover_bottom - cover_top) / 2;
+            let mut above_outers = Vec::new();
+            let mut below_outers = Vec::new();
+            for outer in &outers {
+                let parent =
+                    incoming_parent_center(diagram, nodes, &outer.id, |node| node.center_y)
+                        .unwrap_or(mid);
+                if parent < mid {
+                    above_outers.push(*outer);
+                } else {
+                    below_outers.push(*outer);
+                }
+            }
+
+            if !above_outers.is_empty() && !below_outers.is_empty() {
+                place_rank_nodes_y(nodes, &above_outers, 0);
+                let above_bottom = above_outers
                     .iter()
-                    .map(|band| band.y + band.height)
+                    .filter_map(|decl| {
+                        nodes
+                            .iter()
+                            .find(|node| node.id == decl.id)
+                            .map(|node| node.y + node.height)
+                    })
                     .max()
-                    .unwrap_or(0)
-            };
-            place_rank_nodes_y(nodes, &outers, start);
+                    .unwrap_or(0);
+                let shift = above_bottom.saturating_sub(cover_top);
+                if shift > 0 {
+                    for &index in &covering {
+                        bands[index].y += shift;
+                        shift_band_members(diagram, nodes, bands[index].sg_index, 0, shift);
+                    }
+                }
+                let below_start = covering
+                    .iter()
+                    .map(|&index| bands[index].y + bands[index].height)
+                    .max()
+                    .unwrap_or(0);
+                place_rank_nodes_y_with_label_pad(
+                    nodes,
+                    &below_outers,
+                    below_start,
+                    &diagram.edges,
+                );
+                place_outers_right_of_row_bands(diagram, nodes, &bands, &covering, &outers);
+            } else {
+                place_rank_nodes_y_with_label_pad(nodes, &outers, cover_bottom, &diagram.edges);
+            }
         }
     }
 
@@ -1126,6 +1366,7 @@ fn apply_lr_bands(
                 return None;
             }
             let min_x = members.iter().map(|node| node.x).min().unwrap();
+            let min_y = members.iter().map(|node| node.y).min().unwrap();
             let max_right = members
                 .iter()
                 .map(|node| node.x + node.width)
@@ -1138,7 +1379,7 @@ fn apply_lr_bands(
                 id: sg.id.clone(),
                 label: sg.label.clone(),
                 x,
-                y: band.y,
+                y: min_y.saturating_sub(SUBGRAPH_PAD_TOP),
                 width,
                 height: band.height,
                 direction: diagram.effective_direction(SubgraphIndex::new(band.sg_index)),
@@ -1652,6 +1893,10 @@ fn layout_with_subgraphs(diagram: &GraphDiagram) -> Result<GraphLayout, String> 
         stack_subgraphs(diagram, layout, usize::MAX)
     } else {
         clear_entry_title_collisions(&mut layout);
+        pad_lr_frame_entry_labels(&mut layout);
+        let (width, height) = base_extents(&layout.nodes, &layout.subgraphs);
+        layout.width = layout.width.max(width);
+        layout.height = layout.height.max(height);
         Ok(layout)
     }
 }
@@ -1784,6 +2029,55 @@ fn frame_member_ids(diagram: &GraphDiagram) -> HashSet<&str> {
         .iter()
         .flat_map(|sg| sg.node_ids.iter().map(String::as_str))
         .collect()
+}
+
+fn pad_lr_frame_entry_labels(layout: &mut GraphLayout) {
+    if layout.direction != Direction::LeftRight {
+        return;
+    }
+    let mut order: Vec<usize> = (0..layout.subgraphs.len()).collect();
+    order.sort_by_key(|&i| layout.subgraphs[i].x);
+    for i in order {
+        let sg_x = layout.subgraphs[i].x;
+        let mut widest = 0;
+        let mut from_right = None;
+        for edge in &layout.edges {
+            if edge.route != EdgeRoute::Forward {
+                continue;
+            }
+            let Some(label) = edge.label.as_deref() else {
+                continue;
+            };
+            let Some(from) = layout.nodes.iter().find(|node| node.id == edge.from_id) else {
+                continue;
+            };
+            let Some(to) = layout.nodes.iter().find(|node| node.id == edge.to_id) else {
+                continue;
+            };
+            if !node_in_subgraph(to, &layout.subgraphs[i])
+                || layout.subgraphs.iter().any(|sg| node_in_subgraph(from, sg))
+            {
+                continue;
+            }
+            if from.x + from.width > sg_x {
+                continue;
+            }
+            widest = widest.max(multiline_width(label));
+            let right = from.x + from.width;
+            from_right = Some(from_right.map_or(right, |value: usize| value.max(right)));
+        }
+        if widest == 0 {
+            continue;
+        }
+        let Some(from_right) = from_right else {
+            continue;
+        };
+        let available = sg_x.saturating_sub(from_right);
+        let needed = widest + 3;
+        if available < needed {
+            open_gap(layout, Axis::X, sg_x, needed - available);
+        }
+    }
 }
 
 fn align_lr_bare_to_targets(
@@ -2133,39 +2427,67 @@ fn stack_subgraphs(
         )
         .max()
         .unwrap_or(0);
+    let ordered: Vec<(String, usize)> = groups
+        .nodes
+        .iter()
+        .map(|node| (node.id.clone(), ranks[&node.id]))
+        .collect();
     let mut y_offset = 0;
-
-    for group in groups.nodes {
-        if let Some(sg_layout) = layout.subgraphs.iter_mut().find(|sg| sg.id == group.id) {
-            if sg_layout.width > max_width {
-                return Err(format!("graph diagram too wide for {max_width} columns"));
-            }
-            let old_x = sg_layout.x;
-            let old_y = sg_layout.y;
-            let x_offset = center_x - sg_layout.width / 2;
-            for node in layout.nodes.iter_mut().filter(|node| {
-                node_to_subgraph
-                    .get(node.id.as_str())
-                    .is_some_and(|index| diagram.subgraphs[*index].id == group.id)
-            }) {
-                node.x = node.x - old_x + x_offset;
-                node.y = node.y - old_y + y_offset;
-                node.center_x = node.center_x - old_x + x_offset;
-                node.center_y = node.center_y - old_y + y_offset;
-            }
-            sg_layout.x = x_offset;
-            sg_layout.y = y_offset;
-            y_offset += sg_layout.height + TD_RANK_SPACING;
-        } else if let Some(node) = layout.nodes.iter_mut().find(|node| node.id == group.id) {
-            if node.width > max_width {
-                return Err(format!("graph diagram too wide for {max_width} columns"));
-            }
-            node.x = center_x - node.width / 2;
-            node.y = y_offset;
-            node.center_x = center_x;
-            node.center_y = y_offset + node.height / 2;
-            y_offset += node.height + TD_RANK_SPACING;
+    let mut i = 0;
+    while i < ordered.len() {
+        let rank = ordered[i].1;
+        let mut j = i + 1;
+        while j < ordered.len() && ordered[j].1 == rank {
+            j += 1;
         }
+        let run: Vec<String> = ordered[i..j].iter().map(|(id, _)| id.clone()).collect();
+        let all_bare = run
+            .iter()
+            .all(|id| layout.subgraphs.iter().all(|sg| sg.id != *id));
+        if all_bare {
+            place_bare_stack_rank(&mut layout, &run, y_offset, center_x, max_width)?;
+            let bottom = run
+                .iter()
+                .filter_map(|id| layout.nodes.iter().find(|node| node.id == *id))
+                .map(|node| node.y + node.height)
+                .max()
+                .unwrap_or(y_offset);
+            y_offset = bottom + TD_RANK_SPACING;
+        } else {
+            for id in &run {
+                if let Some(sg_layout) = layout.subgraphs.iter_mut().find(|sg| sg.id == *id) {
+                    if sg_layout.width > max_width {
+                        return Err(format!("graph diagram too wide for {max_width} columns"));
+                    }
+                    let old_x = sg_layout.x;
+                    let old_y = sg_layout.y;
+                    let x_offset = center_x - sg_layout.width / 2;
+                    for node in layout.nodes.iter_mut().filter(|node| {
+                        node_to_subgraph
+                            .get(node.id.as_str())
+                            .is_some_and(|index| diagram.subgraphs[*index].id == *id)
+                    }) {
+                        node.x = node.x - old_x + x_offset;
+                        node.y = node.y - old_y + y_offset;
+                        node.center_x = node.center_x - old_x + x_offset;
+                        node.center_y = node.center_y - old_y + y_offset;
+                    }
+                    sg_layout.x = x_offset;
+                    sg_layout.y = y_offset;
+                    y_offset += sg_layout.height + TD_RANK_SPACING;
+                } else if let Some(node) = layout.nodes.iter_mut().find(|node| node.id == *id) {
+                    if node.width > max_width {
+                        return Err(format!("graph diagram too wide for {max_width} columns"));
+                    }
+                    node.x = center_x - node.width / 2;
+                    node.y = y_offset;
+                    node.center_x = center_x;
+                    node.center_y = y_offset + node.height / 2;
+                    y_offset += node.height + TD_RANK_SPACING;
+                }
+            }
+        }
+        i = j;
     }
 
     layout.direction = Direction::TopDown;
@@ -2182,6 +2504,7 @@ fn stack_subgraphs(
     layout.height = height;
     reserve_subgraph_entry_space(&mut layout);
     clear_entry_title_collisions(&mut layout);
+    align_top_entry_columns(diagram, &mut layout);
     let (width, height) = base_extents(&layout.nodes, &layout.subgraphs);
     layout.width = layout.width.max(width);
     layout.height = layout.height.max(height);
@@ -2189,6 +2512,118 @@ fn stack_subgraphs(
         return Err(format!("graph diagram too wide for {max_width} columns"));
     }
     Ok(layout)
+}
+
+fn place_bare_stack_rank(
+    layout: &mut GraphLayout,
+    ids: &[String],
+    y: usize,
+    center_x: usize,
+    max_width: usize,
+) -> Result<(), String> {
+    let mut total = 0;
+    for id in ids {
+        let Some(node) = layout.nodes.iter().find(|node| node.id == *id) else {
+            continue;
+        };
+        if node.width > max_width {
+            return Err(format!("graph diagram too wide for {max_width} columns"));
+        }
+        if total > 0 {
+            total += TD_NODE_GAP;
+        }
+        total += node.width;
+    }
+    let mut x = center_x.saturating_sub(total / 2);
+    for id in ids {
+        let Some(node) = layout.nodes.iter_mut().find(|node| node.id == *id) else {
+            continue;
+        };
+        node.x = x;
+        node.y = y;
+        node.center_x = x + node.width / 2;
+        node.center_y = y + node.height / 2;
+        x += node.width + TD_NODE_GAP;
+    }
+    Ok(())
+}
+
+fn align_top_entry_columns(diagram: &GraphDiagram, layout: &mut GraphLayout) {
+    let node_to_subgraph = node_to_subgraph_index(diagram);
+    let mut assignments: Vec<(usize, usize)> = Vec::new();
+    for (src_i, src) in layout.nodes.iter().enumerate() {
+        if node_to_subgraph.contains_key(src.id.as_str()) {
+            continue;
+        }
+        let targets: Vec<&NodeLayout> = diagram
+            .edges
+            .iter()
+            .filter(|edge| {
+                edge.from == src.id && edge.to != src.id && edge.edge_type != EdgeType::Invisible
+            })
+            .filter_map(|edge| layout.nodes.iter().find(|node| node.id == edge.to))
+            .filter(|target| node_to_subgraph.contains_key(target.id.as_str()))
+            .collect();
+        if targets.len() != 1 {
+            continue;
+        }
+        let target = targets[0];
+        let unique_source = diagram
+            .edges
+            .iter()
+            .filter(|edge| {
+                edge.to == target.id
+                    && edge.from != edge.to
+                    && edge.edge_type != EdgeType::Invisible
+            })
+            .count()
+            == 1;
+        if !unique_source {
+            continue;
+        }
+        let Some(&sg_index) = node_to_subgraph.get(target.id.as_str()) else {
+            continue;
+        };
+        let Some(sg) = layout
+            .subgraphs
+            .iter()
+            .find(|sg| sg.id == diagram.subgraphs[sg_index].id)
+        else {
+            continue;
+        };
+        if src.y + src.height > sg.y {
+            continue;
+        }
+        assignments.push((src_i, target.center_x));
+    }
+    if assignments.is_empty() {
+        return;
+    }
+    let mut bump = 0;
+    for &(src_i, center_x) in &assignments {
+        let width = layout.nodes[src_i].width;
+        if center_x < width / 2 {
+            bump = bump.max(width / 2 - center_x);
+        }
+    }
+    if bump > 0 {
+        for node in &mut layout.nodes {
+            node.x += bump;
+            node.center_x += bump;
+        }
+        for sg in &mut layout.subgraphs {
+            sg.x += bump;
+        }
+        for assignment in &mut assignments {
+            assignment.1 += bump;
+        }
+        layout.width += bump;
+    }
+    for (src_i, center_x) in assignments {
+        let node = &mut layout.nodes[src_i];
+        node.x = center_x - node.width / 2;
+        node.center_x = center_x;
+    }
 }
 
 fn td_label_width(node_id: &str, edges: &[Edge]) -> usize {

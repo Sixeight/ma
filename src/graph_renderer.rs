@@ -143,6 +143,7 @@ fn render_lr(layout: &GraphLayout) -> String {
 
     let mut drawn_labels: Vec<(usize, usize, usize)> = Vec::new();
     for (label, (row, start, end)) in labels {
+        let row = lift_lr_label_off_geometry(layout, label, row, start, end);
         if !draw_lr_label_if_fits(&mut grid, label, row, start, end, &drawn_labels) {
             continue;
         }
@@ -1092,6 +1093,29 @@ fn enclosing_subgraph(layout: &GraphLayout, node: &NodeLayout) -> Option<usize> 
     })
 }
 
+fn clip_lr_entry_label_end(
+    layout: &GraphLayout,
+    from: &NodeLayout,
+    to: &NodeLayout,
+    end: usize,
+) -> usize {
+    let Some(index) = enclosing_subgraph(layout, to) else {
+        return end;
+    };
+    if layout
+        .subgraphs
+        .iter()
+        .any(|sg| node_inside_frame(from, sg))
+    {
+        return end;
+    }
+    let border = layout.subgraphs[index].x;
+    if from.x + from.width > border {
+        return end;
+    }
+    border.min(end)
+}
+
 /// The source end of a back edge: out of the bottom of the box, along the gap
 /// beside its rank, and into the gutter lane at `corner`.
 fn draw_back_edge_stem(
@@ -1394,6 +1418,51 @@ fn draw_lr_label(grid: &mut Grid, label: &str, row: usize, start: usize, end: us
     }
 }
 
+fn lr_label_rect_hits_geometry(
+    layout: &GraphLayout,
+    top: usize,
+    lines: usize,
+    col: usize,
+    width: usize,
+) -> bool {
+    let bottom = top + lines;
+    let right = col + width;
+    let hits_node = layout.nodes.iter().any(|node| {
+        top < node.y + node.height && bottom > node.y && col < node.x + node.width && right > node.x
+    });
+    let hits_frame = layout
+        .subgraphs
+        .iter()
+        .any(|sg| top < sg.y + sg.height && bottom > sg.y && col < sg.x + sg.width && right > sg.x);
+    hits_node || hits_frame
+}
+
+fn lift_lr_label_off_geometry(
+    layout: &GraphLayout,
+    label: &str,
+    row: usize,
+    start: usize,
+    end: usize,
+) -> usize {
+    let lines = split_br(label).len();
+    let label_width = multiline_width(label);
+    let available_width = end.saturating_sub(start);
+    let col = if label_width <= available_width {
+        start + (available_width - label_width) / 2
+    } else {
+        start
+    };
+    let top = row.saturating_sub(lines);
+    if top > 0
+        && lr_label_rect_hits_geometry(layout, top, lines, col, label_width)
+        && !lr_label_rect_hits_geometry(layout, top - 1, lines, col, label_width)
+    {
+        top - 1 + lines
+    } else {
+        row
+    }
+}
+
 fn draw_lr_label_if_fits(
     grid: &mut Grid,
     label: &str,
@@ -1574,7 +1643,8 @@ fn draw_lr_edge(
         } else {
             (lr_label_start(layout, to).max(from_right + 1), to_left)
         };
-        Some((row, start, end))
+        let end = clip_lr_entry_label_end(layout, from, to, end);
+        (end > start).then_some((row, start, end))
     } else {
         // L-shaped routing: horizontal → corner → vertical → corner → horizontal
         let from_subgraph = layout.subgraphs.iter().find(|subgraph| {
@@ -1713,7 +1783,8 @@ fn draw_lr_edge(
                 mid_col,
             )
         };
-        (placement.2 > placement.1).then_some(placement)
+        let end = clip_lr_entry_label_end(layout, from, to, placement.2);
+        (end > placement.1).then_some((placement.0, placement.1, end))
     }
 }
 
