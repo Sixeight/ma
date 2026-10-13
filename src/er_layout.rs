@@ -447,11 +447,9 @@ mod tests {
         let mut edges_connect_to_target = false;
 
         for line in rendered.lines() {
-            if line.contains("TARGET") {
-                if line.contains("o{│") || line.contains("|{│") {
-                    edges_connect_to_target = true;
-                    break;
-                }
+            if line.contains("TARGET") && (line.contains("o{│") || line.contains("|{│")) {
+                edges_connect_to_target = true;
+                break;
             }
         }
 

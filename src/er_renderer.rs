@@ -21,11 +21,7 @@ pub fn render(layout: &ErLayout) -> String {
             .get(node.name.as_str())
             .map(|v| v.len())
             .unwrap_or(0);
-        let extra_height = if incoming_edges > 1 {
-            incoming_edges - 1
-        } else {
-            0
-        };
+        let extra_height = incoming_edges.saturating_sub(1);
         draw_box_with_height(&mut grid, node, extra_height);
     }
 
@@ -45,16 +41,7 @@ pub fn render(layout: &ErLayout) -> String {
                 to.center_y
             };
 
-            draw_er_edge(
-                &mut grid,
-                from,
-                to,
-                target_y,
-                &edge.label,
-                edge.left_card,
-                edge.right_card,
-                edge.line_style,
-            );
+            draw_er_edge(&mut grid, from, to, target_y, edge);
         }
     }
 
@@ -116,70 +103,21 @@ fn draw_box_with_height(grid: &mut Grid, node: &ErNodeLayout, extra_height: usiz
     }
 }
 
-fn draw_box(grid: &mut Grid, node: &ErNodeLayout) {
-    let x = node.x;
-    let y = node.y;
-    let w = node.width;
-
-    grid.set(y, x, '┌');
-    for col in (x + 1)..(x + w - 1) {
-        grid.set(y, col, '─');
-    }
-    grid.set(y, x + w - 1, '┐');
-
-    grid.set(y + 1, x, '│');
-    grid.write_str(y + 1, x + 2, node.alias.as_deref().unwrap_or(&node.name));
-    grid.set(y + 1, x + w - 1, '│');
-
-    if node.attributes.is_empty() {
-        grid.set(y + 2, x, '└');
-        for col in (x + 1)..(x + w - 1) {
-            grid.set(y + 2, col, '─');
-        }
-        grid.set(y + 2, x + w - 1, '┘');
-    } else {
-        // Separator line
-        let sep_y = y + 2;
-        grid.set(sep_y, x, '├');
-        for col in (x + 1)..(x + w - 1) {
-            grid.set(sep_y, col, '─');
-        }
-        grid.set(sep_y, x + w - 1, '┤');
-
-        // Attribute rows
-        for (i, attr) in node.attributes.iter().enumerate() {
-            let row = sep_y + 1 + i;
-            grid.set(row, x, '│');
-            let text = attr.display_text();
-            grid.write_str(row, x + 2, &text);
-            grid.set(row, x + w - 1, '│');
-        }
-
-        // Bottom border
-        let bottom_y = sep_y + 1 + node.attributes.len();
-        grid.set(bottom_y, x, '└');
-        for col in (x + 1)..(x + w - 1) {
-            grid.set(bottom_y, col, '─');
-        }
-        grid.set(bottom_y, x + w - 1, '┘');
-    }
-}
-
 fn draw_er_edge(
     grid: &mut Grid,
     from: &ErNodeLayout,
     to: &ErNodeLayout,
     target_y: usize,
-    label: &str,
-    left_card: Cardinality,
-    right_card: Cardinality,
-    line_style: RelationshipLineStyle,
+    edge: &ErEdgeLayout,
 ) {
+    let label = edge.label.as_str();
+    let left_card = edge.left_card;
+    let right_card = edge.right_card;
     let from_right = from.x + from.width;
     let to_left = to.x;
     let from_cy = from.center_y;
     let to_cy = target_y;
-    let h_char = match line_style {
+    let h_char = match edge.line_style {
         RelationshipLineStyle::Identifying => '─',
         RelationshipLineStyle::NonIdentifying => '┈',
     };
@@ -225,9 +163,7 @@ fn draw_er_edge(
         };
 
         for y in (min_y + 1)..max_y {
-            grid.set_merged(y, corner_col, '│', |old, _new| {
-                if old == '│' { '│' } else { '│' }
-            });
+            grid.set_merged(y, corner_col, '│', |_, _| '│');
         }
 
         grid.set_merged(
