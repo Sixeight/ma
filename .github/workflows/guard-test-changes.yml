@@ -1,0 +1,30 @@
+name: Guard tests/ changes
+
+on:
+  pull_request:
+  push:
+
+jobs:
+  guard-test-changes:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Fetch merge base
+        env:
+          BASE_SHA: ${{ github.event.pull_request.base.sha || github.event.before }}
+        run: |
+          set -euo pipefail
+          if [[ -n ${BASE_SHA:-} && $BASE_SHA != 0000000000000000000000000000000000000000 ]]; then
+            git fetch --no-tags origin "$BASE_SHA"
+            echo "GUARD_BASE=$(git merge-base HEAD "$BASE_SHA")" >> "$GITHUB_ENV"
+          else
+            git fetch --no-tags origin main
+            echo "GUARD_BASE=$(git merge-base HEAD origin/main)" >> "$GITHUB_ENV"
+          fi
+
+      - name: Fail undeclared tests/ diffs
+        run: scripts/guard-test-changes.sh
