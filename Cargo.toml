@@ -10,3 +10,7 @@ unicode-width = "0.2"
 
 [dev-dependencies]
 pretty_assertions = "1"
+
+[[bench]]
+name = "render"
+harness = false
