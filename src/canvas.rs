@@ -20,7 +20,7 @@ impl Canvas {
     pub(crate) fn set(&mut self, row: usize, col: usize, ch: char) {
         if row < self.height && col < self.width {
             let index = self.index(row, col);
-            if self.cells[index] == '\0' && col > 0 && self.cells[index - 1] != '\0' {
+            if ch != '\0' && self.cells[index] == '\0' && col > 0 && self.cells[index - 1] != '\0' {
                 self.cells[index - 1] = ' ';
             }
             self.cells[index] = ch;
@@ -85,6 +85,15 @@ impl Canvas {
 mod tests {
     use super::Canvas;
     use pretty_assertions::assert_eq;
+
+    #[test]
+    fn redrawing_wide_text_preserves_characters() {
+        let mut canvas = Canvas::new(6, 1);
+        canvas.write_str(0, 0, "変更前");
+        canvas.write_str(0, 0, "変更前");
+
+        assert_eq!(canvas.render(), "変更前");
+    }
 
     #[test]
     fn overwriting_a_wide_character_continuation_clears_its_base() {

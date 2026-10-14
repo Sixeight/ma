@@ -108,6 +108,20 @@ mod tests {
     }
 
     #[test]
+    fn render_preserves_wide_subgraph_titles_and_frame_width() {
+        let output =
+            render("flowchart LR\nsubgraph before[\"変更前\"]\nA[setup] --> B[build-go]\nend\n")
+                .unwrap();
+        let lines: Vec<_> = output.lines().collect();
+        assert!(lines[0].contains("変更前"), "{output}");
+        assert_eq!(
+            display_width::display_width(lines[0]),
+            display_width::display_width(lines.last().unwrap()),
+            "{output}"
+        );
+    }
+
+    #[test]
     fn render_er_diagram_works() {
         let output = render("erDiagram\n    A ||--o{ B : has\n").unwrap();
         assert!(output.contains("A"));
