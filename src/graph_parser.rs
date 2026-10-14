@@ -226,7 +226,7 @@ fn parse_subgraph_header(header: &str) -> (String, String) {
             title.trim_matches('"').to_string(),
         );
     }
-    (header.replace(' ', "_").to_lowercase(), header.to_string())
+    (header.replace(' ', "_"), header.to_string())
 }
 
 fn blank_line(input: &mut &str) -> winnow::Result<()> {
@@ -522,6 +522,18 @@ fn node_line(input: &mut &str) -> winnow::Result<GraphLine> {
 mod tests {
     use super::*;
     use pretty_assertions::assert_eq;
+
+    #[test]
+    fn parse_subgraph_endpoint_preserves_identifier_case() {
+        let diagram =
+            parse_graph("flowchart TB\nsubgraph One\nA\nend\nsubgraph Two\nB\nend\nOne ~~~ Two\n")
+                .unwrap();
+        assert_eq!(diagram.subgraphs[0].id, "One");
+        assert_eq!(diagram.subgraphs[1].id, "Two");
+        assert_eq!(diagram.nodes.len(), 2);
+        assert_eq!(diagram.edges[0].from, "One");
+        assert_eq!(diagram.edges[0].to, "Two");
+    }
 
     #[test]
     fn parse_direction_td() {

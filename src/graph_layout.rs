@@ -5130,6 +5130,20 @@ mod tests {
     }
 
     #[test]
+    fn max_width_stacks_subgraphs_connected_by_invisible_edge() {
+        let label = "x".repeat(70);
+        let diagram = parse_graph(&format!(
+            "flowchart TB\nsubgraph One\nA[\"{label}\"]\nend\nsubgraph Two\nB[\"{label}\"]\nend\nOne ~~~ Two\n"
+        ))
+        .unwrap();
+        let layout = compute_with_max_width(&diagram, 160).unwrap();
+        assert!(layout.width <= 160);
+        let one = &layout.subgraphs[0];
+        let two = &layout.subgraphs[1];
+        assert!(two.y >= one.y + one.height);
+    }
+
+    #[test]
     fn max_width_stacks_subgraphs_vertically() {
         let diagram = parse_graph(
             "graph LR\n    subgraph One\n        A --> B\n    end\n    subgraph Two\n        C --> D\n    end\n    B --> C\n",
