@@ -1003,6 +1003,20 @@ fn spec_left_right_reflows_when_max_width_requires_it() {
 }
 
 #[test]
+fn narrow_graph_wraps_node_label_to_fit() {
+    let input = "flowchart LR\nA[Start] --> B[Long name for next step]\n";
+    let output = ma::render_with_options(input, Some(18)).unwrap();
+    assert!(
+        output
+            .lines()
+            .all(|line| ma::display_width::display_width(line) <= 18)
+    );
+    assert!(output.contains("Long name for"), "{output}");
+    assert!(output.contains("next step"), "{output}");
+    assert!(output.contains('▼'), "{output}");
+}
+
+#[test]
 fn spec_subgraphs_stack_when_max_width_requires_it() {
     let input = "graph LR\n    subgraph One\n        A --> B\n    end\n    subgraph Two\n        C --> D\n    end\n    B --> C\n";
     let output = ma::render_with_options(input, Some(19)).unwrap();

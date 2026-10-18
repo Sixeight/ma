@@ -2250,6 +2250,30 @@ pub fn compute_with_max_width(
     diagram: &GraphDiagram,
     max_width: usize,
 ) -> Result<GraphLayout, String> {
+    let original = compute_with_max_width_unwrapped(diagram, max_width);
+    if original.is_ok() {
+        return original;
+    }
+
+    let mut wrapped = diagram.clone();
+    for node in &mut wrapped.nodes {
+        let overhead = box_width("", node.shape);
+        let Some(label_width) = max_width.checked_sub(overhead) else {
+            continue;
+        };
+        node.label = wrap_node_label(&node.label, label_width);
+    }
+    if wrapped != *diagram {
+        compute_with_max_width_unwrapped(&wrapped, max_width)
+    } else {
+        original
+    }
+}
+
+fn compute_with_max_width_unwrapped(
+    diagram: &GraphDiagram,
+    max_width: usize,
+) -> Result<GraphLayout, String> {
     let layout = compute(diagram)?;
     if layout.width <= max_width {
         return Ok(layout);
@@ -2347,12 +2371,37 @@ pub fn compute_with_max_width(
     if diagram.direction == Direction::LeftRight {
         let mut vertical = diagram.clone();
         vertical.direction = Direction::TopDown;
-        if let Ok(layout) = compute_with_max_width(&vertical, max_width) {
+        if let Ok(layout) = compute_with_max_width_unwrapped(&vertical, max_width) {
             return Ok(layout);
         }
     }
 
     Err(format!("graph diagram too wide for {max_width} columns"))
+}
+
+fn wrap_node_label(label: &str, max_width: usize) -> String {
+    let mut lines = Vec::new();
+    for segment in crate::display_width::split_br(label) {
+        if display_width(segment) <= max_width {
+            lines.push(segment.to_string());
+            continue;
+        }
+        let mut line = String::new();
+        for word in segment.split_whitespace() {
+            if display_width(word) > max_width {
+                return label.to_string();
+            }
+            if !line.is_empty() && display_width(&line) + 1 + display_width(word) > max_width {
+                lines.push(std::mem::take(&mut line));
+            }
+            if !line.is_empty() {
+                line.push(' ');
+            }
+            line.push_str(word);
+        }
+        lines.push(line);
+    }
+    lines.join("\\n")
 }
 
 fn stack_subgraphs(
