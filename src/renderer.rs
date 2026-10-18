@@ -24,7 +24,7 @@ fn row_height(row: &Row) -> usize {
     }
 }
 
-pub fn render(layout: &Layout) -> String {
+pub(crate) fn dimensions(layout: &Layout) -> (usize, usize) {
     let box_height = layout
         .participants
         .iter()
@@ -32,7 +32,17 @@ pub fn render(layout: &Layout) -> String {
         .max()
         .unwrap_or(3);
     let body_height: usize = layout.rows.iter().map(row_height).sum();
-    let height = box_height + body_height + box_height;
+    (layout.total_width, box_height + body_height + box_height)
+}
+
+pub fn render(layout: &Layout) -> String {
+    let (_, height) = dimensions(layout);
+    let box_height = layout
+        .participants
+        .iter()
+        .map(|p| p.box_height)
+        .max()
+        .unwrap_or(3);
     let mut grid = Grid::new(layout.total_width, height);
 
     draw_participant_boxes_filtered(&mut grid, layout, 0, true, &[]);
@@ -80,7 +90,7 @@ pub fn render(layout: &Layout) -> String {
         y += h;
     }
 
-    let bottom_y = body_start + body_height;
+    let bottom_y = height - box_height;
     draw_participant_boxes_filtered(&mut grid, layout, bottom_y, false, &layout.destroyed);
 
     grid.render()

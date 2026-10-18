@@ -33,6 +33,10 @@ echo 'graph LR
 |------|-------------|
 | `-w, --width <N>` | Maximum output width in columns |
 
+When `--width` is set, flowchart and state/class node labels can wrap at word boundaries to fit. A label with a single word wider than the available space still returns an error rather than being clipped.
+
+Inputs are limited to 1 MiB, the drawing canvas to 1,000,000 cells, and rendered output to 2 MB. Diagrams exceeding a limit return an error.
+
 ## Supported Diagrams
 
 ### Sequence Diagram

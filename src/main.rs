@@ -20,20 +20,17 @@ fn main() {
     let cli = Cli::parse();
 
     let input = match cli.file {
-        Some(path) => std::fs::read_to_string(&path).unwrap_or_else(|e| {
-            eprintln!("ERROR: failed to read {}: {e}", path.display());
+        Some(path) => std::fs::File::open(&path)
+            .map_err(|e| e.to_string())
+            .and_then(read_input)
+            .unwrap_or_else(|e| {
+                eprintln!("ERROR: failed to read {}: {e}", path.display());
+                std::process::exit(1);
+            }),
+        None => read_input(std::io::stdin().lock()).unwrap_or_else(|e| {
+            eprintln!("ERROR: failed to read stdin: {e}");
             std::process::exit(1);
         }),
-        None => {
-            let mut buf = String::new();
-            std::io::stdin()
-                .read_to_string(&mut buf)
-                .unwrap_or_else(|e| {
-                    eprintln!("ERROR: failed to read stdin: {e}");
-                    std::process::exit(1);
-                });
-            buf
-        }
     };
 
     match ma::render_with_options(&input, cli.width) {
@@ -43,4 +40,19 @@ fn main() {
             std::process::exit(1);
         }
     }
+}
+
+fn read_input(reader: impl Read) -> Result<String, String> {
+    let mut bytes = Vec::new();
+    reader
+        .take((ma::MAX_SOURCE_BYTES + 1) as u64)
+        .read_to_end(&mut bytes)
+        .map_err(|e| e.to_string())?;
+    if bytes.len() > ma::MAX_SOURCE_BYTES {
+        return Err(format!(
+            "source exceeds {}-byte limit",
+            ma::MAX_SOURCE_BYTES
+        ));
+    }
+    String::from_utf8(bytes).map_err(|e| e.to_string())
 }
