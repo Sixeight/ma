@@ -70,6 +70,7 @@ fn render_td(layout: &GraphLayout) -> String {
 
     draw_nodes_over_edges(&mut grid, layout);
     draw_edge_ports(&mut grid, layout);
+    draw_bidirectional_source_heads(&mut grid, layout);
     redraw_subgraph_titles(&mut grid, layout);
 
     grid.render()
@@ -161,6 +162,7 @@ fn render_lr(layout: &GraphLayout) -> String {
         drawn_labels.push((row, col, label_end));
     }
     draw_edge_ports(&mut grid, layout);
+    draw_bidirectional_source_heads(&mut grid, layout);
     redraw_subgraph_titles(&mut grid, layout);
 
     grid.render()
@@ -261,6 +263,25 @@ fn draw_edge_ports(grid: &mut Grid, layout: &GraphLayout) {
                 }
             }
             EdgeRoute::Forward => {}
+        }
+    }
+}
+
+fn draw_bidirectional_source_heads(grid: &mut Grid, layout: &GraphLayout) {
+    for edge in &layout.edges {
+        if edge.edge_type != EdgeType::BidirectionalArrow {
+            continue;
+        }
+        let Some(from) = layout.nodes.iter().find(|node| node.id == edge.from_id) else {
+            continue;
+        };
+        let Some(to) = layout.nodes.iter().find(|node| node.id == edge.to_id) else {
+            continue;
+        };
+        if edge.route != EdgeRoute::Forward || flow_of(layout, from, to) == Direction::TopDown {
+            grid.set(from.y + from.height, from.center_x, '▲');
+        } else {
+            grid.set(from.center_y, from.x + from.width, '<');
         }
     }
 }
@@ -533,7 +554,10 @@ fn td_vertical_connector(edge_type: EdgeType) -> char {
 fn has_arrow_head(edge_type: EdgeType) -> bool {
     matches!(
         edge_type,
-        EdgeType::Arrow | EdgeType::DottedArrow | EdgeType::ThickArrow
+        EdgeType::Arrow
+            | EdgeType::BidirectionalArrow
+            | EdgeType::DottedArrow
+            | EdgeType::ThickArrow
     )
 }
 

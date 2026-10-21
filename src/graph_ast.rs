@@ -245,6 +245,7 @@ pub struct Edge {
 pub enum EdgeType {
     Invisible,
     Arrow,
+    BidirectionalArrow,
     OpenLink,
     DottedArrow,
     DottedLink,

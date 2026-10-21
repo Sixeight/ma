@@ -391,6 +391,7 @@ fn bracketed_label(input: &mut &str) -> winnow::Result<String> {
 fn edge_type(input: &mut &str) -> winnow::Result<EdgeType> {
     alt((
         "~~~".value(EdgeType::Invisible),
+        "<-->".value(EdgeType::BidirectionalArrow),
         "-.->".value(EdgeType::DottedArrow),
         "-.-".value(EdgeType::DottedLink),
         "==>".value(EdgeType::ThickArrow),

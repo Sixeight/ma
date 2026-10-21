@@ -188,6 +188,34 @@ fn spec_edge_lr_arrow() {
     assert!(arrow_line.contains('>'), "arrow head at target");
 }
 
+#[test]
+fn spec_lr_bidirectional_arrow_keeps_following_edges() {
+    let input = "flowchart LR\n  T[TelephonyCollector] -->|snapshot| D[SimChangeDetector]\n  S[(ObservedSimStore)] <-->|前回の SIM| D\n  D -->|SimChanged| E[AlertEvaluator] --> O[outbox]\n";
+    let output = ma::render(input).unwrap();
+    for text in ["ObservedSimStore", "前回の SIM", "AlertEvaluator", "outbox"] {
+        assert!(output.contains(text), "missing {text}:\n{output}");
+    }
+    assert!(
+        output.contains('<'),
+        "source arrow head is missing:\n{output}"
+    );
+    assert!(
+        output.contains('>'),
+        "target arrow head is missing:\n{output}"
+    );
+}
+
+#[test]
+fn spec_bidirectional_arrow_has_heads_at_both_ends() {
+    let lr = ma::render("graph LR\nA <--> B\n").unwrap();
+    assert!(lr.contains("│ A │<"), "{lr}");
+    assert!(lr.contains(">│ B │"), "{lr}");
+
+    let td = ma::render("graph TD\nA <--> B\n").unwrap();
+    assert!(td.contains('▲'), "{td}");
+    assert!(td.contains('▼'), "{td}");
+}
+
 // =============================================================================
 // Edges — Open Link (---)
 // =============================================================================
